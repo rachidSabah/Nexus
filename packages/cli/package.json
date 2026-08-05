@@ -1,0 +1,23 @@
+{
+  "name": "@anx/cli",
+  "version": "0.1.0",
+  "description": "Command-line interface for Agent Nexus Gateway",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "anx": "./dist/bin.js",
+    "agent-nexus": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@anx/core": "workspace:*",
+    "@anx/sdk": "workspace:*"
+  }
+}

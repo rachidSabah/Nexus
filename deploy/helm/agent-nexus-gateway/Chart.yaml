@@ -1,0 +1,20 @@
+apiVersion: v2
+name: agent-nexus-gateway
+description: The most advanced local AI Gateway — universal routing, streaming, MCP, A2A, plugins, and a beautiful dashboard.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/rachidSabah/codingghosts
+sources:
+  - https://github.com/rachidSabah/codingghosts
+maintainers:
+  - name: Agent Nexus Gateway Contributors
+keywords:
+  - ai
+  - gateway
+  - llm
+  - openai
+  - anthropic
+  - mcp
+  - a2a
+  - routing

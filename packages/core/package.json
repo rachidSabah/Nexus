@@ -1,0 +1,37 @@
+{
+  "name": "@anx/core",
+  "version": "0.1.0",
+  "description": "Core domain models, ports, and events for Agent Nexus Gateway (hexagonal architecture)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist coverage .turbo"
+  },
+  "dependencies": {
+    "zod": "^3.24.1",
+    "uuid": "^11.0.3",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@types/uuid": "^10.0.0",
+    "@vitest/coverage-v8": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}

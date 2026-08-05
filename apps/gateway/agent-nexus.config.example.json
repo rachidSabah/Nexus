@@ -1,0 +1,70 @@
+{
+  "server": {
+    "port": 8787,
+    "host": "0.0.0.0",
+    "cors": { "origin": "*", "credentials": false }
+  },
+  "routing": {
+    "strategy": "weighted",
+    "failureThreshold": 5,
+    "failureWindowMs": 60000,
+    "cooldownMs": 30000,
+    "maxFailovers": 3
+  },
+  "security": {
+    "principals": [
+      { "id": "admin", "roles": ["admin"] }
+    ]
+  },
+  "network": {
+    "proxies": [],
+    "doh": { "url": "https://cloudflare-dns.com/dns-query", "enabled": false }
+  },
+  "mcp": { "servers": [] },
+  "endpoints": [
+    {
+      "id": "openai-primary",
+      "providerId": "openai",
+      "displayName": "OpenAI Primary",
+      "baseUrl": "https://api.openai.com/v1",
+      "priority": 1,
+      "weight": 10,
+      "region": "us-east",
+      "tags": ["gpt-4", "gpt-4o", "gpt-4-turbo"],
+      "pricing": { "inputPer1K": 0.01, "outputPer1K": 0.03, "currency": "USD" }
+    },
+    {
+      "id": "anthropic-primary",
+      "providerId": "anthropic",
+      "displayName": "Anthropic Primary",
+      "baseUrl": "https://api.anthropic.com",
+      "priority": 1,
+      "weight": 8,
+      "region": "us-east",
+      "tags": ["claude-3-5-sonnet", "claude-3-5-haiku"],
+      "pricing": { "inputPer1K": 0.003, "outputPer1K": 0.015, "currency": "USD" }
+    },
+    {
+      "id": "deepseek-primary",
+      "providerId": "deepseek",
+      "displayName": "DeepSeek Primary",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "priority": 2,
+      "weight": 5,
+      "region": "us-east",
+      "tags": ["deepseek-chat", "deepseek-coder"],
+      "pricing": { "inputPer1K": 0.001, "outputPer1K": 0.002, "currency": "USD" }
+    },
+    {
+      "id": "ollama-local",
+      "providerId": "ollama",
+      "displayName": "Ollama Local",
+      "baseUrl": "http://localhost:11434/v1",
+      "priority": 3,
+      "weight": 3,
+      "region": "local",
+      "tags": ["llama3", "mistral"],
+      "pricing": { "inputPer1K": 0, "outputPer1K": 0, "currency": "USD" }
+    }
+  ]
+}

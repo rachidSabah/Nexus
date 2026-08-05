@@ -1,0 +1,18 @@
+{
+  "name": "@anx/security",
+  "version": "0.1.0",
+  "description": "Security primitives: encrypted vault, JWT, RBAC, audit logging",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@anx/core": "workspace:*"
+  }
+}

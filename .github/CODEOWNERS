@@ -1,0 +1,8 @@
+# Default owners — the maintainers team reviews everything
+*                       @rachidSabah
+
+# Security-sensitive paths require explicit review
+/.github/               @rachidSabah
+/SECURITY.md            @rachidSabah
+/packages/security/     @rachidSabah
+/packages/core/         @rachidSabah

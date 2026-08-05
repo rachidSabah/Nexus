@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark light;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-feature-settings: 'cv11', 'ss01';
+  font-variation-settings: 'opsz' 32;
+}
+
+body {
+  background: #0a0a0f;
+  color: #e6e6e8;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-white/5 bg-white/[0.02] p-5 backdrop-blur-sm;
+  }
+  .stat-value {
+    @apply font-mono text-3xl font-semibold tracking-tight;
+  }
+  .stat-label {
+    @apply text-xs uppercase tracking-widest text-white/40;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .pill-healthy {
+    @apply bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/30;
+  }
+  .pill-degraded {
+    @apply bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/30;
+  }
+  .pill-unhealthy {
+    @apply bg-rose-500/10 text-rose-400 ring-1 ring-rose-500/30;
+  }
+  .pill-circuit_open {
+    @apply bg-fuchsia-500/10 text-fuchsia-400 ring-1 ring-fuchsia-500/30;
+  }
+  .nav-link {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-white/60 transition hover:bg-white/5 hover:text-white;
+  }
+  .nav-link-active {
+    @apply bg-white/5 text-white;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@anx/mcp-client",
+  "version": "0.1.0",
+  "description": "MCP client — connect to external MCP servers and expose their tools to the gateway",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist coverage .turbo"
+  },
+  "dependencies": { "@anx/core": "workspace:*" }
+}

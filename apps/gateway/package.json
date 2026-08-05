@@ -1,0 +1,38 @@
+{
+  "name": "@anx/gateway",
+  "version": "0.1.0",
+  "description": "Agent Nexus Gateway server — OpenAI-compatible REST + streaming + WebSocket",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "anx-gateway": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch src/bin.ts",
+    "start": "node dist/bin.js",
+    "test": "vitest run",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@anx/core": "workspace:*",
+    "@anx/providers": "workspace:*",
+    "@anx/routing": "workspace:*",
+    "@anx/plugins": "workspace:*",
+    "@anx/networking": "workspace:*",
+    "@anx/security": "workspace:*",
+    "@anx/observability": "workspace:*",
+    "@anx/mcp-server": "workspace:*",
+    "@anx/mcp-client": "workspace:*",
+    "@anx/a2a": "workspace:*",
+    "fastify": "^5.2.1",
+    "@fastify/websocket": "^11.0.1",
+    "@fastify/cors": "^10.0.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.2"
+  }
+}

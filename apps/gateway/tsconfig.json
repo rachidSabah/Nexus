@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "test"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/providers" },
+    { "path": "../../packages/routing" },
+    { "path": "../../packages/plugins" },
+    { "path": "../../packages/networking" },
+    { "path": "../../packages/security" },
+    { "path": "../../packages/observability" },
+    { "path": "../../packages/mcp-server" },
+    { "path": "../../packages/mcp-client" },
+    { "path": "../../packages/a2a" }
+  ]
+}
