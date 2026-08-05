@@ -1,9 +1,9 @@
-import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { ProxyConfig, DohConfig } from '@anx/networking';
 import type { McpServerConfig } from '@anx/mcp-client';
+import type { ProxyConfig, DohConfig } from '@anx/networking';
 
 /**
  * Gateway configuration shape. Loaded from `agent-nexus.config.json` (or

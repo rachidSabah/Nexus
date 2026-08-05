@@ -19,7 +19,7 @@ export {
 } from './adapters/openai-compatible.js';
 
 import type { ProviderAdapter } from '@anx/core';
-import { OpenAIAdapter } from './adapters/openai.js';
+
 import { AnthropicAdapter } from './adapters/anthropic.js';
 import { GoogleAdapter } from './adapters/google.js';
 import {
@@ -38,6 +38,7 @@ import {
   LitellmAdapter,
   AzureOpenAIAdapter,
 } from './adapters/openai-compatible.js';
+import { OpenAIAdapter } from './adapters/openai.js';
 
 /**
  * Registry of all built-in provider adapters, keyed by `providerId`.

@@ -1,3 +1,4 @@
+import type { DomainEvent } from '../domain/events.js';
 import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
@@ -9,7 +10,6 @@ import type {
   RoutingDecision,
   TokenUsage,
 } from '../domain/types.js';
-import type { DomainEvent } from '../domain/events.js';
 
 /**
  * ───────────────────────────────────────────────────────────────────────────

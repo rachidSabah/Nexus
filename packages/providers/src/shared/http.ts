@@ -6,7 +6,7 @@ import { ProviderResponseError } from '@anx/core';
  * this with provider-specific headers (e.g. `anthropic-version`).
  */
 export function buildHeaders(
-  endpoint: ProviderEndpoint,
+  _endpoint: ProviderEndpoint,
   apiKey: string,
   extra: Record<string, string> = {},
 ): Record<string, string> {

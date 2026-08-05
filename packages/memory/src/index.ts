@@ -355,7 +355,7 @@ export class DefaultMemory implements Memory {
  * Stub: full implementation in adapters/qdrant.ts.
  */
 export class QdrantVectorStore implements VectorStorePort {
-  constructor(private readonly url: string) {}
+  constructor(_url: string) {}
 
   async upsert(_record: MemoryRecord): Promise<void> {
     // TODO: implement HTTP call to Qdrant
@@ -379,7 +379,7 @@ export class QdrantVectorStore implements VectorStorePort {
  * Chroma adapter — stub.
  */
 export class ChromaVectorStore implements VectorStorePort {
-  constructor(private readonly url: string) {}
+  constructor(_url: string) {}
   async upsert(): Promise<void> { throw new Error('ChromaVectorStore not yet implemented'); }
   async search(): Promise<readonly MemorySearchResult[]> { throw new Error('ChromaVectorStore not yet implemented'); }
   async delete(): Promise<boolean> { throw new Error('ChromaVectorStore not yet implemented'); }
@@ -391,7 +391,7 @@ export class ChromaVectorStore implements VectorStorePort {
  * pgvector adapter — stub.
  */
 export class PgVectorStore implements VectorStorePort {
-  constructor(private readonly connectionString: string) {}
+  constructor(_connectionString: string) {}
   async upsert(): Promise<void> { throw new Error('PgVectorStore not yet implemented'); }
   async search(): Promise<readonly MemorySearchResult[]> { throw new Error('PgVectorStore not yet implemented'); }
   async delete(): Promise<boolean> { throw new Error('PgVectorStore not yet implemented'); }
@@ -407,7 +407,7 @@ export class GatewayEmbeddingsProvider implements EmbeddingsProvider {
 
   async embed(text: string): Promise<readonly number[]> {
     const [embedding] = await this.embedBatch([text]);
-    return embedding;
+    return embedding ?? [];
   }
 
   async embedBatch(texts: readonly string[]): Promise<readonly (readonly number[])[]> {
@@ -429,7 +429,8 @@ export class GatewayEmbeddingsProvider implements EmbeddingsProvider {
  */
 export class FakeEmbeddingsProvider implements EmbeddingsProvider {
   async embed(text: string): Promise<readonly number[]> {
-    return this.embedBatch([text])[0]!;
+    const results = await this.embedBatch([text]);
+    return results[0] ?? [];
   }
 
   embedBatch(texts: readonly string[]): Promise<readonly (readonly number[])[]> {

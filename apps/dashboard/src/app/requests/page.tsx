@@ -1,7 +1,7 @@
 'use client';
 
-import { useLiveEvents } from '@/hooks/api';
 import { EventFeed } from '@/components/EventFeed';
+import { useLiveEvents } from '@/hooks/api';
 
 export default function RequestsPage() {
   const events = useLiveEvents();

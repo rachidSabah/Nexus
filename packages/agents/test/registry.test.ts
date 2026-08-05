@@ -161,7 +161,7 @@ describe('AgentRegistry', () => {
     await registry.register(makeAgent({ id: 'a1', capabilities: ['coding'] }));
     await registry.register(makeAgent({ id: 'a2', capabilities: ['coding'] }));
     await registry.setStatus('a2', 'busy');
-    await registry.register(makeAgent({ id: 'a3' }));
+    await registry.register(makeAgent({ id: 'a3', capabilities: ['frontend'] }));
     await registry.setStatus('a3', 'offline');
 
     const stats = registry.stats();

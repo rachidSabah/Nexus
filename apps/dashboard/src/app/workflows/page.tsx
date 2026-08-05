@@ -1,8 +1,8 @@
 'use client';
 
+import { Workflow, Play, Pause, Square, RotateCcw, Plus } from 'lucide-react';
 import { useState } from 'react';
 import useSWR from 'swr';
-import { Workflow, Play, Pause, Square, RotateCcw, Plus } from 'lucide-react';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 

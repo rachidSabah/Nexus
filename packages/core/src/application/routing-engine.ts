@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
+import { canTransition, isSelectable, NoEligibleProviderError } from '../domain/errors.js';
 import { buildEvent, type RouteResolvedEvent } from '../domain/events.js';
 import type { RoutingRequest, RoutingDecision, ProviderEndpoint } from '../domain/types.js';
+
 import type { EventBusPort, RoutingEnginePort } from './ports.js';
-import { canTransition, isSelectable, NoEligibleProviderError } from '../domain/errors.js';
 
 /**
  * ───────────────────────────────────────────────────────────────────────────
@@ -163,7 +164,7 @@ export class RoutingEngine implements RoutingEnginePort {
       }
       if (request.capabilities) {
         for (const [k, v] of Object.entries(request.capabilities)) {
-          if (v === true && (e.capabilities as Record<string, unknown>)[k] !== true) return false;
+          if (v === true && (e.capabilities as unknown as Record<string, unknown>)[k] !== true) return false;
         }
       }
       return true;
@@ -230,7 +231,7 @@ export class RoutingEngine implements RoutingEnginePort {
     if (!request.capabilities) return endpoint.priority;
     let score = 0;
     for (const [k, v] of Object.entries(request.capabilities)) {
-      if (v === true && (endpoint.capabilities as Record<string, unknown>)[k] === true) score++;
+      if (v === true && (endpoint.capabilities as unknown as Record<string, unknown>)[k] === true) score++;
     }
     return score;
   }

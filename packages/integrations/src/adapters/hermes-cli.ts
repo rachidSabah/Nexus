@@ -1,5 +1,5 @@
-import type { IntegrationContext } from '../contract.js';
 import { BaseIntegration, jsonString } from '../base.js';
+import type { IntegrationContext } from '../contract.js';
 
 /**
  * Hermes CLI — a multi-provider AI CLI. Hermes reads its config from

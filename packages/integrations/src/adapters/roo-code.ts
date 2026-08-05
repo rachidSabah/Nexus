@@ -1,5 +1,5 @@
-import type { IntegrationContext } from '../contract.js';
 import { BaseIntegration, jsonString } from '../base.js';
+import type { IntegrationContext } from '../contract.js';
 
 /**
  * Roo Code — VS Code extension, a fork of Cline with multi-mode support.

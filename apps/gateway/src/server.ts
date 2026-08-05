@@ -1,8 +1,8 @@
-import Fastify from 'fastify';
-import fastifyWebsocket from '@fastify/websocket';
-import fastifyCors from '@fastify/cors';
 import { randomUUID } from 'node:crypto';
 
+import type { A2ACoordinator, TeamManager } from '@anx/a2a';
+import type { AgentRegistry } from '@anx/agents';
+import { ChatCompletionUseCase } from '@anx/core';
 import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
@@ -11,21 +11,22 @@ import type {
   ProviderAdapter,
   RoutingEnginePort,
 } from '@anx/core';
-import { ChatCompletionUseCase } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
-import type { InProcessTelemetry } from '@anx/observability';
-import type { RbacService, JwtService, EncryptedCredentialVault } from '@anx/security';
-import type { DefaultNetworkService } from '@anx/networking';
 import type { McpServer } from '@anx/mcp-server';
-import type { A2ACoordinator, TeamManager } from '@anx/a2a';
-import type { PluginRuntime } from '@anx/plugins';
-import type { AgentRegistry } from '@anx/agents';
-import type { AgentRuntime } from '@anx/runtime';
-import type { WorkflowEngine } from '@anx/workflow';
 import type { DefaultMemory } from '@anx/memory';
-import type { ToolRuntime } from '@anx/tools';
+import type { DefaultNetworkService } from '@anx/networking';
+import type { InProcessTelemetry } from '@anx/observability';
+import type { PluginRuntime } from '@anx/plugins';
+import type { AgentRuntime } from '@anx/runtime';
+import type { RbacService, JwtService, EncryptedCredentialVault } from '@anx/security';
 import type { ExecutionPlanner } from '@anx/task-router';
+import type { ToolRuntime } from '@anx/tools';
+import type { WorkflowEngine } from '@anx/workflow';
+import fastifyCors from '@fastify/cors';
+import fastifyWebsocket from '@fastify/websocket';
+import Fastify from 'fastify';
+
 import type { GatewayConfig } from './config.js';
 
 /**
@@ -63,7 +64,9 @@ export class HttpServer {
     this.fastify = Fastify({ logger: false });
   }
 
-  private reply404 = (msg: string) => ({ error: { message: msg, code: 'NOT_FOUND' } });
+  private reply404(msg: string): { error: { message: string; code: string } } {
+    return { error: { message: msg, code: 'NOT_FOUND' } };
+  }
 
   async listen(port: number, host: string): Promise<void> {
     await this.fastify.register(fastifyCors, {
@@ -166,7 +169,7 @@ export class HttpServer {
         };
 
         try {
-          await this.deps.chatUseCase.execute(body, sink, request.raw.signal ?? new AbortController().signal);
+          await this.deps.chatUseCase.execute(body, sink, new AbortController().signal);
         } catch (err) {
           if (!reply.raw.headersSent) {
             reply.code(500).send({ error: { message: (err as Error).message } });
@@ -179,7 +182,7 @@ export class HttpServer {
       }
 
       try {
-        const response = await this.deps.chatUseCase.execute(body, undefined, request.raw.signal ?? new AbortController().signal);
+        const response = await this.deps.chatUseCase.execute(body, undefined, new AbortController().signal);
         return response;
       } catch (err) {
         const code = (err as { code?: string }).code;
@@ -205,7 +208,7 @@ export class HttpServer {
         return reply.code(501).send({ error: { message: `Provider ${endpoint.providerId} does not support embeddings` } });
       }
       try {
-        const response = await adapter.embed(endpoint, body, request.raw.signal ?? new AbortController().signal);
+        const response = await adapter.embed(endpoint, body, new AbortController().signal);
         return response;
       } catch (err) {
         return reply.code(500).send({ error: { message: (err as Error).message } });
@@ -275,7 +278,7 @@ export class HttpServer {
     this.fastify.get('/v1/agents/:id', async (request) => {
       const { id } = request.params as { id: string };
       const agent = this.deps.agents.get(id);
-      if (!agent) return reply404('agent not found');
+      if (!agent) return this.reply404('agent not found');
       return agent;
     });
 
@@ -341,7 +344,7 @@ export class HttpServer {
     this.fastify.get('/v1/workflows/:id', async (request) => {
       const { id } = request.params as { id: string };
       const def = await this.deps.workflows.get(id);
-      if (!def) return reply404('workflow not found');
+      if (!def) return this.reply404('workflow not found');
       return def;
     });
 

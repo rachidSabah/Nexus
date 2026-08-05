@@ -19,8 +19,8 @@ import { buildHeaders, fetchJson, parseSseStream } from '../shared/http.js';
  * `baseUrl` defaults and a few header quirks.
  */
 export class OpenAIAdapter implements ProviderAdapter {
-  readonly providerId = 'openai';
-  readonly displayName = 'OpenAI';
+  providerId = 'openai';
+  displayName = 'OpenAI';
 
   protected apiBase = 'https://api.openai.com/v1';
   protected authHeaderName = 'Authorization';
@@ -186,10 +186,10 @@ export class OpenAIAdapter implements ProviderAdapter {
       model: raw.model,
       choices: raw.choices.map((c) => ({
         index: c.index,
-        message: c.message,
+        message: { role: c.message.role, content: c.message.content, tool_calls: c.message.tool_calls },
         finish_reason: c.finish_reason,
         logprobs: c.logprobs,
-      })),
+      })) as never,
       usage: raw.usage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       systemFingerprint: raw.system_fingerprint,
       provider: this.providerId,

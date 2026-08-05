@@ -1,5 +1,5 @@
-import type { IntegrationContext } from '../contract.js';
 import { BaseIntegration, jsonString } from '../base.js';
+import type { IntegrationContext } from '../contract.js';
 
 /**
  * Continue — open-source AI code assistant (VS Code + JetBrains extension).

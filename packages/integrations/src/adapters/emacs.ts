@@ -1,5 +1,5 @@
-import type { IntegrationContext } from '../contract.js';
 import { BaseIntegration } from '../base.js';
+import type { IntegrationContext } from '../contract.js';
 
 /**
  * Emacs — extensible editor.

@@ -4,7 +4,6 @@ import {
   buildEvent,
   PluginError,
   type PluginLoadedEvent,
-  type PluginRuntimePort,
   type PluginDescriptor,
   type EventBusPort,
 } from '@anx/core';
@@ -76,7 +75,7 @@ export interface PluginSpec {
  *   - "Transformer" hooks (onRequest, onProviderChunk, onResponse) pass
  *     the return value of plugin N to plugin N+1.
  */
-export class PluginRuntime implements PluginRuntimePort {
+export class PluginRuntime {
   private readonly plugins = new Map<string, Plugin>();
   private readonly loadOrder: string[] = [];
 
@@ -90,7 +89,7 @@ export class PluginRuntime implements PluginRuntimePort {
       throw new PluginError(spec.id, 'plugin already loaded');
     }
     const plugin = await this.loader.load(spec);
-    plugin.descriptor; // sanity
+    void plugin.descriptor; // sanity check that descriptor exists
     this.plugins.set(spec.id, plugin);
     this.loadOrder.push(spec.id);
 
@@ -132,7 +131,7 @@ export class PluginRuntime implements PluginRuntimePort {
       // Only invoke if the plugin declares this hook in its descriptor.
       if (!plugin.descriptor.hooks.includes(hook)) continue;
 
-      const handler = (plugin as Record<string, ((...a: unknown[]) => Promise<unknown>) | undefined>)[hook];
+      const handler = (plugin as unknown as Record<string, ((...a: unknown[]) => Promise<unknown>) | undefined>)[hook];
       if (!handler) continue;
       try {
         const result = await handler(...args);

@@ -262,9 +262,28 @@ export class ModelSelector {
    * Pick the best model for an agent given task criteria. If the agent
    * declares `models: ['*']`, we fall back to a default mapping.
    */
-  select(agent: AgentRecord, taskType: TaskType, criteria: ModelSelectionCriteria = {}): string {
+  select(agent: AgentRecord, taskType: TaskType, _criteria: ModelSelectionCriteria = {}): string {
     const models = agent.models;
     if (models.length === 0) return 'gpt-4';
+    // If agent supports wildcard, use task preference directly
+    if (models.includes('*')) {
+      const taskPreferences: Partial<Record<TaskType, readonly string[]>> = {
+        architecture: ['claude-3-5-sonnet', 'claude-3-opus', 'gpt-4', 'o1'],
+        backend: ['deepseek-coder', 'gpt-4o', 'claude-3-5-sonnet'],
+        frontend: ['gemini-1.5-pro', 'gpt-4o', 'claude-3-5-sonnet'],
+        testing: ['gpt-4o', 'codex-cli', 'deepseek-coder'],
+        documentation: ['mistral-large', 'gpt-4o', 'claude-3-5-haiku'],
+        review: ['claude-3-5-sonnet', 'gpt-4'],
+        debugging: ['deepseek-coder', 'claude-3-5-sonnet', 'gpt-4o'],
+        refactoring: ['claude-3-5-sonnet', 'gpt-4'],
+        security: ['claude-3-5-sonnet', 'gpt-4', 'o1'],
+        deployment: ['gpt-4o', 'claude-3-5-sonnet'],
+        'data-analysis': ['gpt-4o', 'claude-3-5-sonnet'],
+        general: ['gpt-4o', 'gpt-4'],
+      };
+      const prefs = taskPreferences[taskType] ?? ['gpt-4'];
+      return prefs[0] ?? 'gpt-4';
+    }
     if (models.length === 1) return models[0]!;
 
     // Default model preferences per task type

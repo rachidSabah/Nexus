@@ -1,4 +1,5 @@
-import type { ProviderEndpoint, ProviderCapabilities, RoutingEnginePort, CredentialVaultPort } from '@anx/core';
+import type { ProviderCapabilities, RoutingEnginePort, CredentialVaultPort } from '@anx/core';
+
 import type { GatewayConfig } from './config.js';
 
 const DEFAULT_CAPS: ProviderCapabilities = {

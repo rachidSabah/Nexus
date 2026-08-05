@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 
 import type { DomainEvent } from '../domain/events.js';
+
 import type { EventBusPort } from './ports.js';
 
 /**

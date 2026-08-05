@@ -54,7 +54,7 @@ export class McpClient {
   }
 
   listTools(): readonly McpToolDescriptor[] {
-    return Array.from(this.tools.values()).map(({ config, ...desc }) => desc);
+    return Array.from(this.tools.values()).map(({ config: _config, ...desc }) => desc);
   }
 
   async invokeTool(name: string, args: Record<string, unknown>): Promise<unknown> {

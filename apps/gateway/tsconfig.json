@@ -2,29 +2,14 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src",
-    "composite": true
+    "rootDir": "./src"
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "test"],
-  "references": [
-    { "path": "../../packages/core" },
-    { "path": "../../packages/providers" },
-    { "path": "../../packages/routing" },
-    { "path": "../../packages/plugins" },
-    { "path": "../../packages/integrations" },
-    { "path": "../../packages/networking" },
-    { "path": "../../packages/security" },
-    { "path": "../../packages/observability" },
-    { "path": "../../packages/mcp-server" },
-    { "path": "../../packages/mcp-client" },
-    { "path": "../../packages/a2a" },
-    { "path": "../../packages/agents" },
-    { "path": "../../packages/runtime" },
-    { "path": "../../packages/workflow" },
-    { "path": "../../packages/memory" },
-    { "path": "../../packages/tools" },
-    { "path": "../../packages/task-router" },
-    { "path": "../../packages/persistence" }
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test"
   ]
 }

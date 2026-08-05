@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import type { AgentRegistry } from '@anx/agents';
 import {
   buildEvent,
   type AgentCompletedEvent,
@@ -12,7 +13,6 @@ import {
   ProviderResponseError,
 } from '@anx/core';
 import { retry, sleep } from '@anx/shared';
-import type { AgentRegistry } from '@anx/agents';
 
 /**
  * ───────────────────────────────────────────────────────────────────────────
@@ -85,10 +85,10 @@ export interface AgentSession {
   readonly id: string;
   readonly agentId: string;
   readonly startedAt: Date;
-  readonly endedAt?: Date;
-  readonly taskCount: number;
-  readonly tokensUsed: number;
-  readonly costUsd: number;
+  endedAt?: Date;
+  taskCount: number;
+  tokensUsed: number;
+  costUsd: number;
 }
 
 /**
@@ -347,9 +347,6 @@ export class AgentRuntime {
 
 interface AgentSessionImpl extends AgentSession {
   endedAt?: Date;
-  taskCount: number;
-  tokensUsed: number;
-  costUsd: number;
 }
 
 /**

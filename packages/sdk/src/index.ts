@@ -44,7 +44,7 @@ export class NexusClient {
     this.chat = new ChatResource(this);
   }
 
-  protected async request<T>(path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<T> {
+  async request<T>(path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(this.options.headers ?? {}),
@@ -61,7 +61,7 @@ export class NexusClient {
     return (await r.json()) as T;
   }
 
-  protected async requestStream(
+  async requestStream(
     path: string,
     init: RequestInit & { signal?: AbortSignal } = {},
   ): Promise<ReadableStream<Uint8Array>> {
@@ -85,7 +85,7 @@ export class NexusClient {
 
 class ChatResource {
   readonly completions: CompletionsResource;
-  constructor(private readonly client: NexusClient) {
+  constructor(client: NexusClient) {
     this.completions = new CompletionsResource(client);
   }
 }

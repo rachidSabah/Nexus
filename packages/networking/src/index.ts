@@ -1,5 +1,5 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
-import { resolver as dnsResolver } from 'node:dns';
+import { setDefaultResultOrder } from 'node:dns/promises';
 
 import type { NetworkDiagnostics, NetworkPort } from '@anx/core';
 
@@ -174,6 +174,6 @@ export class DefaultNetworkService implements NetworkPort {
  * Configure Node's DNS resolver to prefer IPv4 (works around a common issue
  * where Node prefers AAAA records but the network only has IPv4).
  */
-export function preferIpv4(): void {
-  dnsResolver.setDefaultResultOrder('ipv4first');
+export async function preferIpv4(): Promise<void> {
+  await setDefaultResultOrder('ipv4first');
 }

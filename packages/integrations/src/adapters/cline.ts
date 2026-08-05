@@ -1,5 +1,5 @@
-import type { IntegrationContext } from '../contract.js';
 import { BaseIntegration, jsonString } from '../base.js';
+import type { IntegrationContext } from '../contract.js';
 
 /**
  * Cline — autonomous AI coding agent for VS Code (formerly Claude Dev).

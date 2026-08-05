@@ -18,13 +18,14 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
+import { randomUUID } from 'node:crypto';
+
 import type {
   EndpointRepository,
   AuditLogPort,
   CredentialVaultPort,
 } from '@anx/core';
 import type { ProviderEndpoint } from '@anx/core';
-import { randomUUID } from 'node:crypto';
 
 // ─── In-Memory implementations (default) ────────────────────────────────────
 
@@ -270,7 +271,7 @@ export class SqliteAuditLogRepository implements AuditLogPort {
 // Full implementation would use `pg` Pool. Stubbed here to avoid hard dep.
 
 export class PostgresEndpointRepository implements EndpointRepository {
-  constructor(private readonly connectionString: string) {
+  constructor(_connectionString: string) {
     throw new Error(
       'PostgresEndpointRepository not yet implemented. Install `pg` and use the adapter from @anx/persistence/adapters/postgres (coming in v0.5).',
     );
@@ -282,7 +283,7 @@ export class PostgresEndpointRepository implements EndpointRepository {
 }
 
 export class PostgresAuditLogRepository implements AuditLogPort {
-  constructor(private readonly connectionString: string) {
+  constructor(_connectionString: string) {
     throw new Error('PostgresAuditLogRepository not yet implemented (planned v0.5).');
   }
   async append(): Promise<void> {}
@@ -292,7 +293,7 @@ export class PostgresAuditLogRepository implements AuditLogPort {
 // ─── Redis stub ─────────────────────────────────────────────────────────────
 
 export class RedisEndpointRepository implements EndpointRepository {
-  constructor(private readonly redisUrl: string) {
+  constructor(_redisUrl: string) {
     throw new Error(
       'RedisEndpointRepository not yet implemented. Install `ioredis` and use the adapter from @anx/persistence/adapters/redis (coming in v0.5).',
     );
@@ -306,7 +307,7 @@ export class RedisEndpointRepository implements EndpointRepository {
 // ─── Vault stub (Redis-backed) ──────────────────────────────────────────────
 
 export class RedisCredentialVault implements CredentialVaultPort {
-  constructor(private readonly redisUrl: string) {
+  constructor(_redisUrl: string) {
     throw new Error('RedisCredentialVault not yet implemented (planned v0.5).');
   }
   async get(): Promise<string | undefined> { return undefined; }

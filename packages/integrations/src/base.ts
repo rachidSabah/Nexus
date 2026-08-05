@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile, unlink, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import type { IntegrationAdapter, IntegrationContext, IntegrationResult, IntegrationStatus } from './contract.js';
-import { fail, home, ok, path } from './contract.js';
+import { fail, home, ok } from './contract.js';
 
 /**
  * Base class with file I/O helpers. Concrete integrations extend this and

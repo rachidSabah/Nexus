@@ -1,5 +1,5 @@
-import type { IntegrationContext } from '../contract.js';
 import { BaseIntegration } from '../base.js';
+import type { IntegrationContext } from '../contract.js';
 
 /**
  * Gemini CLI — Google's official CLI for Gemini models.

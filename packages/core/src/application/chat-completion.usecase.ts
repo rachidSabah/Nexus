@@ -12,7 +12,6 @@ import {
   type ProviderRequestStartedEvent,
   type ProviderRequestSucceededEvent,
   type RequestReceivedEvent,
-  type RouteResolvedEvent,
 } from '../domain/events.js';
 import type {
   ChatCompletionChunk,
@@ -22,6 +21,7 @@ import type {
   ProviderEndpoint,
   TokenUsage,
 } from '../domain/types.js';
+
 import type {
   ChunkSink,
   CostCalculatorPort,
@@ -111,9 +111,10 @@ export class ChatCompletionUseCase {
       );
 
       try {
+        const effectiveSignal: AbortSignal = signal ?? new AbortController().signal;
         const response = request.stream
-          ? await this.streamAndCollect(adapter, endpoint, request, sink, signal)
-          : await adapter.chatCompletion(endpoint, request, signal ?? new AbortController().signal);
+          ? await this.streamAndCollect(adapter, endpoint, request, sink, effectiveSignal)
+          : await adapter.chatCompletion(endpoint, request, effectiveSignal);
 
         const latencyMs = Date.now() - startedAt;
         this.routing.recordSuccess(endpoint.id, latencyMs);

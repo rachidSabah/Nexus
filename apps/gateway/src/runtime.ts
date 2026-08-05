@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { AgentRegistry as A2AAgentRegistry, A2ACoordinator, TeamManager } from '@anx/a2a';
+import { AgentRegistry, registerBuiltinAgents } from '@anx/agents';
 import {
   ChatCompletionUseCase,
   DefaultCostCalculator,
@@ -13,56 +15,54 @@ import {
   type ProviderEndpoint,
   type RoutingDecision,
 } from '@anx/core';
-import { createDefaultAdapters } from '@anx/providers';
-import { PluginRuntime } from '@anx/plugins';
-import { EncryptedCredentialVault, RbacService, BUILTIN_ROLES, JwtService, hashApiKey } from '@anx/security';
-import { InProcessTelemetry, StructuredLogger, wireEventsToTelemetry } from '@anx/observability';
-import { DefaultNetworkService, preferIpv4 } from '@anx/networking';
-import { McpServer } from '@anx/mcp-server';
 import { McpClient } from '@anx/mcp-client';
-import { AgentRegistry as A2AAgentRegistry, A2ACoordinator, TeamManager } from '@anx/a2a';
-import { AgentRegistry, registerBuiltinAgents } from '@anx/agents';
-import { AgentRuntime, InMemoryTaskExecutor, type TaskExecutor } from '@anx/runtime';
-import { WorkflowEngine, InMemoryWorkflowRepository, WORKFLOW_TEMPLATES } from '@anx/workflow';
+import { McpServer } from '@anx/mcp-server';
 import { DefaultMemory, InMemoryVectorStore, FakeEmbeddingsProvider } from '@anx/memory';
-import { ToolRuntime, registerBuiltinToolDefinitions } from '@anx/tools';
+import { DefaultNetworkService, preferIpv4 } from '@anx/networking';
+import { InProcessTelemetry, StructuredLogger, wireEventsToTelemetry } from '@anx/observability';
+import { PluginRuntime } from '@anx/plugins';
+import { createDefaultAdapters } from '@anx/providers';
+import { AgentRuntime, type TaskExecutor } from '@anx/runtime';
+import { EncryptedCredentialVault, RbacService, BUILTIN_ROLES, JwtService, hashApiKey } from '@anx/security';
 import { createPlanner } from '@anx/task-router';
+import { ToolRuntime, registerBuiltinToolDefinitions } from '@anx/tools';
+import { WorkflowEngine, InMemoryWorkflowRepository, WORKFLOW_TEMPLATES } from '@anx/workflow';
 
-import { HttpServer } from './server.js';
 import { ConfigLoader, type GatewayConfig } from './config.js';
 import { registerDefaultEndpoints } from './endpoints.js';
+import { HttpServer } from './server.js';
 
 /**
  * The gateway runtime. Composes all packages and wires up the Fastify HTTP
  * server. This is the entrypoint used by both `bin.ts` and by tests.
  */
 export class GatewayRuntime {
-  readonly config: GatewayConfig;
-  readonly events: InMemoryEventBus;
-  readonly telemetry: InProcessTelemetry;
-  readonly logger: StructuredLogger;
-  readonly routing: RoutingEngine;
-  readonly audit: InMemoryAuditLog;
-  readonly vault: EncryptedCredentialVault;
-  readonly rbac: RbacService;
-  readonly jwt: JwtService;
-  readonly plugins: PluginRuntime;
-  readonly network: DefaultNetworkService;
-  readonly mcpServer: McpServer;
-  readonly mcpClient: McpClient;
-  readonly a2aRegistry: A2AAgentRegistry;
-  readonly a2a: A2ACoordinator;
-  readonly adapters: ReturnType<typeof createDefaultAdapters>;
-  readonly chatUseCase: ChatCompletionUseCase;
-  readonly server: HttpServer;
+  readonly config!: GatewayConfig;
+  readonly events!: InMemoryEventBus;
+  readonly telemetry!: InProcessTelemetry;
+  readonly logger!: StructuredLogger;
+  readonly routing!: RoutingEngine;
+  readonly audit!: InMemoryAuditLog;
+  readonly vault!: EncryptedCredentialVault;
+  readonly rbac!: RbacService;
+  readonly jwt!: JwtService;
+  readonly plugins!: PluginRuntime;
+  readonly network!: DefaultNetworkService;
+  readonly mcpServer!: McpServer;
+  readonly mcpClient!: McpClient;
+  readonly a2aRegistry!: A2AAgentRegistry;
+  readonly a2a!: A2ACoordinator;
+  readonly adapters!: ReturnType<typeof createDefaultAdapters>;
+  readonly chatUseCase!: ChatCompletionUseCase;
+  readonly server!: HttpServer;
   // Phase 4
-  readonly agents: AgentRegistry;
-  readonly runtime: AgentRuntime;
-  readonly workflows: WorkflowEngine;
-  readonly memory: DefaultMemory;
-  readonly tools: ToolRuntime;
-  readonly planner: ReturnType<typeof createPlanner>;
-  readonly teams: TeamManager;
+  readonly agents!: AgentRegistry;
+  readonly runtime!: AgentRuntime;
+  readonly workflows!: WorkflowEngine;
+  readonly memory!: DefaultMemory;
+  readonly tools!: ToolRuntime;
+  readonly planner!: ReturnType<typeof createPlanner>;
+  readonly teams!: TeamManager;
 
   private constructor(opts: {
     config: GatewayConfig;

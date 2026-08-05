@@ -1,12 +1,14 @@
 'use client';
 
-import { useHealth, useProviders, useLiveEvents } from '@/hooks/api';
-import { MetricCard } from '@/components/MetricCard';
-import { ProviderTable } from '@/components/ProviderTable';
+import { Activity, DollarSign, Zap, Clock } from 'lucide-react';
+
 import { EventFeed } from '@/components/EventFeed';
 import { LatencyChart } from '@/components/LatencyChart';
+import { MetricCard } from '@/components/MetricCard';
+import { ProviderTable } from '@/components/ProviderTable';
 import { TokenUsageChart } from '@/components/TokenUsageChart';
-import { Activity, DollarSign, Zap, Clock } from 'lucide-react';
+import { useHealth, useProviders, useLiveEvents } from '@/hooks/api';
+
 
 export default function OverviewPage() {
   const { data: health } = useHealth();

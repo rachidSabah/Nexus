@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -202,8 +202,8 @@ describe('Integration install / uninstall round-trip', () => {
     const adapter = registry.get('cursor')!;
     const configPath = join(tempHome, '.cursor/config.json');
 
-    // Pre-existing user config
-    mkdtempSync(join(tempHome, '.cursor'), { recursive: true } as never);
+    // Pre-existing user config — create the directory first
+    mkdirSync(join(tempHome, '.cursor'), { recursive: true });
     writeFileSync(configPath, JSON.stringify({ userSetting: 'preserve-me', openaiApiBase: 'old-value' }));
 
     const ctx = makeCtx({ homeDir: tempHome, force: false }); // NOT force

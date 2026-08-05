@@ -1,6 +1,7 @@
 import type { TokenUsage } from '../domain/types.js';
-import type { CostCalculatorPort } from './ports.js';
+
 import { computeCost } from './chat-completion.usecase.js';
+import type { CostCalculatorPort } from './ports.js';
 
 /**
  * Default cost calculator — linear per 1K tokens, no tiering.

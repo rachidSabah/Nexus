@@ -1,5 +1,5 @@
-import type { IntegrationContext } from '../contract.js';
 import { BaseIntegration, jsonString } from '../base.js';
+import type { IntegrationContext } from '../contract.js';
 
 /**
  * OpenCode — terminal-based AI coding agent (TypeScript / Node).

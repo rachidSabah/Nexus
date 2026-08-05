@@ -46,7 +46,7 @@ export async function retry<T>(
       await sleep(delay);
     }
   }
-  throw lastError;
+  throw lastError ?? new Error('retry failed: no error captured');
 }
 
 /**
@@ -83,7 +83,7 @@ export async function streamToString(stream: ReadableStream<Uint8Array>): Promis
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let result = '';
-  while (true) {
+  for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     result += decoder.decode(value, { stream: true });

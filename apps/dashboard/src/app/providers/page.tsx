@@ -1,7 +1,7 @@
 'use client';
 
-import { useProviders } from '@/hooks/api';
 import { ProviderTable } from '@/components/ProviderTable';
+import { useProviders } from '@/hooks/api';
 
 export default function ProvidersPage() {
   const { data: providers, isLoading } = useProviders();

@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import useSWR from 'swr';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -13,7 +14,19 @@ export interface Provider {
   weight: number;
   region?: string;
   tags: string[];
-  capabilities: Record<string, unknown>;
+  capabilities: {
+    streaming?: boolean;
+    toolCalling?: boolean;
+    vision?: boolean;
+    audio?: boolean;
+    speech?: boolean;
+    embeddings?: boolean;
+    reasoning?: boolean;
+    jsonMode?: boolean;
+    maxOutputTokens?: number;
+    maxInputTokens?: number;
+    supportedModalities?: string[];
+  };
   pricing?: { inputPer1K: number; outputPer1K: number; currency: string };
   updatedAt: string;
 }
@@ -45,5 +58,3 @@ export function useLiveEvents(): any[] {
   }, []);
   return events;
 }
-
-import { useEffect, useState } from 'react';

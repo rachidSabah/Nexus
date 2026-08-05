@@ -1,7 +1,7 @@
 'use client';
 
-import useSWR from 'swr';
 import { Users, FileText, Vote } from 'lucide-react';
+import useSWR from 'swr';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 

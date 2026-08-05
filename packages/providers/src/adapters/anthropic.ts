@@ -20,8 +20,8 @@ import { parseSseStream } from '../shared/http.js';
  * and respects Anthropic's required `anthropic-version` header.
  */
 export class AnthropicAdapter implements ProviderAdapter {
-  readonly providerId = 'anthropic';
-  readonly displayName = 'Anthropic';
+  providerId = 'anthropic';
+  displayName = 'Anthropic';
 
   protected apiBase = 'https://api.anthropic.com';
   protected apiVersion = '2023-06-01';
@@ -126,7 +126,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     return fromEnv;
   }
 
-  protected headers(endpoint: ProviderEndpoint, apiKey: string): Record<string, string> {
+  protected headers(_endpoint: ProviderEndpoint, apiKey: string): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
@@ -182,7 +182,7 @@ export class AnthropicAdapter implements ProviderAdapter {
   protected translateResponse(
     raw: AnthropicMessageResponse,
     endpoint: ProviderEndpoint,
-    requestModel: string,
+    _requestModel: string,
   ): ChatCompletionResponse {
     const content = (raw.content ?? [])
       .filter((b) => b.type === 'text')

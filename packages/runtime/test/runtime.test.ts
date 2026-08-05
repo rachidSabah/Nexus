@@ -40,6 +40,12 @@ describe('AgentRuntime', () => {
       permissions: ['filesystem.read'],
       concurrencyLimit: 2,
     });
+    // Default runtime with a stub executor; individual tests may override.
+    runtime = new AgentRuntime(
+      registry,
+      new InMemoryTaskExecutor(async () => makeResponse('ok')),
+      bus,
+    );
   });
 
   it('opens and closes sessions', () => {

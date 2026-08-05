@@ -354,6 +354,7 @@ export class TeamManager {
         else abstain += power;
       }
     }
+    void abstain;
 
     const status: Proposal['status'] = yes > no ? 'accepted' : no >= yes ? 'rejected' : 'expired';
     const updated: Proposal = { ...proposal, status };

@@ -125,6 +125,8 @@ export class RbacService {
    */
   private matches(permission: string, action: string): boolean {
     if (permission === action) return true;
+    // A bare '*' matches everything (admin wildcard).
+    if (permission === '*') return true;
     if (permission.endsWith(':*')) {
       return action.startsWith(permission.slice(0, -1));
     }
@@ -180,13 +182,15 @@ export class JwtService {
     const h = this.b64url(JSON.stringify(header));
     const p = this.b64url(JSON.stringify(fullPayload));
     const sig = createHmac('sha256', this.secret).update(`${h}.${p}`).digest();
-    return `${h}.${p}.${this.b64url(sig.toString('binary'))}`;
+    return `${h}.${p}.${sig.toString('base64url')}`;
   }
 
   verify(token: string): Record<string, unknown> | null {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
-    const [h, p, sig] = parts;
+    const h = parts[0]!;
+    const p = parts[1]!;
+    const sig = parts[2]!;
     const expectedSig = createHmac('sha256', this.secret).update(`${h}.${p}`).digest();
     if (!this.constantTimeEqual(this.b64urlDecode(sig), expectedSig)) return null;
     try {

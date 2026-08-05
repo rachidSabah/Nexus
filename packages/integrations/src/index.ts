@@ -61,4 +61,4 @@ export const INTEGRATIONS_VERSION = '0.1.0';
 /**
  * Total count — convenient for tests.
  */
-export const BUILTIN_INTEGRATIONS_COUNT = 19;
+export const BUILTIN_INTEGRATIONS_COUNT = 18;

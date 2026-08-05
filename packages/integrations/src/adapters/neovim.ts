@@ -1,5 +1,5 @@
+import { BaseIntegration } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
-import { BaseIntegration, jsonString } from '../base.js';
 
 /**
  * Neovim — extensible Vim fork.

@@ -572,7 +572,7 @@ export class WorkflowEngine {
     );
   }
 
-  private async resolveAgentByCapability(capability: string): Promise<string | undefined> {
+  private async resolveAgentByCapability(_capability: string): Promise<string | undefined> {
     // Delegates to the agent registry via the runtime. The runtime doesn't
     // expose the registry directly, so we use a callback. For now, return
     // undefined and require explicit agent ids in steps.

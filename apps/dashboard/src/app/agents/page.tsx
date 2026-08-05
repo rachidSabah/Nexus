@@ -1,7 +1,7 @@
 'use client';
 
+import { Bot } from 'lucide-react';
 import useSWR from 'swr';
-import { Bot, Activity, CheckCircle2, XCircle } from 'lucide-react';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 

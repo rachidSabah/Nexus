@@ -1,25 +1,25 @@
-import type { IntegrationAdapter } from './contract.js';
 
+import { AiderIntegration } from './adapters/aider.js';
 import { ClaudeCodeIntegration } from './adapters/claude-code.js';
+import { ClineIntegration } from './adapters/cline.js';
 import { CodexCliIntegration } from './adapters/codex-cli.js';
+import { ContinueIntegration } from './adapters/continue.js';
+import { CursorIntegration } from './adapters/cursor.js';
+import { EmacsIntegration } from './adapters/emacs.js';
 import { GeminiCliIntegration } from './adapters/gemini-cli.js';
 import { HermesCliIntegration } from './adapters/hermes-cli.js';
+import { JetBrainsIntegration } from './adapters/jetbrains.js';
+import { NeovimIntegration } from './adapters/neovim.js';
 import {
   OpenCodeIntegration,
   OpenCodeGoIntegration,
   OpenCodeZenIntegration,
 } from './adapters/opencode.js';
-import { CursorIntegration } from './adapters/cursor.js';
-import { ContinueIntegration } from './adapters/continue.js';
-import { ClineIntegration } from './adapters/cline.js';
-import { RooCodeIntegration } from './adapters/roo-code.js';
 import { OpenHandsIntegration } from './adapters/openhands.js';
-import { AiderIntegration } from './adapters/aider.js';
-import { ZedIntegration } from './adapters/zed.js';
+import { RooCodeIntegration } from './adapters/roo-code.js';
 import { VsCodeIntegration } from './adapters/vscode.js';
-import { JetBrainsIntegration } from './adapters/jetbrains.js';
-import { NeovimIntegration } from './adapters/neovim.js';
-import { EmacsIntegration } from './adapters/emacs.js';
+import { ZedIntegration } from './adapters/zed.js';
+import type { IntegrationAdapter } from './contract.js';
 
 /**
  * All built-in integrations, in display order. This is the canonical list
@@ -61,7 +61,7 @@ export function createIntegrationRegistry(): Map<string, IntegrationAdapter> {
 }
 
 /**
- * All integration IDs as a const tuple — useful for typed CLI args.
+ * All integration IDs — useful for typed CLI args.
  */
-export const INTEGRATION_IDS = BUILTIN_INTEGRATIONS.map((i) => i.id) as const;
-export type IntegrationId = (typeof INTEGRATION_IDS)[number];
+export const INTEGRATION_IDS: readonly string[] = BUILTIN_INTEGRATIONS.map((i) => i.id);
+export type IntegrationId = string;

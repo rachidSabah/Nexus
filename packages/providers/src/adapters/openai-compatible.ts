@@ -1,3 +1,5 @@
+import type { ChatCompletionRequest, ChatCompletionResponse, ProviderEndpoint } from '@anx/core';
+
 import { OpenAIAdapter } from './openai.js';
 
 /**
@@ -207,4 +209,4 @@ export class AzureOpenAIAdapter extends OpenAIAdapter {
 }
 
 // Re-export the type so subclasses can import it together.
-import type { ChatCompletionRequest, ChatCompletionResponse, ProviderEndpoint } from '@anx/core';
+// (Type imports are hoisted to the top of the file for ESLint import/order compliance.)

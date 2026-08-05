@@ -17,8 +17,8 @@ import { parseSseStream } from '../shared/http.js';
  * `streamGenerateContent` shape and back.
  */
 export class GoogleAdapter implements ProviderAdapter {
-  readonly providerId = 'google';
-  readonly displayName = 'Google Gemini';
+  providerId = 'google';
+  displayName = 'Google Gemini';
 
   protected apiBase = 'https://generativelanguage.googleapis.com/v1beta';
 

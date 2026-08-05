@@ -6,12 +6,11 @@
  *   - `AffinityRouter` — sticky routing by principal / session
  *   - `QualityRouter` — quality-score-based routing using model benchmarks
  */
-export { RoutingEngine } from '@anx/core';
-export type { RoutingEnginePort, RoutingRequest, RoutingDecision } from '@anx/core';
+import { NoEligibleProviderError, RoutingEngine } from '@anx/core';
+import type { ProviderEndpoint, RoutingDecision, RoutingEnginePort, RoutingRequest } from '@anx/core';
 
-import type { ProviderEndpoint, RoutingDecision, RoutingRequest } from '@anx/core';
-import { NoEligibleProviderError } from '@anx/core';
-import type { RoutingEnginePort } from '@anx/core';
+export { RoutingEngine };
+export type { RoutingEnginePort, RoutingRequest, RoutingDecision };
 
 /**
  * Composite engine — tries each child engine in order until one returns a
@@ -73,8 +72,8 @@ export class AffinityRouter implements RoutingEnginePort {
         if (ep) {
           return {
             endpoint: ep,
-            strategy: 'affinity',
-            reason: `sticky endpoint ${ep.id} for key ${key}`,
+            strategy: 'weighted',
+            reason: `sticky endpoint ${ep.id} for key ${key} (affinity)`,
             alternatives: [],
             resolvedAt: new Date(),
           };

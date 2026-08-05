@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { Moon, Search, Sun } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 export function Topbar() {
   const [time, setTime] = useState<string>('');

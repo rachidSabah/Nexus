@@ -1,9 +1,9 @@
-import { NexusClient } from '@anx/sdk';
 import {
   BUILTIN_INTEGRATIONS,
   createIntegrationRegistry,
   type IntegrationContext,
 } from '@anx/integrations';
+import { NexusClient } from '@anx/sdk';
 
 /**
  * Agent Nexus Gateway CLI.
@@ -74,13 +74,13 @@ export class NexusCli {
       messages: [{ role: 'user', content: message }],
       stream,
     });
-    if (stream || typeof result[Symbol.asyncIterator] === 'function') {
+    if (stream || typeof (result as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === 'function') {
       for await (const chunk of result as AsyncIterable<{ choices: Array<{ delta: { content?: string } }> }>) {
         process.stdout.write(chunk.choices[0]?.delta?.content ?? '');
       }
       process.stdout.write('\n');
     } else {
-      const r = result as { choices: Array<{ message: { content: string } }> };
+      const r = result as unknown as { choices: Array<{ message: { content: string } }> };
       process.stdout.write(r.choices[0]?.message.content ?? '');
       process.stdout.write('\n');
     }
@@ -102,7 +102,7 @@ export class NexusCli {
     }
   }
 
-  private async health(): Promise<void> {
+  private async health(_args: string[] = []): Promise<void> {
     const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
     try {
       const r = await fetch(`${baseUrl}/health`);
@@ -238,7 +238,7 @@ export class NexusCli {
   private async integrationsInfo(args: string[]): Promise<void> {
     const [id] = args.filter((a) => !a.startsWith('--'));
     const registry = createIntegrationRegistry();
-    const adapter = registry.get(id);
+    const adapter = id ? registry.get(id) : undefined;
     if (!adapter) {
       process.stderr.write(`Unknown integration: ${id}\n`);
       process.stderr.write(`Available: ${Array.from(registry.keys()).join(', ')}\n`);

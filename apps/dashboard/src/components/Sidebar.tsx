@@ -1,8 +1,8 @@
 'use client';
 
+import { Activity, Boxes, Brain, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Store, Terminal, Users, Workflow } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Boxes, Brain, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Store, Terminal, Users, Workflow } from 'lucide-react';
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Gauge },

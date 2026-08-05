@@ -5,7 +5,7 @@ import { InMemoryEventBus } from '../src/application/event-bus.js';
 import { RoutingEngine } from '../src/application/routing-engine.js';
 import { DefaultFailover } from '../src/application/failover.js';
 import { DefaultCostCalculator } from '../src/application/cost-calculator.js';
-import { AllProvidersExhaustedError } from '../src/domain/errors.js';
+import { AllProvidersExhaustedError, ProviderResponseError } from '../src/domain/errors.js';
 import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
@@ -164,12 +164,8 @@ describe('ChatCompletionUseCase', () => {
   it('failovers when first provider throws retryable error', async () => {
     const primary = new FakeAdapter('openai', 'OpenAI');
     primary.nextResponse = () => {
-      const err = new Error('timeout') as Error & { code: string; status?: number };
-      err.code = 'ETIMEDOUT';
-      err.status = 500;
-      // Mimic ProviderResponseError shape
-      Object.defineProperty(err, 'code', { value: 'ETIMEDOUT', enumerable: true });
-      return err;
+      // Use the real ProviderResponseError so isRetryable() recognizes the 5xx status.
+      return new ProviderResponseError('ep-openai', 500, 'timeout');
     };
 
     const fallback = new FakeAdapter('anthropic', 'Anthropic');
@@ -191,24 +187,42 @@ describe('ChatCompletionUseCase', () => {
       latencyMs: 0,
     };
 
-    const { usecase, bus } = makeUsecase(
+    const bus = new InMemoryEventBus();
+    const engine = new RoutingEngine(bus);
+    // openai has priority 1 (highest), anthropic has priority 2 (failover)
+    const openaiEp = makeEndpoint('ep-openai', 'openai');
+    engine.registerEndpoint({ ...openaiEp, priority: 1 });
+    const anthropicEp = makeEndpoint('ep-anthropic', 'anthropic');
+    engine.registerEndpoint({ ...anthropicEp, priority: 2 });
+
+    const usecase = new ChatCompletionUseCase(
+      engine,
+      new DefaultFailover(),
       new Map([
         ['openai', primary],
         ['anthropic', fallback],
       ]),
+      bus,
+      new DefaultCostCalculator(),
     );
 
-    const events: unknown[] = [];
-    bus.subscribe('failover.triggered', (e) => events.push(e));
+    const events: string[] = [];
+    bus.subscribe('failover.triggered', () => events.push('failover'));
+    bus.subscribe('provider.request.failed', () => events.push('failed'));
+    bus.subscribe('provider.request.succeeded', () => events.push('succeeded'));
 
     const response = await usecase.execute({
       model: 'gpt-4',
       messages: [{ role: 'user', content: 'hi' }],
+      routing: { strategy: 'priority' },
     });
 
     expect(response.provider).toBe('anthropic');
-    await new Promise((r) => queueMicrotask(r));
-    expect(events.length).toBe(1);
+    // Allow all pending microtasks (publish uses queueMicrotask internally)
+    // to flush before asserting.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(events).toContain('failover');
+    expect(events).toContain('failed');
   });
 
   it('throws AllProvidersExhaustedError when all providers fail', async () => {
