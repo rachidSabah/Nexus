@@ -40,7 +40,6 @@ COPY --from=builder /app/apps/gateway/dist ./apps/gateway/dist
 COPY --from=builder /app/apps/gateway/package.json ./apps/gateway/package.json
 COPY --from=builder /app/apps/gateway/node_modules ./apps/gateway/node_modules
 COPY --from=builder /app/apps/dashboard/.next ./apps/dashboard/.next
-COPY --from=builder /app/apps/dashboard/public ./apps/dashboard/public
 COPY --from=builder /app/apps/dashboard/package.json ./apps/dashboard/package.json
 COPY --from=builder /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
 COPY --from=builder /app/packages ./packages
