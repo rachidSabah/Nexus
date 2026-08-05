@@ -38,6 +38,7 @@ Existing gateways (OpenRouter, LiteLLM, etc.) make tradeoffs that don't fit ever
 - ✅ MCP Client (consume external MCP servers and aggregate their tools)
 - ✅ A2A Protocol (Agent-to-Agent coordination)
 - ✅ Plugin Framework (lifecycle hooks: `onRequest`, `onRouteResolved`, `onProviderStart`, `onProviderChunk`, `onProviderEnd`, `onError`, `onResponse`, `onStartup`, `onShutdown`)
+- ✅ **19 Native Integrations** with auto-setup (Claude Code, Codex CLI, Gemini CLI, Hermes CLI, OpenCode, OpenCode Go, OpenCode Zen, Cursor, Continue, Cline, Roo Code, OpenHands, Aider, Zed, VS Code, JetBrains, Neovim, Emacs)
 - 🚧 Extension Marketplace (planned)
 - 🚧 Desktop App (planned — Electron shell)
 
@@ -231,32 +232,42 @@ anx providers list
 anx health
 ```
 
-### Point Claude Code at it
+### Auto-configure native integrations
 
-Add to your `~/.claude/settings.json`:
+The gateway ships with **19 native integrations** that auto-configure AI tools to route through it:
 
-```json
-{
-  "apiKeyHelper": "echo 'your-anx-key'",
-  "apiBaseUrl": "http://localhost:8787/v1"
-}
+```bash
+# List all integrations + their status
+anx integrations list
+
+# Configure Claude Code to use the gateway (writes ~/.claude/settings.json)
+anx integrations install claude-code
+
+# Configure OpenCode + OpenCode Go + OpenCode Zen together
+anx integrations install opencode opencode-go opencode-zen
+
+# Configure every installed tool in one shot (idempotent)
+anx integrations install --all
+
+# Verify a tool can reach the gateway
+anx integrations verify claude-code
 ```
 
-### Point Continue at it
+| CLI tools | Editors | IDEs |
+|---|---|---|
+| `claude-code` | `cursor` | `vscode` |
+| `codex-cli` | `continue` | `jetbrains` |
+| `gemini-cli` | `cline` | |
+| `hermes-cli` | `roo-code` | |
+| `opencode` | `zed` | |
+| `opencode-go` | `neovim` | |
+| `opencode-zen` | `emacs` | |
+| `aider` | | |
+| `openhands` | | |
 
-In `~/.continue/config.json`:
+See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for the full table and per-tool config paths.
 
-```json
-{
-  "models": [{
-    "title": "Nexus",
-    "provider": "openai",
-    "model": "gpt-4",
-    "apiBase": "http://localhost:8787/v1",
-    "apiKey": "your-anx-key"
-  }]
-}
-```
+> 💡 **Prefer automation?** Use `anx integrations install claude-code` (or `--all`) instead of editing config files by hand. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
 ## Architecture
 
@@ -305,6 +316,7 @@ agent-nexus-gateway/
 │   ├── providers/      # 17 provider adapters
 │   ├── routing/        # Routing engine extensions
 │   ├── plugins/        # Plugin framework
+│   ├── integrations/   # 19 native tool integrations (Claude Code, OpenCode, …)
 │   ├── networking/     # Proxy, DoH, diagnostics
 │   ├── security/       # Vault, RBAC, JWT
 │   ├── observability/  # Telemetry, Prometheus, structured logs
@@ -312,7 +324,8 @@ agent-nexus-gateway/
 │   ├── mcp-client/     # MCP client
 │   ├── a2a/            # Agent-to-Agent protocol
 │   ├── cli/            # CLI
-│   └── sdk/            # TypeScript SDK
+│   ├── sdk/            # TypeScript SDK
+│   └── shared/         # Common utilities
 ├── deploy/
 │   ├── docker/         # Dockerfile + Prometheus config
 │   ├── k8s/            # Kubernetes manifests

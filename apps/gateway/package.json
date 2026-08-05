@@ -21,6 +21,7 @@
     "@anx/providers": "workspace:*",
     "@anx/routing": "workspace:*",
     "@anx/plugins": "workspace:*",
+    "@anx/integrations": "workspace:*",
     "@anx/networking": "workspace:*",
     "@anx/security": "workspace:*",
     "@anx/observability": "workspace:*",

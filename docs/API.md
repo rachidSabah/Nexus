@@ -268,82 +268,75 @@ anx version
 
 ## Native integrations
 
-### Claude Code
+The gateway ships with **19 native integrations** that auto-configure AI tools to route through it. Don't edit config files by hand — use the CLI:
 
-`~/.claude/settings.json`:
+```bash
+# List all integrations + their status
+anx integrations list
 
-```json
-{
-  "apiKeyHelper": "echo $NEXUS_API_KEY",
-  "apiBaseUrl": "http://localhost:8787/v1"
-}
+# Configure Claude Code (writes ~/.claude/settings.json)
+anx integrations install claude-code
+
+# Configure OpenCode + OpenCode Go + OpenCode Zen together
+anx integrations install opencode opencode-go opencode-zen
+
+# Configure EVERY installed tool in one shot (idempotent)
+anx integrations install --all
+
+# Verify a tool can reach the gateway
+anx integrations verify claude-code
+
+# Show details about an integration
+anx integrations info opencode-zen
+
+# Remove gateway config from a tool
+anx integrations uninstall claude-code
 ```
 
-### Continue
+| CLI tools (9) | Editors (7) | IDEs (2) |
+|---|---|---|
+| `claude-code` | `cursor` | `vscode` |
+| `codex-cli` | `continue` | `jetbrains` |
+| `gemini-cli` | `cline` | |
+| `hermes-cli` | `roo-code` | |
+| `opencode` | `zed` | |
+| `opencode-go` | `neovim` | |
+| `opencode-zen` | `emacs` | |
+| `aider` | | |
+| `openhands` | | |
 
-`~/.continue/config.json`:
+### `GET /v1/integrations`
 
-```json
+Returns the status of all 19 integrations. Used by the dashboard.
+
+```jsonc
 {
-  "models": [{
-    "title": "Nexus",
-    "provider": "openai",
-    "model": "gpt-4",
-    "apiBase": "http://localhost:8787/v1",
-    "apiKey": "your-key"
-  }]
-}
-```
-
-### Cursor
-
-Settings → Models → OpenAI API Base: `http://localhost:8787/v1`
-
-### OpenCode / Aider / Cline / Roo Code
-
-Set `OPENAI_API_BASE=http://localhost:8787/v1` and `OPENAI_API_KEY=your-key`.
-
-### VS Code (GitHub Copilot Chat)
-
-Not directly supported — Copilot Chat uses GitHub's backend. Use Continue or Cline instead.
-
-### Zed
-
-`~/.config/zed/settings.json`:
-
-```json
-{
-  "language_models": {
-    "openai": {
-      "api_url": "http://localhost:8787/v1",
-      "available_models": [{ "name": "gpt-4", "max_tokens": 8192 }]
+  "count": 19,
+  "integrations": [
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "description": "Anthropic's official agentic coding CLI",
+      "category": "cli",
+      "homepage": "https://docs.anthropic.com/en/docs/claude-code",
+      "installed": true,
+      "configured": true,
+      "configPath": "/home/user/.claude/settings.json",
+      "details": "ready"
+    },
+    {
+      "id": "opencode-zen",
+      "displayName": "OpenCode Zen",
+      "description": "Minimalist AI coding agent (opencode-zen)",
+      "category": "cli",
+      "installed": false,
+      "configured": false,
+      "details": "tool not installed"
     }
-  }
+  ]
 }
 ```
 
-### JetBrains
+### Manual configuration (advanced)
 
-Settings → Tools → AI Assistant → OpenAI API → Custom server: `http://localhost:8787/v1`
-
-### Neovim (with codecompanion.nvim)
-
-```lua
-require('codecompanion').setup({
-  adapters = {
-    nexus = function()
-      return require('codecompanion.adapters').extend('openai', {
-        env = { api_key = 'NEXUS_API_KEY', url = 'http://localhost:8787/v1' },
-      })
-    end,
-  },
-})
-```
-
-### Emacs (with gptel)
-
-```elisp
-(setq gptel-api-key "your-key")
-(setq gptel-use-curl t)
-(setq gptel--openai-url "http://localhost:8787/v1/chat/completions")
-```
+If you prefer to edit config files by hand, see [INTEGRATIONS.md](./INTEGRATIONS.md) for the exact path and format each tool expects. The CLI installer writes the same files you would.

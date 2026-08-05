@@ -13,6 +13,7 @@ import type {
 } from '@anx/core';
 import { ChatCompletionUseCase } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
+import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
 import type { InProcessTelemetry } from '@anx/observability';
 import type { RbacService, JwtService, EncryptedCredentialVault } from '@anx/security';
 import type { DefaultNetworkService } from '@anx/networking';
@@ -232,6 +233,27 @@ export class HttpServer {
     // ── Network diagnostics ────────────────────────────────────────────
     this.fastify.get('/v1/network/diagnostics', async () => {
       return this.deps.network.diagnose();
+    });
+
+    // ── Integrations list ──────────────────────────────────────────────
+    this.fastify.get('/v1/integrations', async (request) => {
+      const q = request.query as { gatewayUrl?: string; apiKey?: string; defaultModel?: string };
+      const ctx: IntegrationContext = {
+        gatewayUrl: q.gatewayUrl ?? `http://${request.headers['host'] ?? 'localhost:8787'}`,
+        apiKey: q.apiKey,
+        defaultModel: q.defaultModel ?? 'gpt-4',
+      };
+      const results = [];
+      for (const adapter of BUILTIN_INTEGRATIONS) {
+        const status = await adapter.status(ctx);
+        results.push({
+          ...status,
+          description: adapter.description,
+          category: adapter.category,
+          homepage: adapter.homepage,
+        });
+      }
+      return { count: results.length, integrations: results };
     });
 
     // ── Audit log query ────────────────────────────────────────────────

@@ -1,0 +1,48 @@
+import type { IntegrationContext } from '../contract.js';
+import { BaseIntegration, jsonString } from '../base.js';
+
+/**
+ * Claude Code — Anthropic's official CLI for agentic coding.
+ *
+ * Configures `~/.claude/settings.json` with the gateway URL. Claude Code
+ * reads `apiBaseUrl` and `apiKeyHelper` from this file.
+ *
+ * Source: https://docs.anthropic.com/en/docs/claude-code
+ */
+export class ClaudeCodeIntegration extends BaseIntegration {
+  readonly id = 'claude-code';
+  readonly displayName = 'Claude Code';
+  readonly description = "Anthropic's official agentic coding CLI";
+  readonly category = 'cli' as const;
+  readonly homepage = 'https://docs.anthropic.com/en/docs/claude-code';
+
+  protected detectBinaries(): string[] {
+    return ['claude'];
+  }
+
+  protected configFiles() {
+    return [
+      {
+        path: '.claude/settings.json',
+        merge: 'json-merge' as const,
+        content: (ctx: IntegrationContext) =>
+          jsonString({
+            apiBaseUrl: `${ctx.gatewayUrl}/v1`,
+            apiKeyHelper: ctx.apiKey
+              ? `echo '${ctx.apiKey}'`
+              : 'echo "no-key-required"',
+            model: ctx.defaultModel,
+          }),
+      },
+      {
+        path: '.claude/settings.local.json',
+        merge: 'skip' as const,
+        content: () =>
+          jsonString({
+            // Per-user overrides — left intentionally minimal.
+            permissions: { allow: [], deny: [] },
+          }),
+      },
+    ];
+  }
+}

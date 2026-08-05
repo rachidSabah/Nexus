@@ -1,4 +1,9 @@
 import { NexusClient } from '@anx/sdk';
+import {
+  BUILTIN_INTEGRATIONS,
+  createIntegrationRegistry,
+  type IntegrationContext,
+} from '@anx/integrations';
 
 /**
  * Agent Nexus Gateway CLI.
@@ -9,6 +14,11 @@ import { NexusClient } from '@anx/sdk';
  *   anx health
  *   anx config init
  *   anx completion --model gpt-4 --stream "Hello"
+ *   anx integrations list
+ *   anx integrations install claude-code
+ *   anx integrations install --all
+ *   anx integrations uninstall claude-code
+ *   anx integrations verify claude-code
  *   anx version
  */
 export class NexusCli {
@@ -20,6 +30,8 @@ export class NexusCli {
         return this.chat(rest);
       case 'providers':
         return this.providers(rest);
+      case 'integrations':
+        return this.integrations(rest);
       case 'health':
         return this.health(rest);
       case 'config':
@@ -112,6 +124,147 @@ export class NexusCli {
     }
   }
 
+  // ─── Integrations ─────────────────────────────────────────────────────
+  private async integrations(args: string[]): Promise<void> {
+    const [sub, ...rest] = args;
+    switch (sub) {
+      case 'list':
+        return this.integrationsList();
+      case 'install':
+        return this.integrationsInstall(rest);
+      case 'uninstall':
+        return this.integrationsUninstall(rest);
+      case 'verify':
+        return this.integrationsVerify(rest);
+      case 'info':
+        return this.integrationsInfo(rest);
+      default:
+        process.stderr.write(
+          'Usage: anx integrations <list|install|uninstall|verify|info> [id]\n',
+        );
+    }
+  }
+
+  private async integrationsList(): Promise<void> {
+    const ctx = this.integrationContext();
+    process.stdout.write(
+      `${'ID'.padEnd(20)} ${'NAME'.padEnd(22)} ${'CATEGORY'.padEnd(8)} ${'INSTALLED'.padEnd(10)} CONFIGURED\n`,
+    );
+    process.stdout.write(`${'─'.repeat(20)} ${'─'.repeat(22)} ${'─'.repeat(8)} ${'─'.repeat(10)} ${'─'.repeat(10)}\n`);
+    for (const adapter of BUILTIN_INTEGRATIONS) {
+      const status = await adapter.status(ctx);
+      process.stdout.write(
+        `${status.id.padEnd(20)} ${status.displayName.padEnd(22)} ${adapter.category.padEnd(8)} ${(status.installed ? 'yes' : 'no').padEnd(10)} ${status.configured ? 'yes' : 'no'}\n`,
+      );
+    }
+    process.stdout.write(`\n${BUILTIN_INTEGRATIONS.length} integrations available.\n`);
+  }
+
+  private async integrationsInstall(args: string[]): Promise<void> {
+    const ctx = this.integrationContext(args);
+    const registry = createIntegrationRegistry();
+    const ids = args.filter((a) => !a.startsWith('--'));
+
+    if (ids.length === 0 || ids[0] === '--all') {
+      process.stdout.write(`Installing all ${BUILTIN_INTEGRATIONS.length} integrations...\n\n`);
+      let ok = 0;
+      let fail = 0;
+      for (const adapter of BUILTIN_INTEGRATIONS) {
+        const result = await adapter.install(ctx);
+        const mark = result.ok ? '✓' : '✗';
+        process.stdout.write(`${mark} ${adapter.id.padEnd(20)} ${result.message}\n`);
+        if (result.ok) ok++; else fail++;
+        for (const a of result.actions) process.stdout.write(`    ${a}\n`);
+      }
+      process.stdout.write(`\nDone: ${ok} succeeded, ${fail} failed.\n`);
+      return;
+    }
+
+    for (const id of ids) {
+      const adapter = registry.get(id);
+      if (!adapter) {
+        process.stderr.write(`Unknown integration: ${id}\n`);
+        process.stderr.write(`Available: ${Array.from(registry.keys()).join(', ')}\n`);
+        process.exitCode = 1;
+        continue;
+      }
+      const result = await adapter.install(ctx);
+      process.stdout.write(`${result.ok ? '✓' : '✗'} ${adapter.displayName}: ${result.message}\n`);
+      for (const a of result.actions) process.stdout.write(`    ${a}\n`);
+      for (const e of result.errors ?? []) process.stderr.write(`    ERROR: ${e}\n`);
+    }
+  }
+
+  private async integrationsUninstall(args: string[]): Promise<void> {
+    const ctx = this.integrationContext(args);
+    const registry = createIntegrationRegistry();
+    const ids = args.filter((a) => !a.startsWith('--'));
+    if (ids.length === 0) {
+      process.stderr.write('Usage: anx integrations uninstall <id> [<id> ...]\n');
+      return;
+    }
+    for (const id of ids) {
+      const adapter = registry.get(id);
+      if (!adapter) {
+        process.stderr.write(`Unknown integration: ${id}\n`);
+        continue;
+      }
+      const result = await adapter.uninstall(ctx);
+      process.stdout.write(`${result.ok ? '✓' : '✗'} ${adapter.displayName}: ${result.message}\n`);
+      for (const a of result.actions) process.stdout.write(`    ${a}\n`);
+    }
+  }
+
+  private async integrationsVerify(args: string[]): Promise<void> {
+    const ctx = this.integrationContext(args);
+    const registry = createIntegrationRegistry();
+    const ids = args.filter((a) => !a.startsWith('--'));
+    if (ids.length === 0) {
+      process.stderr.write('Usage: anx integrations verify <id> [<id> ...]\n');
+      return;
+    }
+    for (const id of ids) {
+      const adapter = registry.get(id);
+      if (!adapter) {
+        process.stderr.write(`Unknown integration: ${id}\n`);
+        continue;
+      }
+      const result = await adapter.verify(ctx);
+      process.stdout.write(`${result.ok ? '✓' : '✗'} ${adapter.displayName}: ${result.message}\n`);
+      for (const a of result.actions) process.stdout.write(`    → ${a}\n`);
+    }
+  }
+
+  private async integrationsInfo(args: string[]): Promise<void> {
+    const [id] = args.filter((a) => !a.startsWith('--'));
+    const registry = createIntegrationRegistry();
+    const adapter = registry.get(id);
+    if (!adapter) {
+      process.stderr.write(`Unknown integration: ${id}\n`);
+      process.stderr.write(`Available: ${Array.from(registry.keys()).join(', ')}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(`${adapter.displayName}\n`);
+    process.stdout.write(`${'─'.repeat(adapter.displayName.length)}\n`);
+    process.stdout.write(`ID:          ${adapter.id}\n`);
+    process.stdout.write(`Description: ${adapter.description}\n`);
+    process.stdout.write(`Category:    ${adapter.category}\n`);
+    if (adapter.homepage) process.stdout.write(`Homepage:    ${adapter.homepage}\n`);
+    process.stdout.write(`\nInstall with:\n  anx integrations install ${adapter.id}\n`);
+  }
+
+  private integrationContext(args: string[] = []): IntegrationContext {
+    const flags = this.parseFlags(args);
+    return {
+      gatewayUrl: flags['gateway'] ?? process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787',
+      apiKey: flags['api-key'] ?? process.env['NEXUS_API_KEY'],
+      defaultModel: flags['model'] ?? 'gpt-4',
+      dryRun: flags['dry-run'] === 'true',
+      force: flags['force'] === 'true',
+    };
+  }
+
   private version(): void {
     process.stdout.write('agent-nexus-gateway v0.1.0\n');
   }
@@ -123,18 +276,34 @@ USAGE
   anx <command> [flags]
 
 COMMANDS
-  chat        Send a chat completion request
-  completion  Alias for chat
-  providers   List configured providers
-  health      Check gateway health
-  config      Manage configuration
-  version     Print CLI version
-  help        Show this help
+  chat                       Send a chat completion request
+  completion                 Alias for chat
+  providers                  List configured providers
+  integrations <subcmd>      Manage native tool integrations
+    list                     List all 19 supported integrations
+    install <id|--all>       Configure a tool to use the gateway
+    uninstall <id>           Remove gateway config from a tool
+    verify <id>              Test that a tool can reach the gateway
+    info <id>                Show details about an integration
+  health                     Check gateway health
+  config                     Manage configuration
+  version                    Print CLI version
+  help                       Show this help
+
+SUPPORTED INTEGRATIONS (19 total)
+  CLI:     claude-code, codex-cli, gemini-cli, hermes-cli,
+           opencode, opencode-go, opencode-zen, aider, openhands
+  Editors: cursor, continue, cline, roo-code, zed, neovim, emacs
+  IDEs:    vscode, jetbrains
 
 FLAGS
   --model <id>          Model to use (default: gpt-4)
   --message <text>      User message
   --stream <bool>       Stream response (default: false)
+  --gateway <url>       Gateway URL (default: env NEXUS_BASE_URL or http://localhost:8787)
+  --api-key <key>       API key (default: env NEXUS_API_KEY)
+  --force               Overwrite existing config files
+  --dry-run             Show what would happen without writing
 
 ENVIRONMENT
   NEXUS_BASE_URL        Gateway URL (default: http://localhost:8787)
@@ -145,6 +314,18 @@ EXAMPLES
   anx chat --model claude-3-5-sonnet --stream true --message "Write a haiku"
   anx providers list
   anx health
+
+  # Configure Claude Code to use the gateway
+  anx integrations install claude-code
+
+  # Configure OpenCode Zen + OpenCode Go
+  anx integrations install opencode-zen opencode-go
+
+  # Configure everything (idempotent — only writes files for installed tools)
+  anx integrations install --all
+
+  # See what's configured
+  anx integrations list
 `);
   }
 

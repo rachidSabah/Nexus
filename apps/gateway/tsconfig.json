@@ -12,6 +12,7 @@
     { "path": "../../packages/providers" },
     { "path": "../../packages/routing" },
     { "path": "../../packages/plugins" },
+    { "path": "../../packages/integrations" },
     { "path": "../../packages/networking" },
     { "path": "../../packages/security" },
     { "path": "../../packages/observability" },

@@ -2,14 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Boxes, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Terminal } from 'lucide-react';
+import { Activity, Boxes, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Terminal, Workflow } from 'lucide-react';
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Gauge },
   { href: '/providers', label: 'Providers', icon: Boxes },
   { href: '/requests', label: 'Requests', icon: Activity },
+  { href: '/integrations', label: 'Integrations', icon: Plug },
   { href: '/logs', label: 'Logs', icon: ScrollText },
-  { href: '/plugins', label: 'Plugins', icon: Plug },
+  { href: '/plugins', label: 'Plugins', icon: Workflow },
   { href: '/workflows', label: 'Workflows', icon: Layers },
   { href: '/network', label: 'Network', icon: Network },
   { href: '/security', label: 'Security', icon: KeyRound },

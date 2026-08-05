@@ -1,24 +1,24 @@
 {
-  "name": "@anx/cli",
+  "name": "@anx/integrations",
   "version": "0.1.0",
-  "description": "Command-line interface for Agent Nexus Gateway",
+  "description": "Native integrations: auto-configure AI tools (Claude Code, Cursor, OpenCode, …) to use Agent Nexus Gateway",
   "type": "module",
   "main": "./dist/index.js",
-  "bin": {
-    "anx": "./dist/bin.js",
-    "agent-nexus": "./dist/bin.js"
-  },
+  "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist coverage .turbo"
   },
   "dependencies": {
     "@anx/core": "workspace:*",
-    "@anx/integrations": "workspace:*",
-    "@anx/sdk": "workspace:*"
+    "@anx/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.8"
   }
 }
