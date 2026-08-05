@@ -6,6 +6,8 @@
 | [ROADMAP.md](./ROADMAP.md) | Release plan and future features |
 | [API.md](./API.md) | REST API reference |
 | [INTEGRATIONS.md](./INTEGRATIONS.md) | 19 native tool integrations (Claude Code, Cursor, OpenCode, OpenCode Go, OpenCode Zen, …) |
+| [AGENT_DEV.md](./AGENT_DEV.md) | How to build, register, and operate AI agents |
+| [WORKFLOW.md](./WORKFLOW.md) | How to define, execute, and replay multi-agent workflows |
 | [PLUGINS.md](./PLUGINS.md) | How to write, register, and ship plugins |
 | [PROVIDERS.md](./PROVIDERS.md) | How to configure and add provider adapters |
 | [ROUTING.md](./ROUTING.md) | Routing strategies and how to choose |

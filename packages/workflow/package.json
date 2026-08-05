@@ -1,0 +1,26 @@
+{
+  "name": "@anx/workflow",
+  "version": "0.4.0",
+  "description": "Workflow Engine — define, version, persist, and execute multi-step agent workflows",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@anx/core": "workspace:*",
+    "@anx/agents": "workspace:*",
+    "@anx/runtime": "workspace:*",
+    "@anx/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.8"
+  }
+}

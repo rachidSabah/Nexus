@@ -18,6 +18,13 @@
     { "path": "../../packages/observability" },
     { "path": "../../packages/mcp-server" },
     { "path": "../../packages/mcp-client" },
-    { "path": "../../packages/a2a" }
+    { "path": "../../packages/a2a" },
+    { "path": "../../packages/agents" },
+    { "path": "../../packages/runtime" },
+    { "path": "../../packages/workflow" },
+    { "path": "../../packages/memory" },
+    { "path": "../../packages/tools" },
+    { "path": "../../packages/task-router" },
+    { "path": "../../packages/persistence" }
   ]
 }

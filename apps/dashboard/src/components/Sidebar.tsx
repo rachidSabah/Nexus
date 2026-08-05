@@ -2,16 +2,20 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Boxes, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Terminal, Workflow } from 'lucide-react';
+import { Activity, Boxes, Brain, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Store, Terminal, Users, Workflow } from 'lucide-react';
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Gauge },
+  { href: '/agents', label: 'Agents', icon: Boxes },
+  { href: '/workflows', label: 'Workflows', icon: Workflow },
+  { href: '/teams', label: 'Teams', icon: Users },
+  { href: '/memory', label: 'Memory', icon: Brain },
   { href: '/providers', label: 'Providers', icon: Boxes },
   { href: '/requests', label: 'Requests', icon: Activity },
   { href: '/integrations', label: 'Integrations', icon: Plug },
+  { href: '/marketplace', label: 'Marketplace', icon: Store },
   { href: '/logs', label: 'Logs', icon: ScrollText },
-  { href: '/plugins', label: 'Plugins', icon: Workflow },
-  { href: '/workflows', label: 'Workflows', icon: Layers },
+  { href: '/plugins', label: 'Plugins', icon: Layers },
   { href: '/network', label: 'Network', icon: Network },
   { href: '/security', label: 'Security', icon: KeyRound },
   { href: '/mcp', label: 'MCP', icon: Terminal },

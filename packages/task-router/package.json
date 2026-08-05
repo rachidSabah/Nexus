@@ -1,0 +1,25 @@
+{
+  "name": "@anx/task-router",
+  "version": "0.4.0",
+  "description": "Intelligent AI Task Router — TaskClassifier, CapabilityMatcher, AgentSelector, ModelSelector, ExecutionPlanner",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@anx/core": "workspace:*",
+    "@anx/agents": "workspace:*",
+    "@anx/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.8"
+  }
+}

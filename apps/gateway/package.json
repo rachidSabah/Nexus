@@ -28,6 +28,13 @@
     "@anx/mcp-server": "workspace:*",
     "@anx/mcp-client": "workspace:*",
     "@anx/a2a": "workspace:*",
+    "@anx/agents": "workspace:*",
+    "@anx/runtime": "workspace:*",
+    "@anx/workflow": "workspace:*",
+    "@anx/memory": "workspace:*",
+    "@anx/tools": "workspace:*",
+    "@anx/task-router": "workspace:*",
+    "@anx/persistence": "workspace:*",
     "fastify": "^5.2.1",
     "@fastify/websocket": "^11.0.1",
     "@fastify/cors": "^10.0.1"

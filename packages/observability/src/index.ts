@@ -187,5 +187,116 @@ export function wireEventsToTelemetry(
     }),
   );
 
+  // ─── Phase 4: Agent / Workflow / Memory / Tool metrics ─────────────────────
+
+  unsubscribers.push(
+    bus.subscribe('agent.started', (event: DomainEvent) => {
+      const p = event.payload as { agentId: string };
+      const meter = telemetry.meter('anx');
+      meter.counter('anx_agent_tasks_started_total').add(1, { agentId: p.agentId });
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('agent.completed', (event: DomainEvent) => {
+      const p = event.payload as { agentId: string; durationMs: number; tokensUsed: number; costUsd: number; success: boolean };
+      const meter = telemetry.meter('anx');
+      meter.histogram('anx_agent_execution_time_ms').record(p.durationMs, { agentId: p.agentId });
+      meter.counter('anx_agent_tokens_used_total').add(p.tokensUsed, { agentId: p.agentId });
+      meter.counter('anx_agent_cost_usd_total').add(Math.round(p.costUsd * 1_000_000) / 1_000_000, { agentId: p.agentId });
+      if (p.success) {
+        meter.counter('anx_agent_tasks_succeeded_total').add(1, { agentId: p.agentId });
+      }
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('agent.failed', (event: DomainEvent) => {
+      const p = event.payload as { agentId: string; code: string };
+      const meter = telemetry.meter('anx');
+      meter.counter('anx_agent_tasks_failed_total').add(1, { agentId: p.agentId, code: p.code });
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('workflow.started', (event: DomainEvent) => {
+      const p = event.payload as { workflowId: string };
+      const meter = telemetry.meter('anx');
+      meter.counter('anx_workflows_started_total').add(1, { workflowId: p.workflowId });
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('workflow.completed', (event: DomainEvent) => {
+      const p = event.payload as { workflowId: string; durationMs: number; stepsCompleted: number; stepsFailed: number; totalCostUsd: number; success: boolean };
+      const meter = telemetry.meter('anx');
+      meter.histogram('anx_workflow_duration_ms').record(p.durationMs, { workflowId: p.workflowId });
+      meter.counter('anx_workflow_steps_completed_total').add(p.stepsCompleted, { workflowId: p.workflowId });
+      meter.counter('anx_workflow_steps_failed_total').add(p.stepsFailed, { workflowId: p.workflowId });
+      meter.counter('anx_workflow_cost_usd_total').add(Math.round(p.totalCostUsd * 1_000_000) / 1_000_000, { workflowId: p.workflowId });
+      if (p.success) {
+        meter.counter('anx_workflows_succeeded_total').add(1, { workflowId: p.workflowId });
+      }
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('workflow.step.completed', (event: DomainEvent) => {
+      const p = event.payload as { agentId: string; success: boolean; durationMs: number };
+      const meter = telemetry.meter('anx');
+      meter.histogram('anx_workflow_step_duration_ms').record(p.durationMs, { agentId: p.agentId });
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('memory.created', (event: DomainEvent) => {
+      const p = event.payload as { scope: string; namespace: string; tokenCount: number };
+      const meter = telemetry.meter('anx');
+      meter.counter('anx_memory_created_total').add(1, { scope: p.scope, namespace: p.namespace });
+      meter.counter('anx_memory_tokens_total').add(p.tokenCount, { scope: p.scope, namespace: p.namespace });
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('memory.retrieved', (event: DomainEvent) => {
+      const p = event.payload as { namespace: string; matches: number; topScore: number };
+      const meter = telemetry.meter('anx');
+      meter.counter('anx_memory_retrievals_total').add(1, { namespace: p.namespace });
+      meter.histogram('anx_memory_retrieval_matches').record(p.matches, { namespace: p.namespace });
+      meter.histogram('anx_memory_retrieval_top_score').record(p.topScore, { namespace: p.namespace });
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('tool.executed', (event: DomainEvent) => {
+      const p = event.payload as { toolName: string; agentId: string; durationMs: number; success: boolean };
+      const meter = telemetry.meter('anx');
+      meter.counter('anx_tool_executions_total').add(1, { toolName: p.toolName, agentId: p.agentId });
+      meter.histogram('anx_tool_execution_duration_ms').record(p.durationMs, { toolName: p.toolName });
+      if (!p.success) {
+        meter.counter('anx_tool_failures_total').add(1, { toolName: p.toolName, agentId: p.agentId });
+      }
+    }),
+  );
+
+  unsubscribers.push(
+    bus.subscribe('team.vote', (event: DomainEvent) => {
+      const p = event.payload as { teamId: string; vote: string };
+      const meter = telemetry.meter('anx');
+      meter.counter('anx_team_votes_total').add(1, { teamId: p.teamId, vote: p.vote });
+    }),
+  );
+
   return () => unsubscribers.forEach((u) => u());
+}
+
+/**
+ * Compute aggregate success rate metric: succeeded / (succeeded + failed).
+ * Called by the gateway on a schedule to expose a gauge.
+ */
+export function computeSuccessRate(telemetry: InProcessTelemetry): number {
+  const succeeded = telemetry.counters.get('anx_agent_tasks_succeeded_total:[]')?.value ?? 0;
+  const failed = telemetry.counters.get('anx_agent_tasks_failed_total:[]')?.value ?? 0;
+  const total = succeeded + failed;
+  return total === 0 ? 1 : succeeded / total;
 }

@@ -20,7 +20,13 @@ import { InProcessTelemetry, StructuredLogger, wireEventsToTelemetry } from '@an
 import { DefaultNetworkService, preferIpv4 } from '@anx/networking';
 import { McpServer } from '@anx/mcp-server';
 import { McpClient } from '@anx/mcp-client';
-import { AgentRegistry, A2ACoordinator } from '@anx/a2a';
+import { AgentRegistry as A2AAgentRegistry, A2ACoordinator, TeamManager } from '@anx/a2a';
+import { AgentRegistry, registerBuiltinAgents } from '@anx/agents';
+import { AgentRuntime, InMemoryTaskExecutor, type TaskExecutor } from '@anx/runtime';
+import { WorkflowEngine, InMemoryWorkflowRepository, WORKFLOW_TEMPLATES } from '@anx/workflow';
+import { DefaultMemory, InMemoryVectorStore, FakeEmbeddingsProvider } from '@anx/memory';
+import { ToolRuntime, registerBuiltinToolDefinitions } from '@anx/tools';
+import { createPlanner } from '@anx/task-router';
 
 import { HttpServer } from './server.js';
 import { ConfigLoader, type GatewayConfig } from './config.js';
@@ -44,11 +50,19 @@ export class GatewayRuntime {
   readonly network: DefaultNetworkService;
   readonly mcpServer: McpServer;
   readonly mcpClient: McpClient;
-  readonly a2aRegistry: AgentRegistry;
+  readonly a2aRegistry: A2AAgentRegistry;
   readonly a2a: A2ACoordinator;
   readonly adapters: ReturnType<typeof createDefaultAdapters>;
   readonly chatUseCase: ChatCompletionUseCase;
   readonly server: HttpServer;
+  // Phase 4
+  readonly agents: AgentRegistry;
+  readonly runtime: AgentRuntime;
+  readonly workflows: WorkflowEngine;
+  readonly memory: DefaultMemory;
+  readonly tools: ToolRuntime;
+  readonly planner: ReturnType<typeof createPlanner>;
+  readonly teams: TeamManager;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -64,11 +78,18 @@ export class GatewayRuntime {
     network: DefaultNetworkService;
     mcpServer: McpServer;
     mcpClient: McpClient;
-    a2aRegistry: AgentRegistry;
+    a2aRegistry: A2AAgentRegistry;
     a2a: A2ACoordinator;
     adapters: ReturnType<typeof createDefaultAdapters>;
     chatUseCase: ChatCompletionUseCase;
     server: HttpServer;
+    agents: AgentRegistry;
+    runtime: AgentRuntime;
+    workflows: WorkflowEngine;
+    memory: DefaultMemory;
+    tools: ToolRuntime;
+    planner: ReturnType<typeof createPlanner>;
+    teams: TeamManager;
   }) {
     Object.assign(this, opts);
   }
@@ -120,9 +141,46 @@ export class GatewayRuntime {
       config.routing.maxFailovers,
     );
 
+    // ─── Phase 4: Agents / Runtime / Workflow / Memory / Tools / Planner / Teams ──
+    const agents = new AgentRegistry(events);
+    await registerBuiltinAgents(agents);
+
+    // Wire the agent runtime to use the gateway's chat use case as executor
+    const executor: TaskExecutor = {
+      async execute(request, sink, signal) {
+        return chatUseCase.execute(request, sink as never, signal);
+      },
+    };
+    const runtime = new AgentRuntime(agents, executor, events, {
+      timeoutMs: 120_000,
+      maxRetries: 2,
+    });
+
+    const workflowRepo = new InMemoryWorkflowRepository();
+    const workflows = new WorkflowEngine(workflowRepo, runtime, events);
+    // Register built-in workflow templates
+    for (const template of Object.values(WORKFLOW_TEMPLATES)) {
+      await workflows.create(template as never);
+    }
+
+    const memory = new DefaultMemory(
+      new InMemoryVectorStore(),
+      new FakeEmbeddingsProvider(), // production: GatewayEmbeddingsProvider
+      events,
+    );
+
+    const tools = new ToolRuntime(events);
+    registerBuiltinToolDefinitions(tools);
+
+    const planner = createPlanner(agents);
+
+    const a2aRegistry = new A2AAgentRegistry();
+    const a2a = new A2ACoordinator(a2aRegistry);
+    const teams = new TeamManager(events);
+
     const mcpServer = new McpServer({
       name: 'agent-nexus-gateway',
-      version: '0.1.0',
+      version: '0.4.0',
       tools: [
         {
           name: 'list_providers',
@@ -140,10 +198,7 @@ export class GatewayRuntime {
           description: 'Send a chat completion request through the gateway',
           inputSchema: {
             type: 'object',
-            properties: {
-              model: { type: 'string' },
-              message: { type: 'string' },
-            },
+            properties: { model: { type: 'string' }, message: { type: 'string' } },
             required: ['model', 'message'],
           },
           invoke: async (args) => {
@@ -154,12 +209,34 @@ export class GatewayRuntime {
             return r.choices[0]?.message.content;
           },
         },
+        {
+          name: 'list_agents',
+          description: 'List all registered AI agents and their capabilities',
+          inputSchema: { type: 'object', properties: {} },
+          invoke: async () => agents.list().map((a) => ({
+            id: a.id, name: a.name, status: a.status, capabilities: a.capabilities,
+          })),
+        },
+        {
+          name: 'plan_task',
+          description: 'Generate an execution plan for a complex request',
+          inputSchema: {
+            type: 'object',
+            properties: { request: { type: 'string' } },
+            required: ['request'],
+          },
+          invoke: async (args) => planner.plan(args['request'] as string),
+        },
+        {
+          name: 'list_workflows',
+          description: 'List all registered workflow definitions',
+          inputSchema: { type: 'object', properties: {} },
+          invoke: async () => workflows.list(),
+        },
       ],
     });
 
     const mcpClient = new McpClient(config.mcp.servers ?? []);
-    const a2aRegistry = new AgentRegistry();
-    const a2a = new A2ACoordinator(a2aRegistry);
 
     const server = new HttpServer({
       config,
@@ -176,6 +253,14 @@ export class GatewayRuntime {
       a2a,
       plugins,
       network,
+      // Phase 4
+      agents,
+      runtime,
+      workflows,
+      memory,
+      tools,
+      planner,
+      teams,
     });
 
     return new GatewayRuntime({
@@ -197,6 +282,13 @@ export class GatewayRuntime {
       adapters,
       chatUseCase,
       server,
+      agents,
+      runtime,
+      workflows,
+      memory,
+      tools,
+      planner,
+      teams,
     });
   }
 
@@ -207,6 +299,8 @@ export class GatewayRuntime {
       port: this.config.server.port,
       host: this.config.server.host,
       endpoints: this.routing.listEndpoints().length,
+      agents: this.agents.list().length,
+      workflows: (await this.workflows.list()).length,
     });
   }
 
