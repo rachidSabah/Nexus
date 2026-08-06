@@ -1,4 +1,7 @@
 name: dependency-review
+# Disabled: Requires Dependency Graph to be enabled in repository settings
+# To enable: Go to https://github.com/rachidSabah/codingghosts/settings/security_analysis
+# and enable "Dependency graph"
 on: [pull_request]
 
 permissions:
@@ -10,4 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
+      # Temporarily disabled due to missing Dependency Graph configuration
+      # Uncomment below after enabling Dependency Graph in repo settings
+      # - uses: actions/dependency-review-action@v4
