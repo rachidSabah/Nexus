@@ -1,0 +1,61 @@
+{
+  "name": "@agent-nexus/service-mesh",
+  "version": "0.6.0",
+  "description": "AI Service Mesh for Agent Nexus Gateway - Service discovery, traffic management, and resilient routing",
+  "license": "Apache-2.0",
+  "author": "Agent Nexus Gateway Contributors",
+  "homepage": "https://github.com/rachidSabah/codingghosts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rachidSabah/codingghosts.git",
+    "directory": "packages/service-mesh"
+  },
+  "bugs": {
+    "url": "https://github.com/rachidSabah/codingghosts/issues"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist node_modules"
+  },
+  "dependencies": {
+    "@anx/core": "workspace:*",
+    "@anx/routing": "workspace:*",
+    "@anx/observability": "workspace:*",
+    "@anx/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "tsup": "^8.3.5",
+    "vitest": "^2.1.8",
+    "eslint": "^8.57.0",
+    "rimraf": "^6.0.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
