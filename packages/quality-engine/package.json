@@ -20,10 +20,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@agent-nexus/core": "workspace:*",
-    "@agent-nexus/routing": "workspace:*",
-    "@agent-nexus/observability": "workspace:*",
-    "@agent-nexus/shared": "workspace:*"
+    "@anx/core": "workspace:*",
+    "@anx/routing": "workspace:*",
+    "@anx/observability": "workspace:*",
+    "@anx/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
