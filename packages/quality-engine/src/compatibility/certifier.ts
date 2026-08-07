@@ -63,7 +63,7 @@ export class CompatibilityCertifier {
 
   private async verifyTool(tool: ToolConfig): Promise<{ compatible: boolean; partial: boolean; issues: string[] }> {
     const issues: string[] = [];
-    let compatible = true;
+    const compatible = true;
     let partial = false;
     if (!await this.checkAPICompatibility(tool.requiredFeatures)) {
       issues.push('API compatibility issues detected');
@@ -79,7 +79,7 @@ export class CompatibilityCertifier {
     return { compatible, partial, issues };
   }
 
-  private async checkAPICompatibility(): Promise<boolean> { return true; }
+  private async checkAPICompatibility(_features: string[]): Promise<boolean> { return true; }
   private async checkStreamingSupport(): Promise<boolean> { return true; }
 
   private async testEditors(): Promise<CompatibilityResult['editors']> {
@@ -95,9 +95,9 @@ export class CompatibilityCertifier {
     return results;
   }
 
-  private async verifyEditor(): Promise<{ compatible: boolean; partial: boolean }> {
-    return { compatible: true, partial: false };
-  }
+  private async verifyEditor(_editor: EditorConfig): Promise<{ compatible: boolean; partial: boolean }> {
+      return { compatible: true, partial: false };
+    }
 
   generateReport(compatibility: CompatibilityResult): string {
     const compatibleTools = compatibility.tools.filter(t => t.status === 'COMPATIBLE').length;
