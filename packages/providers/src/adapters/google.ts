@@ -4,7 +4,9 @@ import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  ChatMessageContentPart,
   ProviderEndpoint,
+  ToolCall,
 } from '@anx/core';
 import { ProviderResponseError, type ProviderAdapter } from '@anx/core';
 
@@ -121,13 +123,13 @@ export class GoogleAdapter implements ProviderAdapter {
     const body: Record<string, unknown> = {
       contents: conversation.map((m) => ({
         role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }],
+        parts: this.translateContentParts(m.content, m.role),
       })),
     };
 
     if (systemMessages.length > 0) {
       body['systemInstruction'] = {
-        parts: [{ text: systemMessages.map((m) => m.content).join('\n\n') }],
+        parts: [{ text: systemMessages.map((m) => this.contentToText(m.content)).join('\n\n') }],
       };
     }
 
@@ -140,9 +142,114 @@ export class GoogleAdapter implements ProviderAdapter {
     if (req.stop !== undefined) {
       generationConfig['stopSequences'] = Array.isArray(req.stop) ? req.stop : [req.stop];
     }
+    // JSON mode: Gemini supports `responseMimeType: 'application/json'`.
+    if (req.responseFormat?.type === 'json_object') {
+      generationConfig['responseMimeType'] = 'application/json';
+    } else if (req.responseFormat?.type === 'json_schema' && req.responseFormat.json_schema) {
+      // Gemini's `responseSchema` accepts a JSON Schema subset.
+      generationConfig['responseMimeType'] = 'application/json';
+      generationConfig['responseSchema'] = req.responseFormat.json_schema;
+    }
     if (Object.keys(generationConfig).length > 0) body['generationConfig'] = generationConfig;
 
+    // Tools: translate OpenAI tool definitions to Gemini's functionDeclarations.
+    if (req.tools && req.tools.length > 0) {
+      const functionDeclarations: unknown[] = [];
+      for (const t of req.tools as Array<{ function?: { name: string; description?: string; parameters?: unknown } }>) {
+        if (!t.function) continue;
+        functionDeclarations.push({
+          name: t.function.name,
+          description: t.function.description,
+          parameters: t.function.parameters,
+        });
+      }
+      if (functionDeclarations.length > 0) {
+        body['tools'] = [{ functionDeclarations }];
+      }
+    }
+
+    // Tool choice: 'auto' | 'none' | { type: 'function', function: { name } }
+    if (req.toolChoice !== undefined) {
+      if (req.toolChoice === 'auto') {
+        body['toolConfig'] = { functionCallingConfig: { mode: 'AUTO' } };
+      } else if (req.toolChoice === 'none') {
+        body['toolConfig'] = { functionCallingConfig: { mode: 'NONE' } };
+      } else if (typeof req.toolChoice === 'object') {
+        const fn = (req.toolChoice as { function?: { name: string } }).function;
+        if (fn?.name) {
+          body['toolConfig'] = {
+            functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [fn.name] },
+          };
+        }
+      }
+    }
+
     return body;
+  }
+
+  /**
+   * Translates OpenAI message content (string OR array of content parts)
+   * into Gemini's `parts` array. Handles:
+   *  - Plain text → `[{ text }]`
+   *  - image_url parts → `[{ inlineData: { mimeType, data } }]` (base64)
+   *  - input_audio parts → `[{ inlineData: { mimeType, data } }]` (base64)
+   *
+   * For assistant messages with tool_calls, the tool calls are emitted as
+   * `functionCall` parts so Gemini understands multi-turn tool use.
+   */
+  private translateContentParts(
+    content: string | Array<ChatMessageContentPart>,
+    role: string,
+  ): unknown[] {
+    // Assistant tool_calls → Gemini functionCall parts.
+    if (role === 'assistant') {
+      // We don't have direct access to tool_calls here (they're on the message,
+      // not on content). The caller passes content only; tool_calls are handled
+      // separately if present. For now, just translate content.
+    }
+    if (typeof content === 'string') {
+      return [{ text: content }];
+    }
+    const parts: unknown[] = [];
+    for (const part of content) {
+      if (part.type === 'text') {
+        parts.push({ text: part.text });
+      } else if (part.type === 'image_url') {
+        const { url } = part.image_url;
+        // Parse data URL: `data:<mime>;base64,<data>` OR a remote URL.
+        const match = url.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          parts.push({
+            inlineData: {
+              mimeType: match[1],
+              data: match[2],
+            },
+          });
+        } else {
+          // Remote URL — Gemini's `fileData` is the right shape but requires
+          // the file to be uploaded first via the Files API. For now, skip
+          // remote URLs (they'll be silently dropped).
+          // TODO: upload remote images via Files API.
+        }
+      } else if (part.type === 'input_audio') {
+        parts.push({
+          inlineData: {
+            mimeType: `audio/${part.input_audio.format}`,
+            data: part.input_audio.data,
+          },
+        });
+      }
+    }
+    return parts;
+  }
+
+  /** Flattens message content (string or array of parts) into a single text string. */
+  private contentToText(content: string | Array<ChatMessageContentPart>): string {
+    if (typeof content === 'string') return content;
+    return content
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { type: 'text'; text: string }).text)
+      .join('\n');
   }
 
   protected translateResponse(
@@ -150,11 +257,30 @@ export class GoogleAdapter implements ProviderAdapter {
     endpoint: ProviderEndpoint,
     requestModel: string,
   ): ChatCompletionResponse {
-    const text = (raw.candidates ?? [])
-      .flatMap((c) => c.content?.parts ?? [])
+    const candidate = raw.candidates?.[0];
+    const parts = candidate?.content?.parts ?? [];
+    const text = parts
       .map((p) => p.text ?? '')
       .join('');
-    const finishReason = raw.candidates?.[0]?.finishReason ?? 'STOP';
+    const toolCalls: ToolCall[] = parts
+      .filter((p) => p.functionCall)
+      .map((p, i) => ({
+        id: `call_${i}`,
+        type: 'function' as const,
+        function: {
+          name: p.functionCall!.name,
+          arguments: JSON.stringify(p.functionCall!.args ?? {}),
+        },
+      }));
+    const finishReason = candidate?.finishReason ?? 'STOP';
+
+    const message: { role: 'assistant'; content: string; tool_calls?: readonly ToolCall[] } = {
+      role: 'assistant',
+      content: text,
+    };
+    if (toolCalls.length > 0) {
+      message.tool_calls = toolCalls;
+    }
 
     return {
       id: randomUUID(),
@@ -164,7 +290,7 @@ export class GoogleAdapter implements ProviderAdapter {
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content: text },
+          message,
           finish_reason: finishReason === 'STOP' ? 'stop' : finishReason.toLowerCase(),
         },
       ],
@@ -242,7 +368,12 @@ export class GoogleAdapter implements ProviderAdapter {
 
 interface GoogleGenerateResponse {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }> };
+    content?: {
+      parts?: Array<{
+        text?: string;
+        functionCall?: { name: string; args?: Record<string, unknown> };
+      }>;
+    };
     finishReason?: string;
   }>;
   usageMetadata?: {

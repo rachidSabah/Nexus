@@ -4,7 +4,9 @@ import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  ChatMessageContentPart,
   ProviderEndpoint,
+  ToolCall,
 } from '@anx/core';
 import { ProviderResponseError, type ProviderAdapter } from '@anx/core';
 
@@ -142,10 +144,7 @@ export class AnthropicAdapter implements ProviderAdapter {
 
     const body: Record<string, unknown> = {
       model: this.resolveModel(req.model) ?? req.model,
-      messages: conversation.map((m) => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content,
-      })),
+      messages: conversation.map((m) => this.translateMessage(m)),
       max_tokens: req.maxTokens ?? req.maxOutputTokens ?? 4096,
       stream: streaming,
     };
@@ -179,15 +178,137 @@ export class AnthropicAdapter implements ProviderAdapter {
     return body;
   }
 
+  /**
+   * Translates an OpenAI-format message into Anthropic's Messages format.
+   *
+   * Key translations:
+   *  - User/system text content → Anthropic `content: string` (simple case)
+   *  - Multimodal content (array of parts) → Anthropic content blocks:
+   *      { type: 'text', text }
+   *      { type: 'image', source: { type: 'base64', media_type, data } }
+   *  - Assistant tool_calls → Anthropic content blocks:
+   *      { type: 'text', text }
+   *      { type: 'tool_use', id, name, input }
+   *  - Tool result messages (role: 'tool') → Anthropic user messages with:
+   *      { type: 'tool_result', tool_use_id, content }
+   */
+  private translateMessage(m: {
+    role: string;
+    content: string | Array<ChatMessageContentPart>;
+    toolCallId?: string;
+    toolCalls?: readonly ToolCall[];
+  }): { role: string; content: unknown } {
+    // Tool result messages: role='tool', toolCallId set.
+    // Anthropic expects these as user messages with a tool_result content block.
+    if (m.role === 'tool' && m.toolCallId) {
+      const resultText = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      return {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: m.toolCallId,
+            content: resultText,
+          },
+        ],
+      };
+    }
+
+    // Assistant messages with tool_calls: emit text + tool_use blocks.
+    if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+      const blocks: unknown[] = [];
+      // Include any text content first.
+      const text = typeof m.content === 'string' ? m.content : '';
+      if (text) {
+        blocks.push({ type: 'text', text });
+      }
+      for (const tc of m.toolCalls) {
+        let input: unknown = {};
+        try {
+          input = JSON.parse(tc.function.arguments);
+        } catch {
+          input = { raw: tc.function.arguments };
+        }
+        blocks.push({
+          type: 'tool_use',
+          id: tc.id,
+          name: tc.function.name,
+          input,
+        });
+      }
+      return { role: 'assistant', content: blocks };
+    }
+
+    // Plain text content — Anthropic accepts a string.
+    if (typeof m.content === 'string') {
+      return {
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content,
+      };
+    }
+
+    // Multimodal content — translate each part.
+    const blocks: unknown[] = [];
+    for (const part of m.content) {
+      if (part.type === 'text') {
+        blocks.push({ type: 'text', text: part.text });
+      } else if (part.type === 'image_url') {
+        const { url } = part.image_url;
+        const match = url.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          blocks.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: match[1],
+              data: match[2],
+            },
+          });
+        }
+        // Remote URLs require Anthropic's `url` source type (newer API feature).
+        // Skip for now; could add `{ type: 'image', source: { type: 'url', url } }` later.
+      } else if (part.type === 'input_audio') {
+        // Anthropic doesn't currently support audio in the Messages API;
+        // skip silently.
+      }
+    }
+    return {
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: blocks,
+    };
+  }
+
   protected translateResponse(
     raw: AnthropicMessageResponse,
     endpoint: ProviderEndpoint,
     _requestModel: string,
   ): ChatCompletionResponse {
-    const content = (raw.content ?? [])
+    // Extract text from text blocks.
+    const text = (raw.content ?? [])
       .filter((b) => b.type === 'text')
       .map((b) => b.text ?? '')
       .join('');
+
+    // Extract tool_use blocks → OpenAI tool_calls.
+    const toolCalls: ToolCall[] = (raw.content ?? [])
+      .filter((b) => b.type === 'tool_use')
+      .map((b, i) => ({
+        id: b.id ?? `call_${i}`,
+        type: 'function' as const,
+        function: {
+          name: b.name ?? '',
+          arguments: JSON.stringify(b.input ?? {}),
+        },
+      }));
+
+    const message: { role: 'assistant'; content: string; tool_calls?: readonly ToolCall[] } = {
+      role: 'assistant',
+      content: text,
+    };
+    if (toolCalls.length > 0) {
+      message.tool_calls = toolCalls;
+    }
+
     return {
       id: raw.id,
       object: 'chat.completion',
@@ -196,7 +317,7 @@ export class AnthropicAdapter implements ProviderAdapter {
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content },
+          message,
           finish_reason: raw.stop_reason === 'end_turn' ? 'stop' : (raw.stop_reason ?? 'stop'),
         },
       ],
@@ -219,8 +340,46 @@ export class AnthropicAdapter implements ProviderAdapter {
     const type = evt['type'] as string | undefined;
     if (!type) return null;
 
+    if (type === 'content_block_start') {
+      // A new content block is starting. If it's a tool_use block, emit a
+      // tool_call delta with the tool name + empty args.
+      const contentBlock = evt['content_block'] as
+        | { type: string; id?: string; name?: string; text?: string }
+        | undefined;
+      if (contentBlock?.type === 'tool_use' && contentBlock.id && contentBlock.name) {
+        return {
+          id: randomUUID(),
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: requestModel,
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: contentBlock.id,
+                type: 'function',
+                function: { name: contentBlock.name, arguments: '' },
+              }],
+            },
+            finish_reason: null,
+          }],
+        };
+      }
+      if (contentBlock?.type === 'text' && contentBlock.text) {
+        return {
+          id: randomUUID(),
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: requestModel,
+          choices: [{ index: 0, delta: { content: contentBlock.text }, finish_reason: null }],
+        };
+      }
+      return null;
+    }
     if (type === 'content_block_delta') {
-      const delta = evt['delta'] as { type: string; text?: string } | undefined;
+      const delta = evt['delta'] as
+        | { type: string; text?: string; partial_json?: string }
+        | undefined;
       if (delta?.type === 'text_delta' && delta.text) {
         return {
           id: randomUUID(),
@@ -228,6 +387,27 @@ export class AnthropicAdapter implements ProviderAdapter {
           created: Math.floor(Date.now() / 1000),
           model: requestModel,
           choices: [{ index: 0, delta: { content: delta.text }, finish_reason: null }],
+        };
+      }
+      // input_json_delta: incremental JSON for the current tool_use block.
+      // Emit as a tool_calls arguments delta (index 0 — we don't track which block).
+      if (delta?.type === 'input_json_delta' && delta.partial_json) {
+        return {
+          id: randomUUID(),
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: requestModel,
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: 'pending',
+                type: 'function',
+                function: { name: '', arguments: delta.partial_json },
+              }],
+            },
+            finish_reason: null,
+          }],
         };
       }
     }
@@ -280,7 +460,10 @@ interface AnthropicMessageResponse {
   type: 'message';
   role: 'assistant';
   model: string;
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  >;
   stop_reason: string | null;
   usage?: {
     input_tokens: number;
