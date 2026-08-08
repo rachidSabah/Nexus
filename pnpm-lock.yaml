@@ -403,6 +403,9 @@ importers:
       '@anx/core':
         specifier: workspace:*
         version: link:../core
+      '@anx/security':
+        specifier: workspace:*
+        version: link:../security
       '@anx/shared':
         specifier: workspace:*
         version: link:../shared

@@ -17,6 +17,7 @@
   "dependencies": {
     "@anx/core": "workspace:*",
     "@anx/agents": "workspace:*",
+    "@anx/security": "workspace:*",
     "@anx/shared": "workspace:*"
   },
   "devDependencies": {

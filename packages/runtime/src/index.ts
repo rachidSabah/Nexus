@@ -373,4 +373,24 @@ export function generateTaskId(): string {
   return `task-${randomUUID()}`;
 }
 
+// ─── Domain services ────────────────────────────────────────────────────────
+
+// SecretsManager is the only domain service with a full implementation today.
+// Other domains (Workspace, Deployment, Backup, Governance, Scheduler, Audit)
+// are type-only skeletons — see DOMAIN_STATUS.md for the implementation plan.
+export { SecretsManager, type SecretsManagerOptions } from './services/SecretsManager.js';
+export { RuntimeManager } from './services/RuntimeManager.js';
+
+// Re-export all domain types so consumers can build their own services
+// against the same contracts we'll implement later.
+export * from './domains/RuntimeTypes.js';
+export * from './domains/SecretsTypes.js';
+// The following domains are type-only:
+// export * from './domains/WorkspaceTypes.js';
+// export * from './domains/DeploymentTypes.js';
+// export * from './domains/BackupTypes.js';
+// export * from './domains/GovernanceTypes.js';
+// export * from './domains/SchedulerTypes.js';
+// export * from './domains/AuditTypes.js';
+
 export { sleep };
