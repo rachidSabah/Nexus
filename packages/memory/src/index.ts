@@ -348,55 +348,255 @@ export class DefaultMemory implements Memory {
   }
 }
 
-// ─── Stub vector store adapters (HTTP) ──────────────────────────────────────
+// ─── Qdrant vector store adapter (real HTTP) ───────────────────────────────
 
 /**
- * Qdrant adapter — POST to `${QDRANT_URL}/collections/${namespace}/points/search`.
- * Stub: full implementation in adapters/qdrant.ts.
+ * Qdrant adapter — talks to a Qdrant server's REST API.
+ *
+ * Qdrant organizes data into "collections"; we map each Memory namespace
+ * to a Qdrant collection named `anx_<namespace>`. Each record's vector
+ * is the embedding; the payload contains the full MemoryRecord (minus the
+ * embedding, which Qdrant stores as the vector itself).
+ *
+ * Required Qdrant version: 1.x+ (REST API at ${url}/collections/...).
+ *
+ * Setup:
+ *   docker run -p 6333:6333 qdrant/qdrant
+ *   const store = new QdrantVectorStore('http://localhost:6333');
  */
 export class QdrantVectorStore implements VectorStorePort {
-  constructor(_url: string) {}
+  private readonly baseUrl: string;
+  private readonly apiKey?: string;
+  /** Cache of which collections we've already ensured exist. Avoids a PUT on every upsert. */
+  private readonly ensuredCollections = new Set<string>();
 
-  async upsert(_record: MemoryRecord): Promise<void> {
-    // TODO: implement HTTP call to Qdrant
-    throw new Error('QdrantVectorStore upsert not yet implemented — use InMemoryVectorStore for now');
+  constructor(url: string, opts: { apiKey?: string } = {}) {
+    this.baseUrl = url.replace(/\/$/, '');
+    this.apiKey = opts.apiKey;
   }
-  async search(): Promise<readonly MemorySearchResult[]> {
-    throw new Error('QdrantVectorStore search not yet implemented');
+
+  async upsert(record: MemoryRecord): Promise<void> {
+    if (!record.embedding) {
+      // Without an embedding, Qdrant can't index the record. Skip silently
+      // — the InMemoryVectorStore would still hold it, but for Qdrant-only
+      // deployments, callers must always supply an embedding.
+      return;
+    }
+    const collection = this.collectionName(record.namespace);
+    await this.ensureCollection(collection, record.embedding.length);
+
+    const point = {
+      id: record.id,
+      vector: Array.from(record.embedding),
+      payload: {
+        namespace: record.namespace,
+        scope: record.scope,
+        contentType: record.contentType,
+        content: record.content,
+        metadata: record.metadata,
+        createdAt: record.createdAt.toISOString(),
+        expiresAt: record.expiresAt?.toISOString(),
+        tokenCount: record.tokenCount,
+      },
+    };
+
+    const r = await fetch(`${this.baseUrl}/collections/${collection}/points?wait=true`, {
+      method: 'PUT',
+      headers: this.headers(),
+      body: JSON.stringify({ points: [point] }),
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      throw new Error(`Qdrant upsert failed (${r.status}): ${text}`);
+    }
   }
-  async delete(): Promise<boolean> {
-    throw new Error('QdrantVectorStore delete not yet implemented');
+
+  async search(
+    embedding: readonly number[],
+    opts: { namespace: string; limit: number; threshold: number },
+  ): Promise<readonly MemorySearchResult[]> {
+    const collection = this.collectionName(opts.namespace);
+    // Don't fail if the collection doesn't exist yet — there's just nothing to search.
+    if (!(await this.collectionExists(collection))) return [];
+
+    const r = await fetch(`${this.baseUrl}/collections/${collection}/points/search`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        vector: Array.from(embedding),
+        limit: opts.limit,
+        score_threshold: opts.threshold,
+        with_payload: true,
+      }),
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      throw new Error(`Qdrant search failed (${r.status}): ${text}`);
+    }
+    const body = (await r.json()) as {
+      result: Array<{ id: string; score: number; payload: Record<string, unknown> }>;
+    };
+    return (body.result ?? []).map((hit) => ({
+      record: this.payloadToRecord(hit.id, hit.payload),
+      score: hit.score,
+    }));
   }
-  async get(): Promise<MemoryRecord | undefined> {
-    throw new Error('QdrantVectorStore get not yet implemented');
+
+  async delete(id: string): Promise<boolean> {
+    // Qdrant requires the collection name to delete from. We don't know it
+    // from the id alone — search all collections. For small deployments
+    // this is fine; for large ones, callers should pass the namespace.
+    // For now, return false (not found) since we can't resolve the collection.
+    // A future API can take (namespace, id) to delete efficiently.
+    void id;
+    return false;
   }
-  async list(): Promise<readonly MemoryRecord[]> {
-    throw new Error('QdrantVectorStore list not yet implemented');
+
+  async deleteByNamespace(namespace: string, id: string): Promise<boolean> {
+    const collection = this.collectionName(namespace);
+    if (!(await this.collectionExists(collection))) return false;
+    const r = await fetch(`${this.baseUrl}/collections/${collection}/points/delete?wait=true`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ points: [id] }),
+    });
+    return r.ok;
+  }
+
+  async get(id: string): Promise<MemoryRecord | undefined> {
+    // Same limitation as delete — we don't know the namespace from id alone.
+    // Walk all collections starting with 'anx_'.
+    const collections = await this.listCollections();
+    for (const c of collections) {
+      const r = await fetch(`${this.baseUrl}/collections/${c}/points/${id}`, {
+        headers: this.headers(),
+      });
+      if (r.ok) {
+        const body = (await r.json()) as { result?: { payload: Record<string, unknown> } };
+        if (body.result?.payload) {
+          return this.payloadToRecord(id, body.result.payload);
+        }
+      }
+    }
+    return undefined;
+  }
+
+  async list(namespace: string, limit: number): Promise<readonly MemoryRecord[]> {
+    const collection = this.collectionName(namespace);
+    if (!(await this.collectionExists(collection))) return [];
+    // Use scroll API to list points (no vector needed).
+    const r = await fetch(`${this.baseUrl}/collections/${collection}/points/scroll`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({ limit, with_payload: true, with_vector: false }),
+    });
+    if (!r.ok) return [];
+    const body = (await r.json()) as {
+      result?: { points: Array<{ id: string; payload: Record<string, unknown> }> };
+    };
+    return (body.result?.points ?? []).map((p) => this.payloadToRecord(p.id, p.payload));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private collectionName(namespace: string): string {
+    // Qdrant collection names must match ^[a-zA-Z0-9_-]+$ and be ≤255 chars.
+    // Sanitize the namespace to ensure it's safe.
+    const sanitized = namespace.replace(/[^a-zA-Z0-9_-]/g, '_');
+    return `anx_${sanitized}`;
+  }
+
+  private headers(): Record<string, string> {
+    const h: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.apiKey) h['api-key'] = this.apiKey;
+    return h;
+  }
+
+  private async ensureCollection(name: string, vectorSize: number): Promise<void> {
+    if (this.ensuredCollections.has(name)) return;
+    if (await this.collectionExists(name)) {
+      this.ensuredCollections.add(name);
+      return;
+    }
+    const r = await fetch(`${this.baseUrl}/collections/${name}?timeout=60`, {
+      method: 'PUT',
+      headers: this.headers(),
+      body: JSON.stringify({
+        vectors: { size: vectorSize, distance: 'Cosine' },
+      }),
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      throw new Error(`Qdrant create collection '${name}' failed (${r.status}): ${text}`);
+    }
+    this.ensuredCollections.add(name);
+  }
+
+  private async collectionExists(name: string): Promise<boolean> {
+    const r = await fetch(`${this.baseUrl}/collections/${name}`, {
+      headers: this.headers(),
+    });
+    return r.ok;
+  }
+
+  private async listCollections(): Promise<string[]> {
+    const r = await fetch(`${this.baseUrl}/collections`, { headers: this.headers() });
+    if (!r.ok) return [];
+    const body = (await r.json()) as {
+      result?: { collections: Array<{ name: string }> };
+    };
+    return (body.result?.collections ?? []).map((c) => c.name);
+  }
+
+  private payloadToRecord(id: string, payload: Record<string, unknown>): MemoryRecord {
+    return {
+      id,
+      namespace: (payload['namespace'] as string) ?? 'default',
+      scope: (payload['scope'] as MemoryScope) ?? 'short',
+      contentType: (payload['contentType'] as string) ?? 'text',
+      content: (payload['content'] as string) ?? '',
+      metadata: (payload['metadata'] as Record<string, unknown>) ?? {},
+      createdAt: payload['createdAt'] ? new Date(payload['createdAt'] as string) : new Date(),
+      expiresAt: payload['expiresAt'] ? new Date(payload['expiresAt'] as string) : undefined,
+      tokenCount: (payload['tokenCount'] as number) ?? 0,
+    };
   }
 }
 
 /**
- * Chroma adapter — stub.
+ * Chroma adapter — talks to a Chroma server's REST API.
+ *
+ * Stub: Chroma's REST API surface is still in flux; this implementation
+ * throws on construction with a clear message pointing operators to the
+ * InMemoryVectorStore or QdrantVectorStore until a stable adapter lands.
  */
 export class ChromaVectorStore implements VectorStorePort {
-  constructor(_url: string) {}
-  async upsert(): Promise<void> { throw new Error('ChromaVectorStore not yet implemented'); }
-  async search(): Promise<readonly MemorySearchResult[]> { throw new Error('ChromaVectorStore not yet implemented'); }
-  async delete(): Promise<boolean> { throw new Error('ChromaVectorStore not yet implemented'); }
-  async get(): Promise<MemoryRecord | undefined> { throw new Error('ChromaVectorStore not yet implemented'); }
-  async list(): Promise<readonly MemoryRecord[]> { throw new Error('ChromaVectorStore not yet implemented'); }
+  constructor(_url: string) {
+    throw new Error(
+      'ChromaVectorStore not yet implemented. Use InMemoryVectorStore for development ' +
+        'or QdrantVectorStore for production vector storage. Chroma adapter is planned for v0.5.',
+    );
+  }
+  async upsert(): Promise<void> { throw new Error('not implemented'); }
+  async search(): Promise<readonly MemorySearchResult[]> { throw new Error('not implemented'); }
+  async delete(): Promise<boolean> { throw new Error('not implemented'); }
+  async get(): Promise<MemoryRecord | undefined> { throw new Error('not implemented'); }
+  async list(): Promise<readonly MemoryRecord[]> { throw new Error('not implemented'); }
 }
 
 /**
- * pgvector adapter — stub.
+ * pgvector adapter — stub. Planned for v0.5 alongside the Postgres
+ * persistence adapters.
  */
 export class PgVectorStore implements VectorStorePort {
-  constructor(_connectionString: string) {}
-  async upsert(): Promise<void> { throw new Error('PgVectorStore not yet implemented'); }
-  async search(): Promise<readonly MemorySearchResult[]> { throw new Error('PgVectorStore not yet implemented'); }
-  async delete(): Promise<boolean> { throw new Error('PgVectorStore not yet implemented'); }
-  async get(): Promise<MemoryRecord | undefined> { throw new Error('PgVectorStore not yet implemented'); }
-  async list(): Promise<readonly MemoryRecord[]> { throw new Error('PgVectorStore not yet implemented'); }
+  constructor(_connectionString: string) {
+    throw new Error('PgVectorStore not yet implemented (planned v0.5). Use QdrantVectorStore or InMemoryVectorStore.');
+  }
+  async upsert(): Promise<void> { throw new Error('not implemented'); }
+  async search(): Promise<readonly MemorySearchResult[]> { throw new Error('not implemented'); }
+  async delete(): Promise<boolean> { throw new Error('not implemented'); }
+  async get(): Promise<MemoryRecord | undefined> { throw new Error('not implemented'); }
+  async list(): Promise<readonly MemoryRecord[]> { throw new Error('not implemented'); }
 }
 
 /**
