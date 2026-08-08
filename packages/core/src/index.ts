@@ -21,7 +21,7 @@ export * from './domain/branded.js';
 export * from './application/ports.js';
 
 // ── Use cases & default implementations ─────────────────────────────────────
-export { ChatCompletionUseCase, computeCost } from './application/chat-completion.usecase.js';
+export { ChatCompletionUseCase, computeCost, classifyFailure, type FailureClassification } from './application/chat-completion.usecase.js';
 export { RoutingEngine } from './application/routing-engine.js';
 export { DefaultFailover } from './application/failover.js';
 export { DefaultCostCalculator } from './application/cost-calculator.js';

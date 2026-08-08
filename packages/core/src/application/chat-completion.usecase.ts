@@ -342,21 +342,23 @@ export class ChatCompletionUseCase {
         return finalResult;
       } catch (err) {
         const error = err as Error;
-        const retryable = this.isRetryable(error);
+        const classification = classifyFailure(error);
+        const retryable = classification.retryable;
         await this.routing.recordFailure(endpoint.id, error, retryable);
 
-        // Record key failure for rotation health. Extract the HTTP status
-        // from ProviderResponseError if available; otherwise pass the error
-        // code (ECONNRESET etc.) as a string.
+        // Apply key-action classification (master prompt #14).
+        // 429 → cooldown (handled by KeyRegistry.recordFailure with status=429)
+        // 401/403 → invalidate (handled by KeyRegistry.recordFailure with status=401)
+        // Other → no key action
         if (this.keyRegistry && selectedKeyId) {
-          const status = (error as { status?: number }).status ?? (error as { code?: string }).code ?? 'error';
-          this.keyRegistry.recordFailure(selectedKeyId, status, retryable);
+          this.keyRegistry.recordFailure(selectedKeyId, classification.status || classification.code || 'error', retryable);
         }
 
         // ─── Plugin hook: onError ────────────────────────────────────────
         if (this.plugins) {
           await this.plugins.invokeHook('onError', {
             requestId, endpointId: endpoint.id, providerId: endpoint.providerId, error,
+            classification,
           });
         }
 
@@ -501,21 +503,153 @@ export class ChatCompletionUseCase {
     }
     return parts.join('\n');
   }
+}
 
-  private isRetryable(error: Error): boolean {
-    if (error instanceof ProviderResponseError) {
-      // 5xx, 408, 429 are retryable per OpenAI guidance.
-      return error.status >= 500 || error.status === 408 || error.status === 429;
+/**
+ * Granular failure classifier. Master prompt #14: "Not every error should
+ * trigger the same retry strategy."
+ *
+ * Returns a structured classification that the chat use case + key registry
+ * use to decide:
+ *   - Should we retry on the SAME endpoint with a DIFFERENT key? (429)
+ *   - Should we failover to a DIFFERENT endpoint entirely? (5xx, network)
+ *   - Should we invalidate the key and not retry? (401, 403)
+ *   - Should we mark the model unavailable and not retry? (404 model)
+ *   - Should we treat this as transient provider degradation? (503)
+ *   - Should we NOT retry because context was exceeded? (413)
+ *
+ * The classification drives:
+ *   - `retryable` — whether ChatCompletionUseCase should failover to the
+ *     next endpoint/alternative.
+ *   - `keyAction` — what the KeyRegistry should do with the key that hit
+ *     this error.
+ *   - `endpointAction` — what the routing engine should do with the endpoint.
+ */
+export interface FailureClassification {
+  /** HTTP status code (0 for network errors). */
+  readonly status: number;
+  /** Error code string (e.g. 'ECONNRESET', 'ETIMEDOUT'). */
+  readonly code?: string;
+  /** Whether ChatCompletionUseCase should failover to the next endpoint. */
+  readonly retryable: boolean;
+  /** What to do with the key that hit this error. */
+  readonly keyAction: 'cooldown' | 'invalidate' | 'none';
+  /** What to do with the endpoint that hit this error. */
+  readonly endpointAction: 'record_failure' | 'mark_degraded' | 'mark_unavailable' | 'none';
+  /** Human-readable reason for the classification (for the request trace). */
+  readonly reason: string;
+}
+
+export function classifyFailure(error: Error): FailureClassification {
+  // ProviderResponseError carries an HTTP status.
+  if (error instanceof ProviderResponseError) {
+    const status = error.status;
+    // 401 Unauthorized / 403 Forbidden — key is bad. Invalidate (don't
+    // retry on the same key). The endpoint itself is probably fine.
+    if (status === 401 || status === 403) {
+      return {
+        status, code: undefined,
+        retryable: false,
+        keyAction: 'invalidate',
+        endpointAction: 'none',
+        reason: `HTTP ${status}: authentication/authorization failed — key invalidated`,
+      };
     }
-    const code = (error as { code?: string }).code;
-    return (
-      code === 'ECONNRESET' ||
-      code === 'ETIMEDOUT' ||
-      code === 'ECONNREFUSED' ||
-      code === 'EAI_AGAIN' ||
-      code === 'UND_ERR_CONNECT_TIMEOUT'
-    );
+    // 404 Not Found — model doesn't exist on this provider. Mark the
+    // endpoint as unavailable for this model (don't retry on it).
+    if (status === 404) {
+      return {
+        status, code: undefined,
+        retryable: false,
+        keyAction: 'none',
+        endpointAction: 'mark_unavailable',
+        reason: `HTTP 404: model not found on this provider — endpoint marked unavailable`,
+      };
+    }
+    // 408 Request Timeout — retryable, key is fine.
+    if (status === 408) {
+      return {
+        status, code: undefined,
+        retryable: true,
+        keyAction: 'none',
+        endpointAction: 'record_failure',
+        reason: `HTTP 408: request timeout — will retry on next endpoint`,
+      };
+    }
+    // 429 Too Many Requests — cooldown the key, retryable.
+    if (status === 429) {
+      return {
+        status, code: undefined,
+        retryable: true,
+        keyAction: 'cooldown',
+        endpointAction: 'record_failure',
+        reason: `HTTP 429: rate limited — key on cooldown, failing over`,
+      };
+    }
+    // 413 Request Entity Too Large — context window exceeded. Not retryable
+    // (failing over won't help unless a different endpoint has a larger
+    // context window, which the routing engine's capability_match would
+    // have already accounted for).
+    if (status === 413) {
+      return {
+        status, code: undefined,
+        retryable: false,
+        keyAction: 'none',
+        endpointAction: 'none',
+        reason: `HTTP 413: context window exceeded — not retryable`,
+      };
+    }
+    // 4xx (other) — client error, not retryable, key is fine.
+    if (status >= 400 && status < 500) {
+      return {
+        status, code: undefined,
+        retryable: false,
+        keyAction: 'none',
+        endpointAction: 'none',
+        reason: `HTTP ${status}: client error — not retryable`,
+      };
+    }
+    // 5xx — server error, retryable, mark endpoint as degraded.
+    if (status >= 500) {
+      return {
+        status, code: undefined,
+        retryable: true,
+        keyAction: 'none',
+        endpointAction: 'mark_degraded',
+        reason: `HTTP ${status}: server error — failing over to next endpoint`,
+      };
+    }
+    // Fallback for any other status — treat as retryable to be safe.
+    return {
+      status, code: undefined,
+      retryable: true,
+      keyAction: 'none',
+      endpointAction: 'record_failure',
+      reason: `HTTP ${status}: treating as retryable (unknown status)`,
+    };
   }
+
+  // Network errors — retryable, mark endpoint as degraded.
+  const code = (error as { code?: string }).code;
+  const networkCodes = ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH'];
+  if (code && networkCodes.includes(code)) {
+    return {
+      status: 0, code,
+      retryable: true,
+      keyAction: 'none',
+      endpointAction: 'mark_degraded',
+      reason: `Network error ${code} — failing over to next endpoint`,
+    };
+  }
+
+  // Unknown error — not retryable by default (could be a programming error).
+  return {
+    status: 0, code: code ?? 'UNKNOWN',
+    retryable: false,
+    keyAction: 'none',
+    endpointAction: 'none',
+    reason: `Unknown error: ${error.message}`,
+  };
 }
 
 /**

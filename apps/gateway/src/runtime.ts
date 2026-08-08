@@ -36,6 +36,7 @@ import { WorkflowEngine, InMemoryWorkflowRepository, WORKFLOW_TEMPLATES } from '
 
 import { ConfigLoader, type GatewayConfig } from './config.js';
 import { registerDefaultEndpoints } from './endpoints.js';
+import { ModelAliasRegistry } from './model-aliases.js';
 import { HttpServer } from './server.js';
 
 /**
@@ -74,6 +75,7 @@ export class GatewayRuntime {
   readonly cache!: CachePort;
   readonly keyRegistry!: KeyRegistry;
   readonly modelRegistry!: ModelRegistry;
+  readonly aliasRegistry!: ModelAliasRegistry;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -106,6 +108,7 @@ export class GatewayRuntime {
     cache: CachePort;
     keyRegistry: KeyRegistry;
     modelRegistry: ModelRegistry;
+    aliasRegistry: ModelAliasRegistry;
   }) {
     Object.assign(this, opts);
   }
@@ -192,6 +195,11 @@ export class GatewayRuntime {
       refreshIntervalMs: 60 * 60 * 1000,
       discoveryTimeoutMs: 15_000,
     });
+
+    // Smart model aliasing — `local/free`, `local/coding`, `local/best`,
+    // `local/auto`, etc. resolve dynamically to the best currently-available
+    // model based on the ModelRegistry's discovered data. Master prompt #19 + #20.
+    const aliasRegistry = new ModelAliasRegistry(modelRegistry);
 
     const chatUseCase = new ChatCompletionUseCase(
       routing,
@@ -347,6 +355,7 @@ export class GatewayRuntime {
       cache,
       keyRegistry,
       modelRegistry,
+      aliasRegistry,
     });
 
     return new GatewayRuntime({
@@ -380,6 +389,7 @@ export class GatewayRuntime {
       cache,
       keyRegistry,
       modelRegistry,
+      aliasRegistry,
     });
   }
 

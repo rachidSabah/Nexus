@@ -41,6 +41,7 @@ import {
   type AnthropicRequest,
 } from './anthropic-compat.js';
 import type { GatewayConfig } from './config.js';
+import { ModelAliasRegistry, type AliasRankingStrategy } from './model-aliases.js';
 
 /**
  * HTTP server. Exposes Phase 1-4 endpoints.
@@ -73,6 +74,7 @@ export interface HttpServerDeps {
   readonly cache: CachePort;
   readonly keyRegistry: KeyRegistry;
   readonly modelRegistry: ModelRegistry;
+  readonly aliasRegistry: ModelAliasRegistry;
 }
 
 export class HttpServer {
@@ -183,6 +185,53 @@ export class HttpServer {
       return { ok: true, message: 'refresh started — poll /v1/models/stats for completion' };
     });
 
+    // ── Smart model aliasing (master prompt #19, #20) ──────────────────
+    // Virtual model routes: local/free, local/coding, local/best, etc.
+    // resolve dynamically to the best currently-available model.
+    this.fastify.get('/v1/aliases', async () => {
+      return { aliases: this.deps.aliasRegistry.list() };
+    });
+
+    this.fastify.post('/v1/aliases', async (request, reply) => {
+      const body = request.body as {
+        alias: string;
+        description?: string;
+        filter: { capability?: string; freeOnly?: boolean; minContextWindow?: number; providers?: string[] };
+        ranking: AliasRankingStrategy;
+      };
+      if (!body?.alias || !body?.filter || !body?.ranking) {
+        return reply.code(400).send({ error: { message: 'alias, filter, and ranking are required' } });
+      }
+      try {
+        this.deps.aliasRegistry.register({
+          alias: body.alias,
+          description: body.description ?? 'User-defined alias',
+          filter: body.filter as never,
+          ranking: body.ranking,
+          builtin: false,
+        });
+        return reply.code(201).send({ ok: true });
+      } catch (err) {
+        return reply.code(409).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    this.fastify.delete('/v1/aliases/:alias', async (request) => {
+      const { alias } = request.params as { alias: string };
+      const ok = this.deps.aliasRegistry.unregister(alias);
+      return { ok };
+    });
+
+    // Resolve an alias without sending a request (for testing / dashboard).
+    this.fastify.get('/v1/aliases/:alias/resolve', async (request, reply) => {
+      const { alias } = request.params as { alias: string };
+      const resolution = this.deps.aliasRegistry.resolve(alias);
+      if (!resolution) {
+        return reply.code(404).send({ error: { message: `Alias '${alias}' not found or no candidates match` } });
+      }
+      return resolution;
+    });
+
     // ── Providers (gateway-specific) ───────────────────────────────────
     this.fastify.get('/v1/providers', async () => {
       return this.deps.routing.listEndpoints().map((e) => ({
@@ -232,6 +281,17 @@ export class HttpServer {
         return reply.code(400).send({ error: { message: 'model and messages are required', type: 'invalid_request_error' } });
       }
 
+      // ─── Smart model aliasing (master prompt #19, #20) ──────────────
+      // If the requested model is a registered alias (e.g. `local/free`,
+      // `local/coding`, `local/best`), resolve it to the best currently-
+      // available concrete model based on the ModelRegistry's data.
+      // The resolution happens BEFORE routing, so the routing engine sees
+      // a real model id.
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(body.model);
+      const effectiveBody = aliasResolution.resolution
+        ? { ...body, model: aliasResolution.model }
+        : body;
+
       // AuthN + AuthZ. If security principals are configured, require gateway:chat.
       // If no principals are configured at all (open gateway), allow anonymous.
       const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
@@ -243,7 +303,11 @@ export class HttpServer {
         action: 'gateway:chat',
         resource: body.model,
         result: 'allow',
-        metadata: { streaming: Boolean(body.stream) },
+        metadata: {
+          streaming: Boolean(body.stream),
+          resolvedModel: aliasResolution.resolution?.modelId,
+          aliasReason: aliasResolution.resolution?.reason,
+        },
       });
 
       if (body.stream) {
@@ -267,7 +331,7 @@ export class HttpServer {
         };
 
         try {
-          await this.deps.chatUseCase.execute(body, sink, new AbortController().signal);
+          await this.deps.chatUseCase.execute(effectiveBody, sink, new AbortController().signal);
         } catch (err) {
           if (!reply.raw.headersSent) {
             reply.code(500).send({ error: { message: (err as Error).message } });
@@ -280,7 +344,7 @@ export class HttpServer {
       }
 
       try {
-        const response = await this.deps.chatUseCase.execute(body, undefined, new AbortController().signal);
+        const response = await this.deps.chatUseCase.execute(effectiveBody, undefined, new AbortController().signal);
         return response;
       } catch (err) {
         const code = (err as { code?: string }).code;
@@ -308,6 +372,12 @@ export class HttpServer {
 
       // Translate Anthropic → internal OpenAI-compatible request.
       const internalReq = translateAnthropicRequest(anthropicReq);
+
+      // Smart model aliasing — resolve local/free, local/coding, etc.
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(internalReq.model);
+      const effectiveReq = aliasResolution.resolution
+        ? { ...internalReq, model: aliasResolution.model }
+        : internalReq;
 
       // Streaming path: emit Anthropic-format SSE events.
       if (anthropicReq.stream) {
@@ -337,7 +407,7 @@ export class HttpServer {
         };
 
         try {
-          await this.deps.chatUseCase.execute(internalReq, sink, new AbortController().signal);
+          await this.deps.chatUseCase.execute(effectiveReq, sink, new AbortController().signal);
         } catch (err) {
           if (!reply.raw.headersSent) {
             reply.code(500).send({
@@ -358,7 +428,7 @@ export class HttpServer {
 
       // Non-streaming path: translate response back to Anthropic format.
       try {
-        const response = await this.deps.chatUseCase.execute(internalReq, undefined, new AbortController().signal);
+        const response = await this.deps.chatUseCase.execute(effectiveReq, undefined, new AbortController().signal);
         return translateToAnthropicResponse(response, anthropicReq.model);
       } catch (err) {
         const code = (err as { code?: string }).code;
