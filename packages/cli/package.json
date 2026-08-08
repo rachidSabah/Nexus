@@ -17,6 +17,7 @@
     "clean": "rimraf dist coverage .turbo"
   },
   "dependencies": {
+    "@agent-nexus/quality-engine": "workspace:*",
     "@anx/core": "workspace:*",
     "@anx/integrations": "workspace:*",
     "@anx/sdk": "workspace:*"

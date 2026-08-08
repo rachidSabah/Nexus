@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { ExtensionMarketplace } from '@agent-nexus/marketplace';
+import { AIServiceMesh } from '@agent-nexus/service-mesh';
 import { AgentRegistry as A2AAgentRegistry, A2ACoordinator, TeamManager } from '@anx/a2a';
 import { AgentRegistry, registerBuiltinAgents } from '@anx/agents';
 import {
@@ -63,6 +65,8 @@ export class GatewayRuntime {
   readonly tools!: ToolRuntime;
   readonly planner!: ReturnType<typeof createPlanner>;
   readonly teams!: TeamManager;
+  readonly marketplace!: ExtensionMarketplace;
+  readonly mesh!: AIServiceMesh;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -90,6 +94,8 @@ export class GatewayRuntime {
     tools: ToolRuntime;
     planner: ReturnType<typeof createPlanner>;
     teams: TeamManager;
+    marketplace: ExtensionMarketplace;
+    mesh: AIServiceMesh;
   }) {
     Object.assign(this, opts);
   }
@@ -109,8 +115,24 @@ export class GatewayRuntime {
       cooldownMs: config.routing.cooldownMs,
     });
     const audit = new InMemoryAuditLog();
+    const vaultKey = config.security.vaultKey ?? process.env['AGENT_NEXUS_VAULT_KEY'];
+    if (!vaultKey) {
+      // Refuse to silently fall back to a random key if persistent storage is
+      // configured — that would make previously-stored credentials permanently
+      // undecryptable. Generate an ephemeral key only when the vault is in-memory.
+      if (config.security.vaultPath) {
+        throw new Error(
+          'AGENT_NEXUS_VAULT_KEY is required when security.vaultPath is set. ' +
+            'Either set the env var, remove vaultPath from config, or set vaultPath to undefined for in-memory only.',
+        );
+      }
+      logger.warn(
+        'AGENT_NEXUS_VAULT_KEY not set — using an ephemeral in-memory vault key. ' +
+          'Stored credentials will be lost on restart. Set the env var (or security.vaultKey in config) for production.',
+      );
+    }
     const vault = new EncryptedCredentialVault(
-      config.security.vaultKey ?? randomUUID().toString(),
+      vaultKey ?? randomUUID().toString(),
       config.security.vaultPath,
     );
     await vault.restore();
@@ -177,6 +199,16 @@ export class GatewayRuntime {
     const a2aRegistry = new A2AAgentRegistry();
     const a2a = new A2ACoordinator(a2aRegistry);
     const teams = new TeamManager(events);
+
+    const marketplace = new ExtensionMarketplace(config.server.versionLabel ?? '0.4.0', {
+      signatureVerification: config.security.vaultKey !== undefined,
+    });
+
+    // Service mesh — used for cross-gateway / cross-provider traffic shaping
+    // (load balancing, circuit breaker, canary/blue-green splits). Auto-registers
+    // all current routing endpoints as providers so the mesh can be queried
+    // alongside the routing engine.
+    const mesh = new AIServiceMesh();
 
     const mcpServer = new McpServer({
       name: 'agent-nexus-gateway',
@@ -261,6 +293,8 @@ export class GatewayRuntime {
       tools,
       planner,
       teams,
+      marketplace,
+      mesh,
     });
 
     return new GatewayRuntime({
@@ -289,6 +323,8 @@ export class GatewayRuntime {
       tools,
       planner,
       teams,
+      marketplace,
+      mesh,
     });
   }
 

@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@anx/core": "workspace:*",
+    "@anx/integrations": "workspace:*",
     "@anx/routing": "workspace:*",
     "@anx/observability": "workspace:*",
     "@anx/shared": "workspace:*"

@@ -2,7 +2,102 @@ import type { ProviderCapabilities, RoutingEnginePort, CredentialVaultPort } fro
 
 import type { GatewayConfig } from './config.js';
 
-const DEFAULT_CAPS: ProviderCapabilities = {
+/**
+ * Per-provider default capabilities. Previously a single `DEFAULT_CAPS` was
+ * applied to every auto-registered provider, which silently disabled
+ * embeddings/vision/reasoning even for providers that actually support them
+ * (OpenAI, Google, etc.). This table reflects what each provider's official
+ * API actually supports.
+ */
+const PROVIDER_DEFAULT_CAPS: Record<string, ProviderCapabilities> = {
+  openai: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: true,
+    embeddings: true, reasoning: false, jsonMode: true,
+    maxOutputTokens: 16384, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  anthropic: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 200000, supportedModalities: ['text', 'image'],
+  },
+  google: {
+    streaming: true, toolCalling: true, vision: true, audio: true, speech: true,
+    embeddings: true, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 1000000, supportedModalities: ['text', 'image', 'audio'],
+  },
+  deepseek: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 64000, supportedModalities: ['text'],
+  },
+  openrouter: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  groq: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text'],
+  },
+  mistral: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: true, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32000, supportedModalities: ['text'],
+  },
+  xai: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text'],
+  },
+  ollama: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: true, reasoning: false, jsonMode: false,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text'],
+  },
+  vllm: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: true, reasoning: false, jsonMode: false,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  lmstudio: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: true, reasoning: false, jsonMode: false,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  together: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  fireworks: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  cerebras: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  cloudflare: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  litellm: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  azure: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: true,
+    embeddings: true, reasoning: false, jsonMode: true,
+    maxOutputTokens: 16384, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+};
+
+const FALLBACK_CAPS: ProviderCapabilities = {
   streaming: true,
   toolCalling: true,
   vision: false,
@@ -15,6 +110,11 @@ const DEFAULT_CAPS: ProviderCapabilities = {
   maxInputTokens: 32768,
   supportedModalities: ['text'],
 };
+
+/** Returns the default capability set for a given provider id. */
+export function defaultCapabilitiesFor(providerId: string): ProviderCapabilities {
+  return PROVIDER_DEFAULT_CAPS[providerId] ?? FALLBACK_CAPS;
+}
 
 /**
  * Register endpoints from config into the routing engine. If config has no
@@ -37,7 +137,7 @@ export async function registerDefaultEndpoints(
       providerId: e.providerId,
       displayName: e.displayName,
       baseUrl: e.baseUrl ?? '',
-      capabilities: { ...DEFAULT_CAPS, ...(e.capabilities as Partial<ProviderCapabilities> | undefined) },
+      capabilities: { ...defaultCapabilitiesFor(e.providerId), ...(e.capabilities as Partial<ProviderCapabilities> | undefined) },
       pricing: e.pricing,
       priority: e.priority,
       weight: e.weight,
@@ -73,7 +173,7 @@ export async function registerDefaultEndpoints(
         providerId: e.providerId,
         displayName: e.providerId,
         baseUrl: e.baseUrl,
-        capabilities: DEFAULT_CAPS,
+        capabilities: defaultCapabilitiesFor(e.providerId),
         pricing: e.pricing,
         priority: 1,
         weight: 1,

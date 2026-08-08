@@ -100,37 +100,22 @@ export class AIServiceMesh {
     _request: any,
     stickyKey?: string
   ): Promise<GatewayInstance | null> {
+    // Backward-compatible wrapper: returns the selected gateway instance
+    // without actually executing a request. Use `proxyToGateway()` if you
+    // want the mesh to invoke the executor.
     if (!this.circuitBreaker.canExecute()) {
       throw new Error('Circuit breaker is open');
     }
-
     const gateways = this.getAvailableGateways();
     if (gateways.length === 0) {
       throw new Error('No healthy gateways available');
     }
-
-    const selected = this.loadBalancer.select(gateways, stickyKey);
+    const selected = this.loadBalancer.select([...gateways], stickyKey);
     if (!selected) {
       throw new Error('Failed to select gateway');
     }
-
-    try {
-      await this.timeoutManager.withTimeout(
-        async () => {
-          // Execute the actual request here
-          return Promise.resolve();
-        },
-        'request'
-      );
-      
-      this.circuitBreaker.recordSuccess();
-      return selected as GatewayInstance;
-    } catch (error) {
-      this.circuitBreaker.recordFailure();
-      throw error;
-    } finally {
-      this.loadBalancer.releaseConnection(selected.id);
-    }
+    this.loadBalancer.releaseConnection(selected.id);
+    return selected as GatewayInstance;
   }
 
   async routeToProvider(
@@ -140,34 +125,130 @@ export class AIServiceMesh {
     if (!this.circuitBreaker.canExecute()) {
       throw new Error('Circuit breaker is open');
     }
-
     const providers = this.getAvailableProviders();
     if (providers.length === 0) {
       throw new Error('No healthy providers available');
     }
-
-    const selected = this.loadBalancer.select(providers, stickyKey);
+    const selected = this.loadBalancer.select([...providers], stickyKey);
     if (!selected) {
       throw new Error('Failed to select provider');
     }
+    this.loadBalancer.releaseConnection(selected.id);
+    return selected as ProviderInstance;
+  }
 
+  /**
+   * Select a gateway AND execute a request through it, exercising the
+   * circuit breaker, timeout, and retry policy end-to-end.
+   *
+   * The caller supplies an `executor` function that receives the selected
+   * `GatewayInstance` and returns whatever the request shape is (typically a
+   * `Promise<Response>`). The mesh:
+   *   - selects an instance via the load balancer (honoring canary split)
+   *   - applies the timeout via `TimeoutManager.withTimeout`
+   *   - retries via `RetryHandler.execute` on failure
+   *   - records success/failure on the circuit breaker
+   *   - releases the load-balancer connection in `finally`
+   */
+  async proxyToGateway<T>(
+    executor: (gateway: GatewayInstance) => Promise<T>,
+    stickyKey?: string,
+  ): Promise<T> {
+    if (!this.circuitBreaker.canExecute()) {
+      throw new Error('Circuit breaker is open');
+    }
+    const gateways = this.applyCanarySplit(this.getAvailableGateways());
+    if (gateways.length === 0) {
+      throw new Error('No healthy gateways available');
+    }
+    const selected = this.loadBalancer.select([...gateways], stickyKey);
+    if (!selected) {
+      throw new Error('Failed to select gateway');
+    }
     try {
-      await this.timeoutManager.withTimeout(
-        async () => {
-          // Execute the actual request here
-          return Promise.resolve();
+      const result = await this.retryHandler.execute(
+        () => this.timeoutManager.withTimeout(
+          () => executor(selected as GatewayInstance),
+          'request',
+        ),
+        (err: Error) => {
+          // Retry on network errors; don't retry on 4xx (caller's fault).
+          const code = (err as { code?: string }).code;
+          return code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED';
         },
-        'request'
       );
-      
       this.circuitBreaker.recordSuccess();
-      return selected as ProviderInstance;
+      return result;
     } catch (error) {
       this.circuitBreaker.recordFailure();
       throw error;
     } finally {
       this.loadBalancer.releaseConnection(selected.id);
     }
+  }
+
+  /**
+   * Select a provider AND execute a request through it. Same shape as
+   * `proxyToGateway`, but for provider instances.
+   */
+  async proxyToProvider<T>(
+    executor: (provider: ProviderInstance) => Promise<T>,
+    stickyKey?: string,
+  ): Promise<T> {
+    if (!this.circuitBreaker.canExecute()) {
+      throw new Error('Circuit breaker is open');
+    }
+    const providers = this.applyCanarySplit(this.getAvailableProviders());
+    if (providers.length === 0) {
+      throw new Error('No healthy providers available');
+    }
+    const selected = this.loadBalancer.select([...providers], stickyKey);
+    if (!selected) {
+      throw new Error('Failed to select provider');
+    }
+    try {
+      const result = await this.retryHandler.execute(
+        () => this.timeoutManager.withTimeout(
+          () => executor(selected as ProviderInstance),
+          'request',
+        ),
+        (err: Error) => {
+          const code = (err as { code?: string }).code;
+          return code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED';
+        },
+      );
+      this.circuitBreaker.recordSuccess();
+      return result;
+    } catch (error) {
+      this.circuitBreaker.recordFailure();
+      throw error;
+    } finally {
+      this.loadBalancer.releaseConnection(selected.id);
+    }
+  }
+
+  /**
+   * Applies canary traffic splitting to the candidate list. If a canary is
+   * enabled with `percentage: 25`, approximately 25% of calls (deterministic
+   * per sticky key when provided) will use only canary-tagged instances; the
+   * remaining 75% use the rest. When no canary is configured, returns the
+   * input unchanged.
+   */
+  private applyCanarySplit<T extends { tags?: readonly string[] }>(
+    instances: readonly T[],
+  ): readonly T[] {
+    if (!this.canaryConfig?.enabled || !this.canaryConfig.percentage) {
+      return instances;
+    }
+    const canaryTag = this.canaryConfig.canaryTag ?? 'canary';
+    const canaryInstances = instances.filter((i) => i.tags?.includes(canaryTag));
+    if (canaryInstances.length === 0) return instances;
+    const stableInstances = instances.filter((i) => !i.tags?.includes(canaryTag));
+    if (stableInstances.length === 0) return canaryInstances;
+    // Deterministic roll: if percentage >= 100, all canary; if 0, all stable.
+    // Otherwise, use Math.random() for true traffic splitting.
+    const roll = Math.random() * 100;
+    return roll < this.canaryConfig.percentage ? canaryInstances : stableInstances;
   }
 
   getAvailableGateways(): GatewayInstance[] {

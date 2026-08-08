@@ -114,6 +114,12 @@ importers:
 
   apps/gateway:
     dependencies:
+      '@agent-nexus/marketplace':
+        specifier: workspace:*
+        version: link:../../packages/marketplace
+      '@agent-nexus/service-mesh':
+        specifier: workspace:*
+        version: link:../../packages/service-mesh
       '@anx/a2a':
         specifier: workspace:*
         version: link:../../packages/a2a
@@ -206,6 +212,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@agent-nexus/quality-engine':
+        specifier: workspace:*
+        version: link:../quality-engine
       '@anx/core':
         specifier: workspace:*
         version: link:../core
@@ -348,6 +357,9 @@ importers:
       '@anx/core':
         specifier: workspace:*
         version: link:../core
+      '@anx/integrations':
+        specifier: workspace:*
+        version: link:../integrations
       '@anx/observability':
         specifier: workspace:*
         version: link:../observability

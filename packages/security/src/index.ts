@@ -107,6 +107,16 @@ export class RbacService {
     this.principals.set(principal.id, principal);
   }
 
+  /** Returns all registered principals. Used by the gateway to detect "open install" mode. */
+  listPrincipals(): readonly Principal[] {
+    return Array.from(this.principals.values());
+  }
+
+  /** Returns a principal by id, or undefined. */
+  getPrincipal(principalId: string): Principal | undefined {
+    return this.principals.get(principalId);
+  }
+
   authorize(principalId: string, action: string, _resource: string): boolean {
     const principal = this.principals.get(principalId);
     if (!principal) return false;

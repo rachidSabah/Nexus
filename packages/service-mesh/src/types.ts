@@ -92,6 +92,8 @@ export interface RateLimitConfig {
 export interface CanaryConfig {
   enabled: boolean;
   percentage: number;
+  /** Tag used to identify canary instances. Defaults to 'canary'. */
+  canaryTag?: string;
   headerMatch?: {
     name: string;
     value: string;

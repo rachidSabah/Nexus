@@ -1,3 +1,39 @@
-The provided input shows only a single modified file named 'codingghosts' which appears to be a directory or file without a clear extension indicating it's a build artifact, dependency, or temporary file. Since there are no clear build artifacts, dependency directories, or other ignorable files in the changes, and the file name doesn't match common ignore patterns, no .gitignore rules need to be added.
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
 
-(empty)
+# Build artifacts
+dist/
+build/
+.next/
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test
+.nyc_output/
+*.lcov
+
+# Misc
+*.log
+.cache/

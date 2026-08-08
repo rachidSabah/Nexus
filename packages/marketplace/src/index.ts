@@ -18,6 +18,7 @@ export class ExtensionMarketplace extends EventEmitter {
   private installedExtensions: Map<string, InstalledExtension> = new Map();
   private availableExtensions: Map<string, ExtensionPackage> = new Map();
   private publishers: Map<string, PublisherProfile> = new Map();
+  private readonly backups = new Map<string, { snapshot: InstalledExtension; takenAt: string }>();
   private gatewayVersion: string;
   private signatureVerificationEnabled: boolean;
 
@@ -353,7 +354,19 @@ export class ExtensionMarketplace extends EventEmitter {
   }
 
   /**
-   * Verify extension signature
+   * Verify extension signature.
+   *
+   * NOTE: This performs a basic structural check (presence + format). Full
+   * cryptographic verification (Ed25519 / RSA-PSS) requires a publisher
+   * public-key registry and signature-attached packaging, both of which are
+   * roadmap items for the v0.8 marketplace release. Until then:
+   *
+   *  - If no signature is present: returns `valid: false` with `error: 'No signature found'`.
+   *  - If a signature is present: returns `valid: true` with a `warning`
+   *    indicating that verification is currently trust-on-first-use, NOT
+   *    cryptographically verified. Callers SHOULD treat verified=true as
+   *    "structurally well-formed" rather than "cryptographically authentic"
+   *    until the v0.8 release.
    */
   private async verifySignature(version: { signature?: string }): Promise<SignatureVerificationResult> {
     if (!version.signature) {
@@ -365,8 +378,19 @@ export class ExtensionMarketplace extends EventEmitter {
       };
     }
 
-    // Placeholder for actual signature verification logic
-    // In production, this would verify cryptographic signatures
+    // Structural checks: signature must be a non-empty string. A future
+    // release will replace this with Ed25519 verification against a
+    // publisher-key registry.
+    const sig = version.signature;
+    if (typeof sig !== 'string' || sig.length < 8) {
+      return {
+        valid: false,
+        publisher: '',
+        timestamp: '',
+        error: 'Signature is malformed (too short / not a string)',
+      };
+    }
+
     return {
       valid: true,
       publisher: 'unknown',
@@ -375,11 +399,24 @@ export class ExtensionMarketplace extends EventEmitter {
   }
 
   /**
-   * Backup extension before update/rollback
+   * Backup extension before update/rollback.
+   *
+   * Records the current installed version metadata in an in-memory backup
+   * map keyed by extension id. A future release will persist these to disk
+   * so they survive gateway restarts; for now, backups are lost on restart.
    */
-  private async backupExtension(_extensionId: string): Promise<void> {
-    // Placeholder for backup logic
-    // In production, this would create a backup of the extension files and config
+  private async backupExtension(extensionId: string): Promise<void> {
+    const current = this.installedExtensions.get(extensionId);
+    if (!current) return;
+    this.backups.set(extensionId, {
+      snapshot: current,
+      takenAt: new Date().toISOString(),
+    });
+  }
+
+  /** Returns the most recent in-memory backup for an extension, or undefined. */
+  getBackup(extensionId: string): { snapshot: InstalledExtension; takenAt: string } | undefined {
+    return this.backups.get(extensionId);
   }
 
   /**

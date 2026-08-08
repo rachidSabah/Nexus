@@ -34,6 +34,9 @@ export class NexusCli {
         return this.integrations(rest);
       case 'health':
         return this.health(rest);
+      case 'cert':
+      case 'certify':
+        return this.certify(rest);
       case 'config':
         return this.config(rest);
       case 'version':
@@ -117,11 +120,45 @@ export class NexusCli {
   private async config(args: string[]): Promise<void> {
     const [sub] = args;
     if (sub === 'init') {
-      process.stdout.write('Created .anxrc.json with default values.\n');
-      process.stdout.write('Edit it to set your NEXUS_BASE_URL and NEXUS_API_KEY.\n');
+      const { writeFile } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const target = join(process.cwd(), '.anxrc.json');
+      const defaultConfig = {
+        baseUrl: process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787',
+        apiKey: process.env['NEXUS_API_KEY'] ?? '',
+        defaultModel: 'gpt-4',
+      };
+      try {
+        await writeFile(target, JSON.stringify(defaultConfig, null, 2) + '\n', 'utf8');
+        process.stdout.write(`Created ${target} with default values.\n`);
+        process.stdout.write('Edit it to set your baseUrl and apiKey.\n');
+      } catch (err) {
+        process.stderr.write(`Failed to write ${target}: ${(err as Error).message}\n`);
+        process.exitCode = 1;
+      }
     } else {
       process.stderr.write('Usage: anx config init\n');
     }
+  }
+
+  // ─── Cert ────────────────────────────────────────────────────────────
+  // Runs the compatibility certification suite against a running gateway.
+  // Verifies API surface (GET /v1/models), streaming support, and per-editor
+  // integration status. Reads gateway URL + key from NEXUS_BASE_URL / NEXUS_API_KEY.
+  private async certify(args: string[]): Promise<void> {
+    const flags = this.parseFlags(args);
+    const baseUrl = flags['gateway'] ?? process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+    const apiKey = flags['api-key'] ?? process.env['NEXUS_API_KEY'];
+    const { CompatibilityCertifier } = await import('@agent-nexus/quality-engine');
+    const certifier = new CompatibilityCertifier({
+      gatewayUrl: baseUrl,
+      apiKey,
+      probeTimeoutMs: Number(flags['timeout'] ?? 5000),
+    });
+    process.stderr.write(`Probing gateway at ${baseUrl}…\n`);
+    const result = await certifier.certify();
+    process.stdout.write(certifier.generateReport(result));
+    process.stdout.write('\n');
   }
 
   // ─── Integrations ─────────────────────────────────────────────────────
@@ -286,7 +323,10 @@ COMMANDS
     verify <id>              Test that a tool can reach the gateway
     info <id>                Show details about an integration
   health                     Check gateway health
+  cert                       Run the compatibility certification suite
+                             (probes /v1/models, streaming, per-editor status)
   config                     Manage configuration
+    init                    Create .anxrc.json with default values
   version                    Print CLI version
   help                       Show this help
 

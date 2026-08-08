@@ -14,6 +14,8 @@ export interface GatewayConfig {
     readonly port: number;
     readonly host: string;
     readonly cors: { readonly origin: string | readonly string[]; readonly credentials: boolean };
+    /** Optional version label advertised by the gateway (e.g. for the marketplace's compatibility checks). Defaults to the package version. */
+    readonly versionLabel?: string;
   };
   readonly routing: {
     readonly strategy: string;

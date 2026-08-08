@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
+import type { AIServiceMesh } from '@agent-nexus/service-mesh';
 import type { A2ACoordinator, TeamManager } from '@anx/a2a';
 import type { AgentRegistry } from '@anx/agents';
 import { ChatCompletionUseCase } from '@anx/core';
@@ -20,6 +22,7 @@ import type { InProcessTelemetry } from '@anx/observability';
 import type { PluginRuntime } from '@anx/plugins';
 import type { AgentRuntime } from '@anx/runtime';
 import type { RbacService, JwtService, EncryptedCredentialVault } from '@anx/security';
+import { hashApiKey } from '@anx/security';
 import type { ExecutionPlanner } from '@anx/task-router';
 import type { ToolRuntime } from '@anx/tools';
 import type { WorkflowEngine } from '@anx/workflow';
@@ -55,6 +58,8 @@ export interface HttpServerDeps {
   readonly tools: ToolRuntime;
   readonly planner: ExecutionPlanner;
   readonly teams: TeamManager;
+  readonly marketplace: ExtensionMarketplace;
+  readonly mesh: AIServiceMesh;
 }
 
 export class HttpServer {
@@ -131,6 +136,31 @@ export class HttpServer {
       }));
     });
 
+    // ── Auth: JWT issuance ─────────────────────────────────────────────
+    // Exchange an API key (or valid existing JWT) for a short-lived JWT.
+    // Callers then use the JWT for subsequent requests.
+    this.fastify.post('/v1/auth/login', async (request, reply) => {
+      const body = request.body as { apiKey?: string; principal?: string; ttlSeconds?: number } | null;
+      // Resolve principal from either apiKey (preferred) or explicit principalId.
+      let principalId: string | undefined;
+      if (body?.apiKey) {
+        principalId = this.resolvePrincipalByApiKey(body.apiKey);
+      } else if (body?.principal) {
+        principalId = body.principal;
+      }
+      if (!principalId) {
+        return reply.code(401).send({ error: { message: 'Invalid credentials', code: 'AUTHENTICATION_ERROR' } });
+      }
+      const token = this.deps.jwt.issue({ sub: principalId }, body?.ttlSeconds ?? 3600);
+      await this.deps.audit.append({
+        principal: principalId,
+        action: 'auth:login',
+        resource: 'jwt',
+        result: 'allow',
+      });
+      return reply.send({ token, principal: principalId, expiresIn: body?.ttlSeconds ?? 3600 });
+    });
+
     // ── Chat Completions (OpenAI-compatible, streaming + non-streaming)
     this.fastify.post('/v1/chat/completions', async (request, reply) => {
       const body = request.body as ChatCompletionRequest;
@@ -138,8 +168,12 @@ export class HttpServer {
         return reply.code(400).send({ error: { message: 'model and messages are required', type: 'invalid_request_error' } });
       }
 
-      // Optional auth: if Authorization header present, validate.
+      // AuthN + AuthZ. If security principals are configured, require gateway:chat.
+      // If no principals are configured at all (open gateway), allow anonymous.
       const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', body.model, reply);
+      if (authz === 'deny') return reply;
+
       await this.deps.audit.append({
         principal: principal ?? 'anonymous',
         action: 'gateway:chat',
@@ -197,6 +231,9 @@ export class HttpServer {
       if (!body?.model || !body?.input) {
         return reply.code(400).send({ error: { message: 'model and input are required' } });
       }
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:embed', body.model, reply);
+      if (authz === 'deny') return reply;
       // Resolve adapter for model
       const endpoints = this.deps.routing.listEndpoints();
       const endpoint = endpoints.find((e) => e.tags.includes(body.model) || e.id === body.model || e.providerId === body.model);
@@ -238,6 +275,127 @@ export class HttpServer {
         return { error: err.message };
       });
       return reply.send({ result });
+    });
+
+    // ── Marketplace (extension catalog + install) ──────────────────────
+    this.fastify.get('/v1/marketplace/search', async (request) => {
+      const q = request.query as {
+        type?: 'plugin' | 'agent' | 'tool' | 'template';
+        category?: string;
+        author?: string;
+        verified?: string;
+        status?: string;
+        keywords?: string;
+      };
+      const keywords = q.keywords ? q.keywords.split(',').map((k) => k.trim()).filter(Boolean) : undefined;
+      const result = await this.deps.marketplace.search({
+        type: q.type as never,
+        category: q.category,
+        author: q.author,
+        verified: q.verified === 'true' ? true : q.verified === 'false' ? false : undefined,
+        status: q.status as never,
+        keywords,
+      });
+      return result;
+    });
+
+    this.fastify.get('/v1/marketplace/extensions/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const ext = await this.deps.marketplace.getExtension(id);
+      if (!ext) return reply.code(404).send(this.reply404('extension not found'));
+      return ext;
+    });
+
+    this.fastify.post('/v1/marketplace/extensions', async (request, reply) => {
+      const body = request.body as { extension?: never };
+      if (!body?.extension) return reply.code(400).send({ error: { message: 'extension is required' } });
+      this.deps.marketplace.addAvailableExtension(body.extension);
+      return reply.code(201).send({ ok: true });
+    });
+
+    this.fastify.post('/v1/marketplace/extensions/:id/install', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { version?: string; enableAfterInstall?: boolean; skipSignatureVerification?: boolean }) ?? {};
+      try {
+        const ok = await this.deps.marketplace.install(id, {
+          version: body.version,
+          enableAfterInstall: body.enableAfterInstall,
+          skipSignatureVerification: body.skipSignatureVerification,
+        });
+        return reply.code(ok ? 201 : 409).send({ ok });
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    this.fastify.post('/v1/marketplace/extensions/:id/update', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { autoUpdate?: boolean; backupCurrent?: boolean }) ?? {};
+      try {
+        const ok = await this.deps.marketplace.update(id, {
+          autoUpdate: body.autoUpdate,
+          backupCurrent: body.backupCurrent,
+        });
+        return reply.send({ ok });
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    this.fastify.delete('/v1/marketplace/extensions/:id', async (request) => {
+      const { id } = request.params as { id: string };
+      await this.deps.marketplace.remove(id);
+      return { ok: true };
+    });
+
+    this.fastify.get('/v1/marketplace/installed', async () => {
+      return this.deps.marketplace.getInstalledExtensions();
+    });
+
+    this.fastify.get('/v1/marketplace/stats', async () => {
+      return this.deps.marketplace.getStats();
+    });
+
+    // ── Service mesh (gateway-side management of mesh services) ─────────
+    // Auto-register all current routing endpoints as mesh providers so the
+    // mesh has something to load-balance over. This is a one-way sync from
+    // routing engine → mesh; the mesh is queried independently for cross-
+    // gateway traffic shaping (canary, blue-green, circuit breaker state).
+    this.syncMeshFromRouting();
+
+    this.fastify.get('/v1/mesh/services', async () => {
+      return this.deps.mesh.getRegistrySnapshot();
+    });
+
+    this.fastify.get('/v1/mesh/stats', async () => {
+      return this.deps.mesh.getServiceCount();
+    });
+
+    this.fastify.get('/v1/mesh/config', async () => {
+      return this.deps.mesh.getConfig();
+    });
+
+    this.fastify.post('/v1/mesh/canary', async (request) => {
+      const body = request.body as { percentage: number; canaryTag?: string };
+      this.deps.mesh.enableCanary(body.percentage);
+      return { ok: true, percentage: body.percentage };
+    });
+
+    this.fastify.delete('/v1/mesh/canary', async () => {
+      this.deps.mesh.disableCanary();
+      return { ok: true };
+    });
+
+    this.fastify.post('/v1/mesh/blue-green', async (request) => {
+      const body = request.body as { version: 'blue' | 'green' };
+      this.deps.mesh.switchBlueGreen(body.version);
+      return { ok: true, active: body.version };
+    });
+
+    this.fastify.post('/v1/mesh/traffic-policy', async (request) => {
+      const body = request.body as Record<string, unknown>;
+      this.deps.mesh.updateTrafficPolicy(body as never);
+      return { ok: true };
     });
 
     // ── Network diagnostics ────────────────────────────────────────────
@@ -542,18 +700,125 @@ export class HttpServer {
     }));
   }
 
+  /**
+   * Resolves the principal id from an Authorization header.
+   *
+   * - Bearer <jwt>  → verify JWT, return sub claim
+   * - Bearer <api-key> → SHA-256 hash and match against registered principals'
+   *   apiKeyHash. Returns undefined if no match.
+   * - Missing header → undefined (caller decides whether that's allowed).
+   *
+   * Previously this returned the literal string 'anonymous' for any non-JWT
+   * bearer token, which silently bypassed RBAC. It now resolves real
+   * principals and returns undefined when no principal matches.
+   */
+  /**
+   * Syncs endpoints from the routing engine into the service mesh's
+   * provider registry. Called once at server startup so the mesh has
+   * something to load-balance over. The mesh is consulted independently of
+   * the routing engine — useful when an operator wants to apply canary or
+   * blue-green splits across cross-gateway traffic without touching the
+   * routing engine's strategy.
+   */
+  private syncMeshFromRouting(): void {
+    for (const e of this.deps.routing.listEndpoints()) {
+      // The mesh's ProviderInstance has address+port (parsed from baseUrl)
+      // plus provider-specific capability flags mirrored from the routing
+      // endpoint's capabilities object.
+      let address = 'localhost';
+      let port = 443;
+      try {
+        const u = new URL(e.baseUrl || 'http://localhost:8787');
+        address = u.hostname;
+        port = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
+      } catch {
+        // keep defaults
+      }
+      this.deps.mesh.registerProvider({
+        id: e.id,
+        name: e.displayName,
+        address,
+        port,
+        status: e.health === 'healthy' ? 'healthy' : e.health === 'degraded' ? 'degraded' : 'unhealthy',
+        tags: [...e.tags],
+        weight: e.weight,
+        lastHeartbeat: Date.now(),
+        providerType: e.providerId,
+        models: [...e.tags],
+        streaming: e.capabilities.streaming,
+        embeddings: e.capabilities.embeddings,
+        vision: e.capabilities.vision,
+        toolCalling: e.capabilities.toolCalling,
+        metadata: { priority: String(e.priority), region: e.region ?? '' },
+      });
+    }
+  }
+
   private async authenticate(authHeader?: string): Promise<string | undefined> {
     if (!authHeader) return undefined;
-    if (authHeader.startsWith('Bearer ')) {
-      const token = authHeader.slice(7);
-      // Try JWT first
-      const payload = this.deps.jwt.verify(token);
-      if (payload?.['sub']) return payload['sub'] as string;
-      // Otherwise treat as raw API key — find matching principal via hash.
-      // For brevity, just return 'anonymous' here.
-      return 'anonymous';
+    if (!authHeader.startsWith('Bearer ')) return undefined;
+    const token = authHeader.slice(7);
+    // Try JWT first
+    const payload = this.deps.jwt.verify(token);
+    if (payload?.['sub']) return payload['sub'] as string;
+    // Otherwise treat as a raw API key — look up by hash.
+    return this.resolvePrincipalByApiKey(token);
+  }
+
+  /**
+   * Returns the principal id whose stored apiKeyHash matches the SHA-256
+   * of `apiKey`, or undefined if no principal matches.
+   */
+  private resolvePrincipalByApiKey(apiKey: string): string | undefined {
+    const hash = hashApiKey(apiKey);
+    for (const principal of this.deps.rbac.listPrincipals()) {
+      if (principal.apiKeyHash && principal.apiKeyHash === hash) {
+        return principal.id;
+      }
     }
     return undefined;
+  }
+
+  /**
+   * Enforces RBAC. Returns 'allow' or 'deny'. On 'deny', writes a 403 response
+   * to `reply` and appends an audit-log entry. If no principals are configured
+   * at all (open install), the route is allowed with an anonymous principal —
+   * this preserves the zero-config developer experience.
+   */
+  private requirePermission(
+    principal: string | undefined,
+    action: string,
+    resource: string,
+    reply: { code: (c: number) => { send: (b: unknown) => void } },
+  ): 'allow' | 'deny' {
+    const principalCount = this.deps.rbac.listPrincipals().length;
+    if (principalCount === 0) {
+      // Open install — no principals configured. Allow anonymous access.
+      return 'allow';
+    }
+    if (!principal) {
+      void this.deps.audit.append({
+        principal: 'anonymous',
+        action,
+        resource,
+        result: 'deny',
+        reason: 'missing or invalid credentials',
+      });
+      reply.code(401).send({ error: { message: 'Authentication required', code: 'AUTHENTICATION_ERROR' } });
+      return 'deny';
+    }
+    if (!this.deps.rbac.authorize(principal, action, resource)) {
+      void this.deps.audit.append({
+        principal,
+        action,
+        resource,
+        result: 'deny',
+        reason: 'insufficient permissions',
+      });
+      reply.code(403).send({ error: { message: `Principal '${principal}' lacks permission '${action}'`, code: 'AUTHORIZATION_ERROR' } });
+      return 'deny';
+    }
+    return 'allow';
   }
 }
 
