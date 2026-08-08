@@ -24,6 +24,7 @@ import type {
   TokenUsage,
 } from '../domain/types.js';
 
+import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
 import type {
   CachePort,
   ChunkSink,
@@ -48,6 +49,10 @@ export interface ChatCompletionUseCaseOptions {
   cacheTtlMs?: number;
   /** When true, streaming requests skip the cache entirely (the cache is write-through for non-streaming only). Default: true. */
   skipCacheForStreaming?: boolean;
+  /** Optional multi-key registry. When provided, the use case selects the best API key for the resolved provider on each attempt. */
+  keyRegistry?: KeyRegistry;
+  /** Strategy for key rotation. Default: 'adaptive'. */
+  keyRotationStrategy?: KeyRotationStrategy;
 }
 
 /**
@@ -77,6 +82,8 @@ export class ChatCompletionUseCase {
   private readonly semanticThreshold: number;
   private readonly cacheTtlMs: number;
   private readonly skipCacheForStreaming: boolean;
+  private readonly keyRegistry?: KeyRegistry;
+  private readonly keyRotationStrategy: KeyRotationStrategy;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -93,6 +100,8 @@ export class ChatCompletionUseCase {
     this.semanticThreshold = options.semanticThreshold ?? 0.92;
     this.cacheTtlMs = options.cacheTtlMs ?? 5 * 60 * 1000;
     this.skipCacheForStreaming = options.skipCacheForStreaming ?? true;
+    this.keyRegistry = options.keyRegistry;
+    this.keyRotationStrategy = options.keyRotationStrategy ?? 'adaptive';
   }
 
   async execute(
@@ -232,11 +241,33 @@ export class ChatCompletionUseCase {
         });
       }
 
+      // Hoisted out of `try` so the catch block can record key failures.
+      let selectedKeyId: string | undefined;
       try {
         const effectiveSignal: AbortSignal = signal ?? new AbortController().signal;
+
+        // ─── Multi-key selection ──────────────────────────────────────────
+        // If a KeyRegistry is configured, pick the best API key for this
+        // provider and inject it into the endpoint. The adapter's getApiKey()
+        // reads from endpoint.apiKey (cast) — so we just override it here.
+        // If no key is available (all on cooldown / invalid), we still try
+        // with the endpoint's original key (env-var fallback in the adapter).
+        let endpointWithKey: ProviderEndpoint = endpoint;
+        if (this.keyRegistry) {
+          selectedKeyId = this.keyRegistry.select(endpoint.providerId, {
+            strategy: this.keyRotationStrategy,
+          });
+          if (selectedKeyId) {
+            const plaintext = await this.keyRegistry.getPlaintext(selectedKeyId);
+            if (plaintext) {
+              endpointWithKey = { ...endpoint, apiKey: plaintext } as ProviderEndpoint & { apiKey: string };
+            }
+          }
+        }
+
         const response = effectiveRequest.stream
-          ? await this.streamAndCollect(adapter, endpoint, effectiveRequest, sink, effectiveSignal)
-          : await adapter.chatCompletion(endpoint, effectiveRequest, effectiveSignal);
+          ? await this.streamAndCollect(adapter, endpointWithKey, effectiveRequest, sink, effectiveSignal)
+          : await adapter.chatCompletion(endpointWithKey, effectiveRequest, effectiveSignal);
 
         // ─── Plugin hook: onProviderEnd ───────────────────────────────────
         if (this.plugins) {
@@ -247,6 +278,12 @@ export class ChatCompletionUseCase {
 
         const latencyMs = Date.now() - startedAt;
         this.routing.recordSuccess(endpoint.id, latencyMs);
+
+        // Record key success for rotation health.
+        if (this.keyRegistry && selectedKeyId) {
+          const tokens = response.usage.totalTokens ?? (response.usage.promptTokens + response.usage.completionTokens);
+          this.keyRegistry.recordSuccess(selectedKeyId, latencyMs, tokens);
+        }
 
         const cost = this.costs.calculate(response.usage, {
           inputPer1K: endpoint.pricing?.inputPer1K ?? 0,
@@ -307,6 +344,14 @@ export class ChatCompletionUseCase {
         const error = err as Error;
         const retryable = this.isRetryable(error);
         await this.routing.recordFailure(endpoint.id, error, retryable);
+
+        // Record key failure for rotation health. Extract the HTTP status
+        // from ProviderResponseError if available; otherwise pass the error
+        // code (ECONNRESET etc.) as a string.
+        if (this.keyRegistry && selectedKeyId) {
+          const status = (error as { status?: number }).status ?? (error as { code?: string }).code ?? 'error';
+          this.keyRegistry.recordFailure(selectedKeyId, status, retryable);
+        }
 
         // ─── Plugin hook: onError ────────────────────────────────────────
         if (this.plugins) {

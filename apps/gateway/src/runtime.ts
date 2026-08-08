@@ -11,6 +11,7 @@ import {
   InMemoryAuditLog,
   InMemoryCache,
   InMemoryEventBus,
+  KeyRegistry,
   RoutingEngine,
   type CachePort,
   type ChatCompletionChunk,
@@ -70,6 +71,7 @@ export class GatewayRuntime {
   readonly marketplace!: ExtensionMarketplace;
   readonly mesh!: AIServiceMesh;
   readonly cache!: CachePort;
+  readonly keyRegistry!: KeyRegistry;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -100,6 +102,7 @@ export class GatewayRuntime {
     marketplace: ExtensionMarketplace;
     mesh: AIServiceMesh;
     cache: CachePort;
+    keyRegistry: KeyRegistry;
   }) {
     Object.assign(this, opts);
   }
@@ -170,6 +173,15 @@ export class GatewayRuntime {
     const memoryEmbedder = new FakeEmbeddingsProvider();
     const embedFn = (text: string) => memoryEmbedder.embed(text);
 
+    // Multi-API-key registry — allows N keys per provider with intelligent
+    // rotation (round-robin / least-used / lru / latency / health / adaptive).
+    // Plaintexts are stored in the encrypted vault; the registry only holds
+    // metadata + health stats.
+    const keyRegistry = new KeyRegistry(vault, {
+      cooldownMs: 60_000,
+      defaultStrategy: 'adaptive',
+    });
+
     const chatUseCase = new ChatCompletionUseCase(
       routing,
       new DefaultFailover(),
@@ -184,6 +196,8 @@ export class GatewayRuntime {
         semanticThreshold: 0.92,
         cacheTtlMs: 5 * 60 * 1000,
         skipCacheForStreaming: true,
+        keyRegistry,
+        keyRotationStrategy: 'adaptive',
       },
     );
 
@@ -320,6 +334,7 @@ export class GatewayRuntime {
       marketplace,
       mesh,
       cache,
+      keyRegistry,
     });
 
     return new GatewayRuntime({
@@ -351,6 +366,7 @@ export class GatewayRuntime {
       marketplace,
       mesh,
       cache,
+      keyRegistry,
     });
   }
 

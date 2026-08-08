@@ -13,6 +13,7 @@ import type {
   ProviderAdapter,
   RoutingEnginePort,
   CachePort,
+  KeyRegistry,
 } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
@@ -62,6 +63,7 @@ export interface HttpServerDeps {
   readonly marketplace: ExtensionMarketplace;
   readonly mesh: AIServiceMesh;
   readonly cache: CachePort;
+  readonly keyRegistry: KeyRegistry;
 }
 
 export class HttpServer {
@@ -293,6 +295,118 @@ export class HttpServer {
     // ── Cache stats ────────────────────────────────────────────────────
     this.fastify.get('/v1/cache/stats', async () => {
       return this.deps.cache.stats();
+    });
+
+    // ── API key management (multi-key per provider) ───────────────────
+    // List all keys, optionally filtered by provider.
+    this.fastify.get('/v1/keys', async (request) => {
+      const q = request.query as { provider?: string };
+      const keys = q.provider
+        ? this.deps.keyRegistry.listByProvider(q.provider)
+        : this.deps.keyRegistry.listAll();
+      // Never expose plaintext — only metadata + lastFour.
+      return keys.map((k) => ({
+        id: k.id,
+        providerId: k.providerId,
+        label: k.label,
+        lastFour: k.lastFour,
+        status: k.status,
+        requests: k.requests,
+        tokens: k.tokens,
+        errors: k.errors,
+        rateLimitedCount: k.rateLimitedCount,
+        latencyMs: Math.round(k.latencyMs),
+        lastSuccessAt: k.lastSuccessAt || null,
+        lastFailureAt: k.lastFailureAt || null,
+        lastFailureReason: k.lastFailureReason ?? null,
+        cooldownUntil: k.cooldownUntil || null,
+        registeredAt: k.registeredAt,
+      }));
+    });
+
+    // Register a new API key for a provider.
+    this.fastify.post('/v1/keys', async (request, reply) => {
+      const body = request.body as { id?: string; providerId: string; plaintext: string; label?: string };
+      if (!body?.providerId || !body?.plaintext) {
+        return reply.code(400).send({ error: { message: 'providerId and plaintext are required' } });
+      }
+      const id = body.id ?? `${body.providerId}-key-${Date.now().toString(36)}`;
+      try {
+        const desc = await this.deps.keyRegistry.register({
+          id,
+          providerId: body.providerId,
+          plaintext: body.plaintext,
+          label: body.label,
+        });
+        // Return descriptor WITHOUT plaintext.
+        return reply.code(201).send({
+          id: desc.id,
+          providerId: desc.providerId,
+          label: desc.label,
+          lastFour: desc.lastFour,
+          status: desc.status,
+          registeredAt: desc.registeredAt,
+        });
+      } catch (err) {
+        return reply.code(409).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // Delete a key.
+    this.fastify.delete('/v1/keys/:id', async (request) => {
+      const { id } = request.params as { id: string };
+      const ok = await this.deps.keyRegistry.unregister(id);
+      return { ok };
+    });
+
+    // Force-reset a key's cooldown / invalid state.
+    this.fastify.post('/v1/keys/:id/reset', async (request) => {
+      const { id } = request.params as { id: string };
+      const ok = this.deps.keyRegistry.reset(id);
+      return { ok };
+    });
+
+    // Test a key by issuing a tiny chat completion against the provider.
+    // Returns { ok, latencyMs, model, error? }.
+    this.fastify.post('/v1/keys/:id/test', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const desc = this.deps.keyRegistry.get(id);
+      if (!desc) return reply.code(404).send(this.reply404('key not found'));
+      const plaintext = await this.deps.keyRegistry.getPlaintext(id);
+      if (!plaintext) return reply.code(500).send({ error: { message: 'plaintext missing from vault' } });
+
+      // Find an endpoint for this provider to test against.
+      const endpoint = this.deps.routing.listEndpoints().find((e) => e.providerId === desc.providerId);
+      if (!endpoint) {
+        return reply.code(404).send({ error: { message: `No endpoint registered for provider '${desc.providerId}'` } });
+      }
+      const adapter = this.deps.adapters.get(desc.providerId);
+      if (!adapter) {
+        return reply.code(404).send({ error: { message: `No adapter for provider '${desc.providerId}'` } });
+      }
+
+      const testEndpoint = { ...endpoint, apiKey: plaintext } as never;
+      const start = Date.now();
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 10_000);
+        try {
+          const r = await adapter.chatCompletion(testEndpoint, {
+            model: 'test',
+            messages: [{ role: 'user', content: 'ping' }],
+            maxTokens: 1,
+          } as never, controller.signal);
+          const latencyMs = Date.now() - start;
+          this.deps.keyRegistry.recordSuccess(id, latencyMs, r.usage?.totalTokens ?? 0);
+          return { ok: true, latencyMs, model: r.model };
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (err) {
+        const status = (err as { status?: number }).status ?? (err as { code?: string }).code ?? 'error';
+        this.deps.keyRegistry.recordFailure(id, status, false);
+        return reply.code(200).send({ ok: false, latencyMs: Date.now() - start, error: (err as Error).message, status });
+      }
     });
 
     // ── MCP (JSON-RPC over HTTP) ───────────────────────────────────────

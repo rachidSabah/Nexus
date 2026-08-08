@@ -57,8 +57,11 @@ export interface GatewayConfig {
 
 const DEFAULT_CONFIG: GatewayConfig = {
   server: {
+    // Local-first security: default to loopback only. Set host to '0.0.0.0'
+    // in agent-nexus.config.json (or via ANX_HOST env var) to expose the
+    // gateway on the network.
     port: 8787,
-    host: '0.0.0.0',
+    host: process.env['ANX_HOST'] ?? '127.0.0.1',
     cors: { origin: '*', credentials: false },
   },
   routing: {
