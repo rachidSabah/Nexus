@@ -27,6 +27,7 @@ export { DefaultFailover } from './application/failover.js';
 export { DefaultCostCalculator } from './application/cost-calculator.js';
 export { InMemoryEventBus } from './application/event-bus.js';
 export { InMemoryAuditLog } from './application/audit-log.js';
+export { InMemoryCache, cosineSimilarity, type InMemoryCacheOptions } from './application/cache.js';
 
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.1.0';

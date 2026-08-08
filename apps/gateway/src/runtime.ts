@@ -9,8 +9,10 @@ import {
   DefaultCostCalculator,
   DefaultFailover,
   InMemoryAuditLog,
+  InMemoryCache,
   InMemoryEventBus,
   RoutingEngine,
+  type CachePort,
   type ChatCompletionChunk,
   type ChatCompletionRequest,
   type EmbeddingRequest,
@@ -67,6 +69,7 @@ export class GatewayRuntime {
   readonly teams!: TeamManager;
   readonly marketplace!: ExtensionMarketplace;
   readonly mesh!: AIServiceMesh;
+  readonly cache!: CachePort;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -96,6 +99,7 @@ export class GatewayRuntime {
     teams: TeamManager;
     marketplace: ExtensionMarketplace;
     mesh: AIServiceMesh;
+    cache: CachePort;
   }) {
     Object.assign(this, opts);
   }
@@ -154,6 +158,18 @@ export class GatewayRuntime {
     const adapters = createDefaultAdapters();
     await registerDefaultEndpoints(routing, config, vault);
 
+    // In-memory cache for prompt + semantic cache hits. The embed function
+    // uses the gateway's own /v1/embeddings endpoint via GatewayEmbeddingsProvider
+    // when a real embeddings provider is available; for now we use the
+    // FakeEmbeddingsProvider (deterministic 8-dim hash) so the semantic cache
+    // works out of the box for development.
+    const cache = new InMemoryCache({
+      semanticThreshold: 0.92,
+      maxEntries: 10_000,
+    });
+    const memoryEmbedder = new FakeEmbeddingsProvider();
+    const embedFn = (text: string) => memoryEmbedder.embed(text);
+
     const chatUseCase = new ChatCompletionUseCase(
       routing,
       new DefaultFailover(),
@@ -161,6 +177,14 @@ export class GatewayRuntime {
       events,
       new DefaultCostCalculator(),
       config.routing.maxFailovers,
+      {
+        cache,
+        plugins,
+        embed: embedFn,
+        semanticThreshold: 0.92,
+        cacheTtlMs: 5 * 60 * 1000,
+        skipCacheForStreaming: true,
+      },
     );
 
     // ─── Phase 4: Agents / Runtime / Workflow / Memory / Tools / Planner / Teams ──
@@ -295,6 +319,7 @@ export class GatewayRuntime {
       teams,
       marketplace,
       mesh,
+      cache,
     });
 
     return new GatewayRuntime({
@@ -325,6 +350,7 @@ export class GatewayRuntime {
       teams,
       marketplace,
       mesh,
+      cache,
     });
   }
 

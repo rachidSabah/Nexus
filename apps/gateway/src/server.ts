@@ -12,6 +12,7 @@ import type {
   EventBusPort,
   ProviderAdapter,
   RoutingEnginePort,
+  CachePort,
 } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
@@ -60,6 +61,7 @@ export interface HttpServerDeps {
   readonly teams: TeamManager;
   readonly marketplace: ExtensionMarketplace;
   readonly mesh: AIServiceMesh;
+  readonly cache: CachePort;
 }
 
 export class HttpServer {
@@ -256,6 +258,41 @@ export class HttpServer {
     this.fastify.get('/metrics', async (_req, reply) => {
       reply.header('Content-Type', 'text/plain; version=0.0.4');
       return this.deps.telemetry.prometheus();
+    });
+
+    // ── Plugin management ──────────────────────────────────────────────
+    this.fastify.get('/v1/plugins', async () => {
+      return this.deps.plugins.list();
+    });
+
+    this.fastify.post('/v1/plugins/load', async (request, reply) => {
+      const body = request.body as { id: string; source: 'inline' | 'module' | 'npm'; path?: string; config?: Record<string, unknown>; factory?: () => unknown };
+      if (!body?.id || !body?.source) {
+        return reply.code(400).send({ error: { message: 'id and source are required' } });
+      }
+      try {
+        await this.deps.plugins.load({
+          id: body.id,
+          source: body.source,
+          path: body.path,
+          config: body.config,
+          factory: body.factory as never,
+        } as never);
+        return reply.code(201).send({ ok: true });
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    this.fastify.post('/v1/plugins/:id/unload', async (request) => {
+      const { id } = request.params as { id: string };
+      await this.deps.plugins.unload(id);
+      return { ok: true };
+    });
+
+    // ── Cache stats ────────────────────────────────────────────────────
+    this.fastify.get('/v1/cache/stats', async () => {
+      return this.deps.cache.stats();
     });
 
     // ── MCP (JSON-RPC over HTTP) ───────────────────────────────────────
@@ -781,9 +818,10 @@ export class HttpServer {
 
   /**
    * Enforces RBAC. Returns 'allow' or 'deny'. On 'deny', writes a 403 response
-   * to `reply` and appends an audit-log entry. If no principals are configured
-   * at all (open install), the route is allowed with an anonymous principal —
-   * this preserves the zero-config developer experience.
+   * to `reply` and appends an audit-log entry. If no principals with a usable
+   * API key or JWT are configured (open install), the route is allowed with
+   * an anonymous principal — this preserves the zero-config developer
+   * experience.
    */
   private requirePermission(
     principal: string | undefined,
@@ -791,9 +829,13 @@ export class HttpServer {
     resource: string,
     reply: { code: (c: number) => { send: (b: unknown) => void } },
   ): 'allow' | 'deny' {
-    const principalCount = this.deps.rbac.listPrincipals().length;
-    if (principalCount === 0) {
-      // Open install — no principals configured. Allow anonymous access.
+    // Only count principals that actually have an apiKeyHash — a principal
+    // registered without an apiKey (e.g. the default admin principal when
+    // ANX_ADMIN_API_KEY isn't set) can't authenticate, so it shouldn't trigger
+    // enforcement against unauthenticated requests.
+    const enforceablePrincipals = this.deps.rbac.listPrincipals().filter((p) => p.apiKeyHash);
+    if (enforceablePrincipals.length === 0) {
+      // Open install — no usable credentials configured. Allow anonymous access.
       return 'allow';
     }
     if (!principal) {

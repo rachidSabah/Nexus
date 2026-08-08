@@ -236,10 +236,22 @@ export interface HealthMonitorPort {
  * touches plugin internals directly.
  */
 export interface PluginRuntimePort {
-  load(plugin: PluginDescriptor): Promise<void>;
+  load(spec: PluginSpec): Promise<void>;
   unload(pluginId: string): Promise<void>;
   list(): readonly PluginDescriptor[];
   invokeHook<T>(hook: string, ...args: unknown[]): Promise<T[]>;
+}
+
+/**
+ * Plugin spec — describes how to load a plugin. The `source` field tells
+ * the loader how to resolve the plugin (inline factory, dynamic import, or
+ * npm package name).
+ */
+export interface PluginSpec {
+  readonly id: string;
+  readonly source: 'inline' | 'module' | 'npm';
+  readonly path?: string;
+  readonly config?: Record<string, unknown>;
 }
 
 export interface PluginDescriptor {

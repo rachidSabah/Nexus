@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import {
   buildEvent,
   PluginError,
-  type PluginLoadedEvent,
   type PluginDescriptor,
+  type PluginLoadedEvent,
   type EventBusPort,
+  type PluginRuntimePort,
 } from '@anx/core';
 
 /**
@@ -75,7 +76,7 @@ export interface PluginSpec {
  *   - "Transformer" hooks (onRequest, onProviderChunk, onResponse) pass
  *     the return value of plugin N to plugin N+1.
  */
-export class PluginRuntime {
+export class PluginRuntime implements PluginRuntimePort {
   private readonly plugins = new Map<string, Plugin>();
   private readonly loadOrder: string[] = [];
 
