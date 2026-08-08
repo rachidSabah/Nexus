@@ -29,6 +29,7 @@ export { InMemoryEventBus } from './application/event-bus.js';
 export { InMemoryAuditLog } from './application/audit-log.js';
 export { InMemoryCache, cosineSimilarity, type InMemoryCacheOptions } from './application/cache.js';
 export { KeyRegistry, type KeyDescriptor, type KeyRotationStrategy, type KeyRegistryOptions, type SelectKeyOptions } from './application/key-registry.js';
+export { ModelRegistry, type ModelRegistryOptions } from './application/model-registry.js';
 
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.1.0';

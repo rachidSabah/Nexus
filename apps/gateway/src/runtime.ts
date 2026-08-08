@@ -12,6 +12,7 @@ import {
   InMemoryCache,
   InMemoryEventBus,
   KeyRegistry,
+  ModelRegistry,
   RoutingEngine,
   type CachePort,
   type ChatCompletionChunk,
@@ -72,6 +73,7 @@ export class GatewayRuntime {
   readonly mesh!: AIServiceMesh;
   readonly cache!: CachePort;
   readonly keyRegistry!: KeyRegistry;
+  readonly modelRegistry!: ModelRegistry;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -103,6 +105,7 @@ export class GatewayRuntime {
     mesh: AIServiceMesh;
     cache: CachePort;
     keyRegistry: KeyRegistry;
+    modelRegistry: ModelRegistry;
   }) {
     Object.assign(this, opts);
   }
@@ -180,6 +183,14 @@ export class GatewayRuntime {
     const keyRegistry = new KeyRegistry(vault, {
       cooldownMs: 60_000,
       defaultStrategy: 'adaptive',
+    });
+
+    // Dynamic model discovery registry — calls each provider's /models
+    // endpoint on startup and hourly thereafter. Classifies free models
+    // automatically (no hard-coded list). Master prompt #5 + #6.
+    const modelRegistry = new ModelRegistry(routing, adapters, {
+      refreshIntervalMs: 60 * 60 * 1000,
+      discoveryTimeoutMs: 15_000,
     });
 
     const chatUseCase = new ChatCompletionUseCase(
@@ -335,6 +346,7 @@ export class GatewayRuntime {
       mesh,
       cache,
       keyRegistry,
+      modelRegistry,
     });
 
     return new GatewayRuntime({
@@ -367,11 +379,13 @@ export class GatewayRuntime {
       mesh,
       cache,
       keyRegistry,
+      modelRegistry,
     });
   }
 
   async start(): Promise<void> {
     await this.mcpClient.connect();
+    await this.modelRegistry.start();
     await this.server.listen(this.config.server.port, this.config.server.host);
     this.logger.info('gateway started', {
       port: this.config.server.port,
@@ -383,6 +397,7 @@ export class GatewayRuntime {
   }
 
   async stop(): Promise<void> {
+    this.modelRegistry.stop();
     await this.mcpClient.disconnect();
     await this.server.close();
     this.logger.info('gateway stopped');

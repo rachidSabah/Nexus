@@ -10,6 +10,7 @@ import type {
   ChatCompletionRequest,
   EmbeddingRequest,
   EventBusPort,
+  ModelRegistry,
   ProviderAdapter,
   RoutingEnginePort,
   CachePort,
@@ -71,6 +72,7 @@ export interface HttpServerDeps {
   readonly mesh: AIServiceMesh;
   readonly cache: CachePort;
   readonly keyRegistry: KeyRegistry;
+  readonly modelRegistry: ModelRegistry;
 }
 
 export class HttpServer {
@@ -113,21 +115,72 @@ export class HttpServer {
       };
     });
 
-    // ── Models (OpenAI-compatible) ─────────────────────────────────────
-    this.fastify.get('/v1/models', async () => {
-      const models = new Map<string, { id: string; object: 'model'; owned_by: string }>();
+    // ── Models (OpenAI-compatible, enriched with discovered metadata) ───
+    // Returns the union of:
+    //   - Endpoints registered in the routing engine (static config)
+    //   - Models dynamically discovered by the ModelRegistry (background
+    //     refresh from each provider's GET /models endpoint)
+    // When a discovered model has pricing/capabilities, those are included
+    // so the dashboard can show "free" badges and capability icons.
+    this.fastify.get('/v1/models', async (request) => {
+      const q = request.query as { free?: string; capability?: string };
+      const models = new Map<string, { id: string; object: 'model'; owned_by: string; pricing?: unknown; capabilities?: unknown; context_window?: number }>();
+
+      // Static endpoint-derived models.
       for (const e of this.deps.routing.listEndpoints()) {
-        const adapter = this.deps.adapters.get(e.providerId);
         const alias = e.tags[0] ?? e.providerId;
         if (!models.has(alias)) {
           models.set(alias, { id: alias, object: 'model', owned_by: e.providerId });
         }
-        // Also expose the endpoint id as a model alias
-        if (adapter) {
+        if (this.deps.adapters.get(e.providerId)) {
           models.set(e.id, { id: e.id, object: 'model', owned_by: e.providerId });
         }
       }
+
+      // Dynamically discovered models (from ModelRegistry).
+      let discovered = this.deps.modelRegistry.list();
+      if (q.free === 'true') {
+        discovered = this.deps.modelRegistry.listFree();
+      } else if (q.capability) {
+        discovered = this.deps.modelRegistry.listByCapability(q.capability as never);
+      }
+      for (const m of discovered) {
+        if (m.stale) continue;
+        models.set(m.id, {
+          id: m.id,
+          object: 'model',
+          owned_by: m.providerId,
+          pricing: m.pricing,
+          capabilities: m.capabilities,
+          context_window: m.contextWindow,
+        });
+      }
+
       return { object: 'list', data: Array.from(models.values()) };
+    });
+
+    // ── Dynamic model discovery (master prompt #5, #6) ──────────────────
+    // GET /v1/models/discover  — list all discovered models with metadata
+    // GET /v1/models/free     — list only free-tier models
+    // GET /v1/models/stats    — discovery stats (total, free, stale, byProvider)
+    // POST /v1/models/refresh — trigger an immediate refresh
+    this.fastify.get('/v1/models/discover', async () => {
+      return { models: this.deps.modelRegistry.list() };
+    });
+
+    this.fastify.get('/v1/models/free', async () => {
+      return { models: this.deps.modelRegistry.listFree() };
+    });
+
+    this.fastify.get('/v1/models/stats', async () => {
+      return this.deps.modelRegistry.stats();
+    });
+
+    this.fastify.post('/v1/models/refresh', async () => {
+      // Don't await — refresh can take 15+ seconds if providers are slow.
+      // Return immediately so the dashboard can poll /stats for completion.
+      void this.deps.modelRegistry.refresh();
+      return { ok: true, message: 'refresh started — poll /v1/models/stats for completion' };
     });
 
     // ── Providers (gateway-specific) ───────────────────────────────────

@@ -5,6 +5,7 @@ import type {
   ChatCompletionChunk,
   EmbeddingRequest,
   EmbeddingResponse,
+  ModelDescriptor,
   ProviderEndpoint,
   RoutingRequest,
   RoutingDecision,
@@ -78,6 +79,24 @@ export interface ProviderAdapter {
    * user quota. Implementations should return within ~2s.
    */
   healthCheck(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<boolean>;
+
+  /**
+   * Optional: discover the list of models this provider exposes via its
+   * `GET /models` (or equivalent) endpoint. Returns normalized
+   * `ModelDescriptor[]` entries that the ModelRegistry aggregates.
+   *
+   * Implementations should:
+   *   - Call the provider's models endpoint (NOT a chat completion)
+   *   - Normalize the response into `ModelDescriptor[]`
+   *   - Detect free-tier models where pricing metadata is exposed
+   *     (OpenRouter's `:free` suffix, OpenAI's `per_request_rate: 0`, etc.)
+   *   - NOT throw on transient failures — return `[]` and let the
+   *     background refresh loop retry on the next tick.
+   *
+   * If a provider doesn't expose model discovery, omit this method (return
+   * undefined). The ModelRegistry will skip it.
+   */
+  discoverModels?(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<readonly ModelDescriptor[]>;
 }
 
 /**

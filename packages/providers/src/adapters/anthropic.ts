@@ -5,6 +5,7 @@ import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
   ChatMessageContentPart,
+  ModelDescriptor,
   ProviderEndpoint,
   ToolCall,
 } from '@anx/core';
@@ -108,6 +109,65 @@ export class AnthropicAdapter implements ProviderAdapter {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Anthropic exposes `GET /v1/models` since 2024. Returns the canonical
+   * model list with ids like "claude-3-5-sonnet-20241022".
+   */
+  async discoverModels(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<readonly ModelDescriptor[]> {
+    try {
+      const apiKey = this.getApiKey(endpoint);
+      const url = `${this.resolveBase(endpoint)}/v1/models`;
+      const controller = new AbortController();
+      const timeout = AbortSignal.timeout(endpoint.timeoutMs);
+      const onAbort = () => controller.abort();
+      timeout.addEventListener('abort', onAbort, { once: true });
+      signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        const r = await fetch(url, {
+          method: 'GET',
+          headers: this.headers(endpoint, apiKey),
+          signal: controller.signal,
+        });
+        if (!r.ok) return [];
+        const body = (await r.json()) as { data?: Array<{ id: string; display_name?: string; created_at?: string; type?: string }>; };
+        const now = Date.now();
+        return (body.data ?? []).map((m) => ({
+          id: m.id,
+          providerId: this.providerId,
+          displayName: m.display_name ?? m.id,
+          contextWindow: this.contextWindowFor(m.id),
+          maxOutputTokens: 8192,
+          pricing: { isFree: false, currency: 'USD' },
+          capabilities: {
+            streaming: true,
+            toolCalling: true,
+            vision: m.id.includes('sonnet') || m.id.includes('opus') || m.id.includes('haiku'),
+            audio: false,
+            speech: false,
+            embeddings: false,
+            reasoning: m.id.includes('opus') || m.id.includes('thinking'),
+            jsonMode: true,
+          },
+          discoveredAt: now,
+        } as ModelDescriptor));
+      } finally {
+        timeout.removeEventListener('abort', onAbort);
+        signal.removeEventListener('abort', onAbort);
+      }
+    } catch {
+      return [];
+    }
+  }
+
+  /** Heuristic context window lookup for known Claude models. */
+  private contextWindowFor(modelId: string): number | undefined {
+    const lower = modelId.toLowerCase();
+    if (lower.includes('opus')) return 200_000;
+    if (lower.includes('sonnet')) return 200_000;
+    if (lower.includes('haiku')) return 200_000;
+    return undefined;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

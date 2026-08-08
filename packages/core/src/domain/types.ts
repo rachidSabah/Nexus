@@ -238,3 +238,47 @@ export interface EmbeddingResponse {
   readonly endpoint: string;
   readonly latencyMs: number;
 }
+
+/**
+ * Normalized model descriptor — produced by a provider's `discoverModels()`
+ * method and aggregated by the ModelRegistry. This is the future-proof
+ * shape: the router consults `capabilities` and `pricing`, never hardcoded
+ * model-name lists.
+ */
+export interface ModelDescriptor {
+  /** The provider's canonical model id (e.g. "gpt-4o", "claude-3-5-sonnet-20241022"). */
+  readonly id: string;
+  /** The provider that exposes this model (e.g. "openai", "anthropic"). */
+  readonly providerId: string;
+  /** Human-readable name (often same as id). */
+  readonly displayName?: string;
+  /** Description from the provider, if available. */
+  readonly description?: string;
+  /** Max input context window in tokens, if known. */
+  readonly contextWindow?: number;
+  /** Max output tokens, if known. */
+  readonly maxOutputTokens?: number;
+  /** Pricing per 1M tokens (NOT per 1K — most providers publish per-1M now). */
+  readonly pricing?: {
+    inputPer1M?: number;
+    outputPer1M?: number;
+    /** True if the provider explicitly marks this as a free-tier model. */
+    isFree?: boolean;
+    currency?: string;
+  };
+  /** Capability flags (inferred from provider metadata or model name heuristics). */
+  readonly capabilities?: {
+    streaming?: boolean;
+    toolCalling?: boolean;
+    vision?: boolean;
+    audio?: boolean;
+    speech?: boolean;
+    embeddings?: boolean;
+    reasoning?: boolean;
+    jsonMode?: boolean;
+  };
+  /** When this model was discovered (epoch ms). */
+  readonly discoveredAt: number;
+  /** True if the model disappeared on the last refresh (kept for one cycle so dashboard can show "recently removed"). */
+  readonly stale?: boolean;
+}

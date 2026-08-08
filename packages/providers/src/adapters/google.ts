@@ -5,6 +5,7 @@ import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
   ChatMessageContentPart,
+  ModelDescriptor,
   ProviderEndpoint,
   ToolCall,
 } from '@anx/core';
@@ -97,6 +98,67 @@ export class GoogleAdapter implements ProviderAdapter {
       }
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Discovers models via Gemini's `GET /v1beta/models` endpoint.
+   * Gemini returns `{ models: [{ name, displayName, description, supportedGenerationMethods, inputTokenLimit, outputTokenLimit }] }`.
+   */
+  async discoverModels(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<readonly ModelDescriptor[]> {
+    try {
+      const apiKey = this.getApiKey(endpoint);
+      const url = `${this.resolveBase(endpoint)}/models?key=${apiKey}`;
+      const controller = new AbortController();
+      const timeout = AbortSignal.timeout(endpoint.timeoutMs);
+      const onAbort = () => controller.abort();
+      timeout.addEventListener('abort', onAbort, { once: true });
+      signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        const r = await fetch(url, { signal: controller.signal });
+        if (!r.ok) return [];
+        const body = (await r.json()) as {
+          models?: Array<{
+            name: string; // "models/gemini-1.5-pro"
+            displayName?: string;
+            description?: string;
+            supportedGenerationMethods?: string[];
+            inputTokenLimit?: number;
+            outputTokenLimit?: number;
+          }>;
+        };
+        const now = Date.now();
+        return (body.models ?? []).map((m) => {
+          // Strip "models/" prefix.
+          const id = m.name.replace(/^models\//, '');
+          const methods = m.supportedGenerationMethods ?? [];
+          return {
+            id,
+            providerId: this.providerId,
+            displayName: m.displayName ?? id,
+            description: m.description,
+            contextWindow: m.inputTokenLimit,
+            maxOutputTokens: m.outputTokenLimit,
+            pricing: { isFree: false, currency: 'USD' },
+            capabilities: {
+              streaming: methods.includes('streamGenerateContent'),
+              toolCalling: methods.includes('generateContent'),
+              vision: id.includes('vision') || id.includes('pro') || id.includes('flash'),
+              audio: id.includes('audio'),
+              speech: methods.includes('generateContent') && id.includes('audio'),
+              embeddings: methods.includes('embedContent'),
+              reasoning: false,
+              jsonMode: true,
+            },
+            discoveredAt: now,
+          } as ModelDescriptor;
+        });
+      } finally {
+        timeout.removeEventListener('abort', onAbort);
+        signal.removeEventListener('abort', onAbort);
+      }
+    } catch {
+      return [];
     }
   }
 

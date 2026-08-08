@@ -6,6 +6,7 @@ import type {
   ChatCompletionResponse,
   EmbeddingRequest,
   EmbeddingResponse,
+  ModelDescriptor,
   ProviderEndpoint,
 } from '@anx/core';
 import { ProviderResponseError, type ProviderAdapter } from '@anx/core';
@@ -123,6 +124,82 @@ export class OpenAIAdapter implements ProviderAdapter {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Discovers models via the OpenAI-compatible `GET /models` endpoint.
+   * Used by the ModelRegistry's background refresh loop.
+   *
+   * OpenAI's response shape is `{ data: [{ id, object, owned_by, created }] }`.
+   * Most OpenAI-compatible providers (OpenRouter, Groq, Together, etc.) follow
+   * the same shape but add extra fields like `pricing` (OpenRouter) or
+   * `context_length` (some). This implementation conservatively extracts
+   * what's reliably present and applies heuristics for free-model detection.
+   */
+  async discoverModels(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<readonly ModelDescriptor[]> {
+    try {
+      const apiKey = this.getApiKey(endpoint);
+      const url = `${this.resolveBase(endpoint)}/models`;
+      const raw = await fetchJson<OpenAIModelsResponse>(url, {
+        method: 'GET',
+        headers: this.headers(endpoint, apiKey),
+      }, endpoint, signal);
+      const now = Date.now();
+      return (raw.data ?? []).map((m) => {
+        const id = m.id;
+        const extra = m as OpenAIModelExtra;
+        // OpenRouter exposes pricing per-token in its /models response.
+        const inputPer1M = extra.pricing?.prompt != null
+          ? Number(extra.pricing.prompt) * 1_000_000
+          : undefined;
+        const outputPer1M = extra.pricing?.completion != null
+          ? Number(extra.pricing.completion) * 1_000_000
+          : undefined;
+        // A model is "free" if:
+        //  1. Its id ends with `:free` (OpenRouter convention), OR
+        //  2. The provider exposes per_request_rate = 0 / pricing.prompt = "0"
+        const isFree = id.endsWith(':free')
+          || (extra.pricing?.prompt === '0' && extra.pricing?.completion === '0')
+          || extra.per_request_rate === 0;
+
+        return {
+          id,
+          providerId: this.providerId,
+          displayName: id,
+          contextWindow: extra.context_length ?? extra.context_window,
+          pricing: {
+            inputPer1M,
+            outputPer1M,
+            isFree,
+            currency: 'USD',
+          },
+          capabilities: this.inferCapabilities(id),
+          discoveredAt: now,
+        } as ModelDescriptor;
+      });
+    } catch {
+      // Transient failure — ModelRegistry will retry on the next refresh.
+      return [];
+    }
+  }
+
+  /**
+   * Heuristic capability inference from model id. Provider metadata is
+   * authoritative when present; this is a fallback for providers that
+   * don't expose capability flags in their /models response.
+   */
+  protected inferCapabilities(modelId: string): ModelDescriptor['capabilities'] {
+    const lower = modelId.toLowerCase();
+    return {
+      streaming: true, // OpenAI-compatible providers all stream
+      toolCalling: !lower.includes('instruct') && !lower.includes('base'),
+      vision: lower.includes('vision') || lower.includes('gpt-4o') || lower.includes('claude-3'),
+      audio: false,
+      speech: lower.includes('tts'),
+      embeddings: lower.includes('embedding') || lower.includes('embed'),
+      reasoning: lower.includes('o1') || lower.includes('o3') || lower.includes('reasoning') || lower.includes('thinking'),
+      jsonMode: !lower.includes('instruct'),
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -260,5 +337,29 @@ export function syntheticChunk(content: string, model: string): ChatCompletionCh
         finish_reason: null,
       },
     ],
+  };
+}
+
+// ─── Models discovery response shapes ──────────────────────────────────────
+
+interface OpenAIModelsResponse {
+  object?: 'list';
+  data?: Array<{ id: string; object?: string; owned_by?: string; created?: number }>;
+}
+
+/**
+ * Extra fields some OpenAI-compatible providers expose on /models entries.
+ * OpenRouter: `pricing.prompt` / `pricing.completion` are strings (USD per token).
+ * Others: `context_length` (Groq, Together), `per_request_rate`.
+ */
+interface OpenAIModelExtra {
+  context_length?: number;
+  context_window?: number;
+  per_request_rate?: number;
+  pricing?: {
+    prompt?: string;
+    completion?: string;
+    request?: string;
+    image?: string;
   };
 }
