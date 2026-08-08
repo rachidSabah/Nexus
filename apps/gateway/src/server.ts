@@ -32,6 +32,13 @@ import fastifyCors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
 
+import {
+  newStreamState,
+  translateAnthropicRequest,
+  translateChunkToAnthropicEvents,
+  translateToAnthropicResponse,
+  type AnthropicRequest,
+} from './anthropic-compat.js';
 import type { GatewayConfig } from './config.js';
 
 /**
@@ -226,6 +233,87 @@ export class HttpServer {
         const code = (err as { code?: string }).code;
         const status = code === 'NO_ELIGIBLE_PROVIDER' || code === 'ALL_PROVIDERS_EXHAUSTED' ? 503 : 500;
         return reply.code(status).send({ error: { message: (err as Error).message, code } });
+      }
+    });
+
+    // ── Anthropic-compatible Messages API (POST /v1/messages) ──────────
+    // Lets Claude Code (and other Anthropic-protocol agents) talk to the
+    // gateway natively — set ANTHROPIC_BASE_URL=http://127.0.0.1:8787 and
+    // ANTHROPIC_AUTH_TOKEN=<anything> and it just works.
+    this.fastify.post('/v1/messages', async (request, reply) => {
+      const anthropicReq = request.body as AnthropicRequest;
+      if (!anthropicReq?.model || !anthropicReq?.messages || !anthropicReq?.max_tokens) {
+        return reply.code(400).send({
+          type: 'error',
+          error: { type: 'invalid_request_error', message: 'model, messages, and max_tokens are required' },
+        });
+      }
+
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', anthropicReq.model, reply);
+      if (authz === 'deny') return reply;
+
+      // Translate Anthropic → internal OpenAI-compatible request.
+      const internalReq = translateAnthropicRequest(anthropicReq);
+
+      // Streaming path: emit Anthropic-format SSE events.
+      if (anthropicReq.stream) {
+        reply.raw.setHeader('Content-Type', 'text/event-stream');
+        reply.raw.setHeader('Cache-Control', 'no-cache');
+        reply.raw.setHeader('Connection', 'keep-alive');
+        reply.raw.flushHeaders?.();
+
+        const state = newStreamState(anthropicReq.model);
+        const sink = {
+          write: async (chunk: ChatCompletionChunk) => {
+            for (const evt of translateChunkToAnthropicEvents(chunk, state)) {
+              reply.raw.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+            }
+          },
+          error: async (error: Error) => {
+            const errEvt = {
+              type: 'error',
+              error: { type: 'api_error', message: error.message },
+            };
+            reply.raw.write(`event: error\ndata: ${JSON.stringify(errEvt)}\n\n`);
+            reply.raw.end();
+          },
+          end: async () => {
+            reply.raw.end();
+          },
+        };
+
+        try {
+          await this.deps.chatUseCase.execute(internalReq, sink, new AbortController().signal);
+        } catch (err) {
+          if (!reply.raw.headersSent) {
+            reply.code(500).send({
+              type: 'error',
+              error: { type: 'api_error', message: (err as Error).message },
+            });
+          } else {
+            const errEvt = {
+              type: 'error',
+              error: { type: 'api_error', message: (err as Error).message },
+            };
+            reply.raw.write(`event: error\ndata: ${JSON.stringify(errEvt)}\n\n`);
+            reply.raw.end();
+          }
+        }
+        return reply;
+      }
+
+      // Non-streaming path: translate response back to Anthropic format.
+      try {
+        const response = await this.deps.chatUseCase.execute(internalReq, undefined, new AbortController().signal);
+        return translateToAnthropicResponse(response, anthropicReq.model);
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        const status = code === 'NO_ELIGIBLE_PROVIDER' || code === 'ALL_PROVIDERS_EXHAUSTED' ? 503 : 500;
+        return reply.code(status).send({
+          type: 'error',
+          error: { type: 'api_error', message: (err as Error).message },
+        });
       }
     });
 

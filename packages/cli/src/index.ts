@@ -37,6 +37,8 @@ export class NexusCli {
       case 'cert':
       case 'certify':
         return this.certify(rest);
+      case 'doctor':
+        return this.doctor(rest);
       case 'config':
         return this.config(rest);
       case 'version':
@@ -159,6 +161,194 @@ export class NexusCli {
     const result = await certifier.certify();
     process.stdout.write(certifier.generateReport(result));
     process.stdout.write('\n');
+  }
+
+  // ─── Doctor ──────────────────────────────────────────────────────────
+  // Runs a comprehensive diagnostics check against the local environment
+  // and the gateway. Inspects OS, runtime, network, providers, API keys,
+  // model discovery, agent detection, and configuration. Master prompt #28.
+  private async doctor(_args: string[]): Promise<void> {
+    const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+    const apiKey = process.env['NEXUS_API_KEY'];
+
+    const checks: Array<{ name: string; status: 'ok' | 'warn' | 'fail' | 'info'; detail?: string }> = [];
+
+    // ── OS + runtime ────────────────────────────────────────────────────
+    const platform = process.platform;
+    const arch = process.arch;
+    const nodeVersion = process.version;
+    checks.push({ name: `OS ${platform}/${arch}`, status: 'ok', detail: `Node ${nodeVersion}` });
+
+    // ── Gateway reachability ─────────────────────────────────────────────
+    let gatewayOk = false;
+    try {
+      const r = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(3000) });
+      if (r.ok) {
+        const body = (await r.json()) as { status: string; endpoints: { total: number; healthy: number } };
+        checks.push({
+          name: 'Gateway',
+          status: 'ok',
+          detail: `${body.status} · ${body.endpoints.healthy}/${body.endpoints.total} endpoints healthy`,
+        });
+        gatewayOk = true;
+      } else {
+        checks.push({ name: 'Gateway', status: 'fail', detail: `HTTP ${r.status}` });
+      }
+    } catch (err) {
+      checks.push({ name: 'Gateway', status: 'fail', detail: `unreachable at ${baseUrl}: ${(err as Error).message}` });
+    }
+
+    // ── Providers ────────────────────────────────────────────────────────
+    if (gatewayOk) {
+      try {
+        const r = await fetch(`${baseUrl}/v1/providers`);
+        if (r.ok) {
+          const providers = (await r.json()) as Array<{ id: string; providerId: string; health: string }>;
+          if (providers.length === 0) {
+            checks.push({ name: 'Providers', status: 'warn', detail: 'no endpoints registered' });
+          } else {
+            checks.push({ name: 'Providers', status: 'ok', detail: `${providers.length} endpoints` });
+            for (const p of providers) {
+              const status = p.health === 'healthy' ? 'ok' : p.health === 'degraded' ? 'warn' : 'fail';
+              checks.push({ name: `  ${p.id}`, status, detail: `${p.providerId} · ${p.health}` });
+            }
+          }
+        }
+      } catch (err) {
+        checks.push({ name: 'Providers', status: 'fail', detail: (err as Error).message });
+      }
+
+      // ── API keys ──────────────────────────────────────────────────────
+      try {
+        const r = await fetch(`${baseUrl}/v1/keys`);
+        if (r.ok) {
+          const keys = (await r.json()) as Array<{ id: string; providerId: string; status: string }>;
+          if (keys.length === 0) {
+            checks.push({ name: 'API keys', status: 'warn', detail: 'no keys registered (env-var fallback only)' });
+          } else {
+            const active = keys.filter((k) => k.status === 'active').length;
+            const cooldown = keys.filter((k) => k.status === 'cooldown').length;
+            const invalid = keys.filter((k) => k.status === 'invalid').length;
+            checks.push({
+              name: 'API keys',
+              status: invalid > 0 ? 'warn' : 'ok',
+              detail: `${keys.length} total · ${active} active · ${cooldown} cooldown · ${invalid} invalid`,
+            });
+          }
+        }
+      } catch (err) {
+        checks.push({ name: 'API keys', status: 'fail', detail: (err as Error).message });
+      }
+
+      // ── Cache ────────────────────────────────────────────────────────
+      try {
+        const r = await fetch(`${baseUrl}/v1/cache/stats`);
+        if (r.ok) {
+          const stats = (await r.json()) as { hits: number; misses: number; size: number; hitRate: number };
+          checks.push({
+            name: 'Cache',
+            status: 'ok',
+            detail: `${stats.size} entries · ${(stats.hitRate * 100).toFixed(1)}% hit (${stats.hits}/${stats.hits + stats.misses})`,
+          });
+        }
+      } catch (err) {
+        checks.push({ name: 'Cache', status: 'fail', detail: (err as Error).message });
+      }
+
+      // ── Models ───────────────────────────────────────────────────────
+      try {
+        const r = await fetch(`${baseUrl}/v1/models`);
+        if (r.ok) {
+          const body = (await r.json()) as { data: Array<{ id: string }> };
+          checks.push({ name: 'Models', status: 'ok', detail: `${body.data.length} available` });
+        }
+      } catch (err) {
+        checks.push({ name: 'Models', status: 'fail', detail: (err as Error).message });
+      }
+
+      // ── Agents ──────────────────────────────────────────────────────
+      try {
+        const r = await fetch(`${baseUrl}/v1/agents/stats`);
+        if (r.ok) {
+          const stats = (await r.json()) as { total: number; online: number };
+          checks.push({ name: 'Agents', status: 'ok', detail: `${stats.online}/${stats.total} online` });
+        }
+      } catch (err) {
+        checks.push({ name: 'Agents', status: 'fail', detail: (err as Error).message });
+      }
+    }
+
+    // ── Coding-agent detection ──────────────────────────────────────────
+    checks.push({ name: 'Coding agents', status: 'info', detail: 'detected on this machine:' });
+    const detectedAgents = await this.detectInstalledAgents();
+    for (const a of detectedAgents) {
+      checks.push({ name: `  ${a.name}`, status: a.found ? 'ok' : 'info', detail: a.detail });
+    }
+
+    // ── Network / DNS ────────────────────────────────────────────────────
+    if (gatewayOk) {
+      try {
+        const r = await fetch(`${baseUrl}/v1/network/diagnostics`, { signal: AbortSignal.timeout(5000) });
+        if (r.ok) {
+          const diag = (await r.json()) as {
+            dns: { ok: boolean; latencyMs: number };
+            ipv4: { ok: boolean; latencyMs: number };
+          };
+          checks.push({
+            name: 'DNS',
+            status: diag.dns.ok ? 'ok' : 'warn',
+            detail: `${diag.dns.latencyMs}ms`,
+          });
+          checks.push({
+            name: 'IPv4 reachability',
+            status: diag.ipv4.ok ? 'ok' : 'fail',
+            detail: `${diag.ipv4.latencyMs}ms`,
+          });
+        }
+      } catch (err) {
+        checks.push({ name: 'Network', status: 'fail', detail: (err as Error).message });
+      }
+    }
+
+    // ── Render ───────────────────────────────────────────────────────────
+    const symbol = { ok: '✓', warn: '⚠', fail: '✗', info: '·' };
+    process.stdout.write(`\nAgent Nexus Gateway — Doctor\n`);
+    process.stdout.write(`Gateway: ${baseUrl}${apiKey ? ' (authenticated)' : ' (no API key)'}\n\n`);
+    for (const c of checks) {
+      process.stdout.write(`  ${symbol[c.status]} ${c.name}${c.detail ? ` — ${c.detail}` : ''}\n`);
+    }
+    const fails = checks.filter((c) => c.status === 'fail').length;
+    const warns = checks.filter((c) => c.status === 'warn').length;
+    process.stdout.write(`\n${fails} failed, ${warns} warnings, ${checks.filter((c) => c.status === 'ok').length} ok\n\n`);
+    if (fails > 0) process.exitCode = 1;
+  }
+
+  /** Detects coding agents installed on this machine by checking PATH. */
+  private async detectInstalledAgents(): Promise<Array<{ name: string; found: boolean; detail: string }>> {
+    const agents = [
+      'claude', 'codex', 'gemini', 'kimi', 'qwen', 'opencode',
+      'aider', 'cline', 'roo-code', 'goose', 'crush', 'hermes',
+    ];
+    const results: Array<{ name: string; found: boolean; detail: string }> = [];
+    for (const name of agents) {
+      try {
+        // Use `which` on Unix, `where` on Windows. We try both via a shell.
+        const cmd = process.platform === 'win32' ? `where ${name} 2>nul` : `command -v ${name} 2>/dev/null`;
+        const { exec } = await import('node:child_process');
+        const stdout = await new Promise<string>((resolve) => {
+          exec(cmd, { timeout: 2000 }, (_err, stdout) => resolve(stdout ?? ''));
+        });
+        const path = stdout.trim().split('\n')[0]?.trim();
+        if (path) {
+          results.push({ name, found: true, detail: `at ${path}` });
+        } else {
+          results.push({ name, found: false, detail: 'not found in PATH' });
+        }
+      } catch {
+        results.push({ name, found: false, detail: 'not found' });
+      }
+    }
+    return results;
   }
 
   // ─── Integrations ─────────────────────────────────────────────────────
@@ -325,6 +515,8 @@ COMMANDS
   health                     Check gateway health
   cert                       Run the compatibility certification suite
                              (probes /v1/models, streaming, per-editor status)
+  doctor                     Run comprehensive diagnostics
+                             (OS, gateway, providers, keys, agents, network)
   config                     Manage configuration
     init                    Create .anxrc.json with default values
   version                    Print CLI version
