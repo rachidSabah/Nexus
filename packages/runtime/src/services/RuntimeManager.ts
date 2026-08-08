@@ -6,6 +6,7 @@
  */
 
 import { EventEmitter } from 'events';
+
 import type {
   RuntimeState,
   ProviderRuntime,
@@ -15,7 +16,6 @@ import type {
   MCPServerRuntime,
   WorkerRuntime,
   HealthStatus,
-  LifecycleState,
 } from '../domains/RuntimeTypes.js';
 
 export class RuntimeManager extends EventEmitter {

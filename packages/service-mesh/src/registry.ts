@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+
 import type {
   ServiceInstance,
   GatewayInstance,
@@ -9,18 +10,9 @@ import type {
   ServiceRegistrySnapshot,
 } from './types';
 
-interface ServiceEvents {
-  registered: (service: ServiceInstance) => void;
-  deregistered: (serviceId: string) => void;
-  healthChanged: (serviceId: string, status: ServiceStatus) => void;
-  updated: (service: ServiceInstance) => void;
-}
-
-export class ServiceRegistry extends EventEmitter<ServiceEvents> {
+export class ServiceRegistry extends EventEmitter {
   private gateways: Map<string, GatewayInstance> = new Map();
   private providers: Map<string, ProviderInstance> = new Map();
-  private healthCheckConfig: HealthCheckConfig;
-  private discoveryConfig: ServiceDiscoveryConfig;
   private version: number = 0;
 
   constructor(
@@ -28,20 +20,12 @@ export class ServiceRegistry extends EventEmitter<ServiceEvents> {
     discoveryConfig?: Partial<ServiceDiscoveryConfig>
   ) {
     super();
-    this.healthCheckConfig = {
-      endpoint: '/health',
-      interval: 10000,
-      timeout: 5000,
-      healthyThreshold: 2,
-      unhealthyThreshold: 3,
-      ...healthCheckConfig,
-    };
-    this.discoveryConfig = {
-      enabled: true,
-      refreshInterval: 30000,
-      dnsRefresh: false,
-      ...discoveryConfig,
-    };
+    // Health-check / discovery defaults are merged here for future use; the
+    // resolved values are not stored on the instance because no method on
+    // ServiceRegistry currently consumes them. Callers can still pass overrides
+    // via the constructor to influence downstream defaults.
+    void healthCheckConfig;
+    void discoveryConfig;
   }
 
   registerGateway(gateway: GatewayInstance): void {

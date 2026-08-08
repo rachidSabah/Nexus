@@ -133,7 +133,7 @@ export interface MetricVerification {
   operator: 'lt' | 'lte' | 'eq' | 'gte' | 'gt';
 }
 
-export interface DeploymentState {
+export interface DeploymentRecord {
   id: string;
   profileId: string;
   status: DeploymentState;

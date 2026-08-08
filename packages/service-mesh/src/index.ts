@@ -1,5 +1,5 @@
-import { ServiceRegistry } from './registry';
 import { LoadBalancer, CircuitBreaker, RetryHandler, TimeoutManager } from './load-balancer';
+import { ServiceRegistry } from './registry';
 import type {
   ServiceMeshConfig,
   TrafficPolicy,
@@ -97,7 +97,7 @@ export class AIServiceMesh {
   }
 
   async routeToGateway(
-    request: any,
+    _request: any,
     stickyKey?: string
   ): Promise<GatewayInstance | null> {
     if (!this.circuitBreaker.canExecute()) {
@@ -134,7 +134,7 @@ export class AIServiceMesh {
   }
 
   async routeToProvider(
-    request: any,
+    _request: any,
     stickyKey?: string
   ): Promise<ProviderInstance | null> {
     if (!this.circuitBreaker.canExecute()) {
@@ -189,15 +189,31 @@ export class AIServiceMesh {
   updateTrafficPolicy(policy: Partial<TrafficPolicy>): void {
     if (policy.loadBalancer) {
       this.loadBalancer.updateConfig(policy.loadBalancer);
+      this.config.trafficPolicy.loadBalancer = {
+        ...this.config.trafficPolicy.loadBalancer!,
+        ...policy.loadBalancer,
+      };
     }
     if (policy.circuitBreaker) {
       this.circuitBreaker.updateConfig(policy.circuitBreaker);
+      this.config.trafficPolicy.circuitBreaker = {
+        ...this.config.trafficPolicy.circuitBreaker!,
+        ...policy.circuitBreaker,
+      };
     }
     if (policy.retry) {
       this.retryHandler.updateConfig(policy.retry);
+      this.config.trafficPolicy.retry = {
+        ...this.config.trafficPolicy.retry!,
+        ...policy.retry,
+      };
     }
     if (policy.timeout) {
       this.timeoutManager.updateConfig(policy.timeout);
+      this.config.trafficPolicy.timeout = {
+        ...this.config.trafficPolicy.timeout!,
+        ...policy.timeout,
+      };
     }
   }
 

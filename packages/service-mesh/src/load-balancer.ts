@@ -1,5 +1,4 @@
 import type {
-  ServiceInstance,
   GatewayInstance,
   ProviderInstance,
   LoadBalancerConfig,
@@ -64,14 +63,14 @@ export class LoadBalancer {
 
   private roundRobin(
     instances: (GatewayInstance | ProviderInstance)[]
-  ): (GatewayInstance | ProviderInstance) {
+  ): (GatewayInstance | ProviderInstance) | null {
     const index = Math.floor(Math.random() * instances.length);
     return instances[index] ?? null;
   }
 
   private leastConnections(
     instances: (GatewayInstance | ProviderInstance)[]
-  ): (GatewayInstance | ProviderInstance) {
+  ): (GatewayInstance | ProviderInstance) | null {
     let minConnections = Infinity;
     let selected: (GatewayInstance | ProviderInstance) | null = null;
 

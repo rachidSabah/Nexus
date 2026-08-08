@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+
 import type {
   ExtensionPackage,
   InstalledExtension,
@@ -11,21 +12,9 @@ import type {
   RollbackOptions,
   SignatureVerificationResult,
   CompatibilityCheckResult,
-  MarketplaceEvent,
-  ExtensionStatus,
 } from './types';
 
-interface MarketplaceEvents {
-  extensionInstalled: (extensionId: string, version: string) => void;
-  extensionUpdated: (extensionId: string, oldVersion: string, newVersion: string) => void;
-  extensionRemoved: (extensionId: string) => void;
-  extensionEnabled: (extensionId: string) => void;
-  extensionDisabled: (extensionId: string) => void;
-  publisherVerified: (publisherId: string) => void;
-  ratingSubmitted: (extensionId: string, rating: number) => void;
-}
-
-export class ExtensionMarketplace extends EventEmitter<MarketplaceEvents> {
+export class ExtensionMarketplace extends EventEmitter {
   private installedExtensions: Map<string, InstalledExtension> = new Map();
   private availableExtensions: Map<string, ExtensionPackage> = new Map();
   private publishers: Map<string, PublisherProfile> = new Map();
@@ -167,7 +156,7 @@ export class ExtensionMarketplace extends EventEmitter<MarketplaceEvents> {
 
     if (this.signatureVerificationEnabled && !options.skipSignatureVerification) {
       const latestVersion = extension.versions[extension.versions.length - 1];
-      if (latestVersion.signature) {
+      if (latestVersion?.signature) {
         const verification = await this.verifySignature(latestVersion);
         if (!verification.valid) {
           throw new Error(`Signature verification failed: ${verification.error}`);
@@ -175,7 +164,11 @@ export class ExtensionMarketplace extends EventEmitter<MarketplaceEvents> {
       }
     }
 
-    const versionToInstall = options.version || extension.versions[extension.versions.length - 1].version;
+    const latestVersionEntry = extension.versions[extension.versions.length - 1];
+    if (!latestVersionEntry) {
+      throw new Error(`Extension ${extensionId} has no versions available`);
+    }
+    const versionToInstall = options.version || latestVersionEntry.version;
     
     const installed: InstalledExtension = {
       package: extension,
@@ -206,7 +199,11 @@ export class ExtensionMarketplace extends EventEmitter<MarketplaceEvents> {
     }
 
     const currentVersion = installed.installedVersion;
-    const latestVersion = extension.versions[extension.versions.length - 1].version;
+    const latestVersionEntry = extension.versions[extension.versions.length - 1];
+    if (!latestVersionEntry) {
+      throw new Error(`Extension ${extensionId} has no versions available`);
+    }
+    const latestVersion = latestVersionEntry.version;
 
     if (currentVersion === latestVersion) {
       return false; // Already up to date
@@ -380,7 +377,7 @@ export class ExtensionMarketplace extends EventEmitter<MarketplaceEvents> {
   /**
    * Backup extension before update/rollback
    */
-  private async backupExtension(extensionId: string): Promise<void> {
+  private async backupExtension(_extensionId: string): Promise<void> {
     // Placeholder for backup logic
     // In production, this would create a backup of the extension files and config
   }
