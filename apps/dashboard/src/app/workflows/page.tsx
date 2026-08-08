@@ -29,11 +29,50 @@ interface WorkflowExecution {
 export default function WorkflowsPage() {
   const { data: workflows, isLoading } = useSWR<readonly WorkflowDef[]>('/api/v1/workflows', fetcher, { refreshInterval: 5000 });
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
-  const { data: executions } = useSWR<readonly WorkflowExecution[]>(
+  const { data: executions, mutate: refreshExecutions } = useSWR<readonly WorkflowExecution[]>(
     selectedId ? `/api/v1/workflows/${selectedId}/executions?limit=20` : null,
     fetcher,
     { refreshInterval: 3000 },
   );
+
+  async function callExecutionEndpoint(executionId: string, action: 'pause' | 'resume' | 'cancel' | 'replay') {
+    if (!selectedId) return;
+    const url = `/api/v1/workflows/${selectedId}/executions/${executionId}/${action}`;
+    try {
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({ error: { message: 'Request failed' } }));
+        alert(`Failed to ${action} execution: ${body?.error?.message ?? r.statusText}`);
+      }
+      await refreshExecutions();
+    } catch (err) {
+      alert(`Failed to ${action} execution: ${(err as Error).message}`);
+    }
+  }
+
+  async function startExecution(workflowId: string) {
+    const inputs = prompt('Optional inputs (JSON):');
+    let parsedInputs: Record<string, unknown> | undefined;
+    if (inputs) {
+      try {
+        parsedInputs = JSON.parse(inputs);
+      } catch {
+        alert('Invalid JSON inputs');
+        return;
+      }
+    }
+    const r = await fetch(`/api/v1/workflows/${workflowId}/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputs: parsedInputs ?? {} }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({ error: { message: 'Failed to start' } }));
+      alert(`Failed to start: ${body?.error?.message ?? r.statusText}`);
+      return;
+    }
+    await refreshExecutions();
+  }
 
   return (
     <div className="space-y-6">
@@ -56,16 +95,24 @@ export default function WorkflowsPage() {
               <div className="py-4 text-center text-sm text-white/40">No workflows defined.</div>
             ) : (
               (workflows ?? []).map((w) => (
-                <button
-                  key={`${w.id}-${w.version}`}
-                  onClick={() => setSelectedId(w.id)}
-                  className={`w-full rounded-lg p-3 text-left transition ${selectedId === w.id ? 'bg-white/10' : 'bg-white/[0.02] hover:bg-white/5'}`}
-                >
-                  <div className="text-sm font-medium">{w.name}</div>
-                  <div className="mt-0.5 text-xs text-white/40">
-                    v{w.version} · {w.steps.length} steps
-                  </div>
-                </button>
+                <div key={`${w.id}-${w.version}`} className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSelectedId(w.id)}
+                    className={`flex-1 rounded-lg p-3 text-left transition ${selectedId === w.id ? 'bg-white/10' : 'bg-white/[0.02] hover:bg-white/5'}`}
+                  >
+                    <div className="text-sm font-medium">{w.name}</div>
+                    <div className="mt-0.5 text-xs text-white/40">
+                      v{w.version} · {w.steps.length} steps
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => startExecution(w.id)}
+                    title="Execute"
+                    className="rounded-lg bg-nexus-600/80 p-2 text-white transition hover:bg-nexus-500"
+                  >
+                    <Play className="h-4 w-4" />
+                  </button>
+                </div>
               ))
             )}
           </div>
@@ -79,7 +126,10 @@ export default function WorkflowsPage() {
                 <h2 className="text-sm font-medium text-white/80">
                   {workflows?.find((w) => w.id === selectedId)?.name} — visual builder
                 </h2>
-                <button className="rounded-lg bg-nexus-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-nexus-500">
+                <button
+                  className="rounded-lg bg-white/5 px-3 py-1 text-xs font-medium text-white/60 transition hover:bg-white/10"
+                  title="Step editor is read-only for now — define steps via the API"
+                >
                   <Plus className="h-3 w-3" /> Step
                 </button>
               </div>
@@ -134,22 +184,34 @@ export default function WorkflowsPage() {
                       </div>
                       <div className="mt-2 flex gap-2">
                         {ex.status === 'running' && (
-                          <button className="rounded-md bg-amber-600/20 px-2 py-1 text-xs text-amber-300 hover:bg-amber-600/30">
+                          <button
+                            onClick={() => callExecutionEndpoint(ex.id, 'pause')}
+                            className="rounded-md bg-amber-600/20 px-2 py-1 text-xs text-amber-300 hover:bg-amber-600/30"
+                          >
                             <Pause className="h-3 w-3" /> Pause
                           </button>
                         )}
                         {ex.status === 'paused' && (
-                          <button className="rounded-md bg-emerald-600/20 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-600/30">
+                          <button
+                            onClick={() => callExecutionEndpoint(ex.id, 'resume')}
+                            className="rounded-md bg-emerald-600/20 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-600/30"
+                          >
                             <Play className="h-3 w-3" /> Resume
                           </button>
                         )}
                         {(ex.status === 'running' || ex.status === 'paused') && (
-                          <button className="rounded-md bg-rose-600/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-600/30">
+                          <button
+                            onClick={() => callExecutionEndpoint(ex.id, 'cancel')}
+                            className="rounded-md bg-rose-600/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-600/30"
+                          >
                             <Square className="h-3 w-3" /> Cancel
                           </button>
                         )}
                         {(ex.status === 'completed' || ex.status === 'failed') && (
-                          <button className="rounded-md bg-white/5 px-2 py-1 text-xs text-white/60 hover:bg-white/10">
+                          <button
+                            onClick={() => callExecutionEndpoint(ex.id, 'replay')}
+                            className="rounded-md bg-white/5 px-2 py-1 text-xs text-white/60 hover:bg-white/10"
+                          >
                             <RotateCcw className="h-3 w-3" /> Replay
                           </button>
                         )}
@@ -169,3 +231,4 @@ export default function WorkflowsPage() {
     </div>
   );
 }
+
