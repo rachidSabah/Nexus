@@ -625,3 +625,7 @@ export class FakeEmbeddingsProvider implements EmbeddingsProvider {
     );
   }
 }
+
+
+// ─── RAG Pipeline ───────────────────────────────────────────────────────
+export { RagPipeline, TextChunker, DEFAULT_RAG_CONFIG, type RagConfig, type RagChunk, type RagIngestResult, type RagRetrieveResult } from "./rag.js";

@@ -475,6 +475,7 @@ export class GatewayRuntime {
       vault,
       mcpServer,
       a2a,
+      a2aRegistry,
       plugins,
       network,
       // Phase 4

@@ -11,6 +11,7 @@ const NAV = [
   { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/agents', label: 'Agents', icon: Boxes },
   { href: '/workflows', label: 'Workflows', icon: Workflow },
+  { href: '/workflow-editor', label: 'Editor', icon: Workflow },
   { href: '/teams', label: 'Teams', icon: Users },
   { href: '/memory', label: 'Memory', icon: Brain },
   { href: '/requests', label: 'Requests', icon: Activity },

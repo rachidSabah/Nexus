@@ -438,3 +438,7 @@ export class TeamManager {
     return coordinator.request(fromAgentId, toAgentId, task);
   }
 }
+
+
+// ─── Multi-Agent Orchestration ──────────────────────────────────────────
+export { Planner, Executor, Critic, Orchestrator, type SubTask, type OrchestrationPlan, type OrchestrationResult, type CriticResult } from "./orchestration.js";

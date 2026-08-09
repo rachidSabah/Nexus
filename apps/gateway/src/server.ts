@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
 import type { AIServiceMesh } from '@agent-nexus/service-mesh';
-import type { A2ACoordinator, TeamManager } from '@anx/a2a';
+import type { A2ACoordinator, AgentRegistry as A2AAgentRegistry, TeamManager } from '@anx/a2a';
 import type { AgentRegistry } from '@anx/agents';
 import { ChatCompletionUseCase } from '@anx/core';
 import type {
@@ -71,6 +71,7 @@ export interface HttpServerDeps {
   readonly vault: EncryptedCredentialVault;
   readonly mcpServer: McpServer;
   readonly a2a: A2ACoordinator;
+  readonly a2aRegistry: A2AAgentRegistry;
   readonly plugins: PluginRuntime;
   readonly network: DefaultNetworkService;
   // Phase 4
@@ -927,6 +928,60 @@ export class HttpServer {
     //                          matching flag).
     this.fastify.get('/v1/cost-predictor', async () => {
       return this.deps.costPredictor.getConfig();
+    });
+
+    // ── Multi-agent orchestration (master prompt #7) ──────────────────
+    // POST /v1/orchestrate — decompose a task into subtasks, execute
+    // each via the A2A coordinator, and critique the results.
+    this.fastify.post('/v1/orchestrate', async (request, reply) => {
+      const body = request.body as { task: string; context?: Record<string, unknown> };
+      if (!body?.task) {
+        return reply.code(400).send({ error: { message: 'task is required' } });
+      }
+      try {
+        const { Orchestrator } = await import('@anx/a2a');
+        const orchestrator = new Orchestrator(
+          this.deps.a2aRegistry,
+          this.deps.a2a,
+        );
+        const result = await orchestrator.orchestrate(body.task, body.context);
+        return result;
+      } catch (err) {
+        return reply.code(500).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // ── RAG pipeline (master prompt #8) ──────────────────────────────
+    // POST /v1/rag/ingest — chunk + embed + store a document
+    // POST /v1/rag/retrieve — retrieve relevant chunks for a query
+    this.fastify.post('/v1/rag/ingest', async (request, reply) => {
+      const body = request.body as { text: string; namespace: string; source: string };
+      if (!body?.text || !body?.namespace) {
+        return reply.code(400).send({ error: { message: 'text and namespace are required' } });
+      }
+      try {
+        const { RagPipeline, InMemoryVectorStore } = await import('@anx/memory');
+        const rag = new RagPipeline(new InMemoryVectorStore(), null as never);
+        const result = await rag.ingest(body.text, body.namespace, body.source ?? 'unknown');
+        return result;
+      } catch (err) {
+        return reply.code(500).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    this.fastify.post('/v1/rag/retrieve', async (request, reply) => {
+      const body = request.body as { query: string; namespace: string };
+      if (!body?.query || !body?.namespace) {
+        return reply.code(400).send({ error: { message: 'query and namespace are required' } });
+      }
+      try {
+        const { RagPipeline, InMemoryVectorStore } = await import('@anx/memory');
+        const rag = new RagPipeline(new InMemoryVectorStore(), null as never);
+        const result = await rag.retrieve(body.query, body.namespace);
+        return result;
+      } catch (err) {
+        return reply.code(500).send({ error: { message: (err as Error).message } });
+      }
     });
 
     // ── API compatibility tester (master prompt #49) ───────────────────
