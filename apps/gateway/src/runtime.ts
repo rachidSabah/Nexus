@@ -13,11 +13,13 @@ import {
   InMemoryEventBus,
   KeyRegistry,
   ModelRegistry,
+  RequestTracer,
   RoutingEngine,
   type CachePort,
   type ChatCompletionChunk,
   type ChatCompletionRequest,
   type EmbeddingRequest,
+  type PrivacyConfig,
   type ProviderEndpoint,
   type RoutingDecision,
 } from '@anx/core';
@@ -35,6 +37,7 @@ import { ToolRuntime, registerBuiltinToolDefinitions } from '@anx/tools';
 import { WorkflowEngine, InMemoryWorkflowRepository, WORKFLOW_TEMPLATES } from '@anx/workflow';
 
 import { ConfigLoader, type GatewayConfig } from './config.js';
+import { AgentDetector } from './agent-detector.js';
 import { registerDefaultEndpoints } from './endpoints.js';
 import { ModelAliasRegistry } from './model-aliases.js';
 import { HttpServer } from './server.js';
@@ -76,6 +79,9 @@ export class GatewayRuntime {
   readonly keyRegistry!: KeyRegistry;
   readonly modelRegistry!: ModelRegistry;
   readonly aliasRegistry!: ModelAliasRegistry;
+  readonly tracer!: RequestTracer;
+  readonly privacy!: PrivacyConfig;
+  readonly agentDetector!: AgentDetector;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -109,6 +115,9 @@ export class GatewayRuntime {
     keyRegistry: KeyRegistry;
     modelRegistry: ModelRegistry;
     aliasRegistry: ModelAliasRegistry;
+    tracer: RequestTracer;
+    privacy: PrivacyConfig;
+    agentDetector: AgentDetector;
   }) {
     Object.assign(this, opts);
   }
@@ -201,6 +210,24 @@ export class GatewayRuntime {
     // model based on the ModelRegistry's discovered data. Master prompt #19 + #20.
     const aliasRegistry = new ModelAliasRegistry(modelRegistry);
 
+    // Request tracer — records full request traces for inspection via
+    // /v1/traces/:id. Master prompt #30.
+    const tracer = new RequestTracer({ maxTraces: 1000 });
+
+    // Privacy configuration — default to 'redacted' mode (no prompt/response
+    // content in logs). Master prompt #31.
+    const privacy: PrivacyConfig = {
+      level: (process.env['ANX_PRIVACY_LEVEL'] as 'off' | 'redacted' | 'strict') ?? 'redacted',
+      maxContentChars: 0,
+      redactAuthHeaders: true,
+      skipCachePersistence: process.env['ANX_PRIVACY_LEVEL'] === 'strict',
+    };
+
+    // Coding-agent auto-detector — scans PATH, npm globals, and config
+    // files at startup to discover what coding agents are installed.
+    // Master prompt #9.
+    const agentDetector = new AgentDetector();
+
     const chatUseCase = new ChatCompletionUseCase(
       routing,
       new DefaultFailover(),
@@ -217,6 +244,8 @@ export class GatewayRuntime {
         skipCacheForStreaming: true,
         keyRegistry,
         keyRotationStrategy: 'adaptive',
+        privacy,
+        tracer,
       },
     );
 
@@ -356,6 +385,9 @@ export class GatewayRuntime {
       keyRegistry,
       modelRegistry,
       aliasRegistry,
+      tracer,
+      privacy,
+      agentDetector,
     });
 
     return new GatewayRuntime({
@@ -390,6 +422,9 @@ export class GatewayRuntime {
       keyRegistry,
       modelRegistry,
       aliasRegistry,
+      tracer,
+      privacy,
+      agentDetector,
     });
   }
 

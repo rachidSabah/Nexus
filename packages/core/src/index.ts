@@ -30,6 +30,15 @@ export { InMemoryAuditLog } from './application/audit-log.js';
 export { InMemoryCache, cosineSimilarity, type InMemoryCacheOptions } from './application/cache.js';
 export { KeyRegistry, type KeyDescriptor, type KeyRotationStrategy, type KeyRegistryOptions, type SelectKeyOptions } from './application/key-registry.js';
 export { ModelRegistry, type ModelRegistryOptions } from './application/model-registry.js';
+export {
+  redactForLog,
+  fingerprint,
+  sanitizeForLog,
+  DEFAULT_PRIVACY,
+  type PrivacyLevel,
+  type PrivacyConfig,
+} from './application/privacy.js';
+export { RequestTracer, type RequestTrace, type TraceAttempt, type RequestTracerOptions } from './application/request-tracer.js';
 
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.1.0';

@@ -35,6 +35,9 @@ import type {
   ProviderAdapter,
   RoutingEnginePort,
 } from './ports.js';
+import type { PrivacyConfig } from './privacy.js';
+import { DEFAULT_PRIVACY } from './privacy.js';
+import type { RequestTracer } from './request-tracer.js';
 
 export interface ChatCompletionUseCaseOptions {
   /** Optional cache. When provided, exact-match cache is consulted before routing. */
@@ -53,6 +56,10 @@ export interface ChatCompletionUseCaseOptions {
   keyRegistry?: KeyRegistry;
   /** Strategy for key rotation. Default: 'adaptive'. */
   keyRotationStrategy?: KeyRotationStrategy;
+  /** Privacy configuration. Default: redacted mode (no prompt/response content in logs). */
+  privacy?: PrivacyConfig;
+  /** Optional request tracer. When provided, full request traces are recorded for inspection via /v1/traces/:id. */
+  tracer?: RequestTracer;
 }
 
 /**
@@ -84,6 +91,8 @@ export class ChatCompletionUseCase {
   private readonly skipCacheForStreaming: boolean;
   private readonly keyRegistry?: KeyRegistry;
   private readonly keyRotationStrategy: KeyRotationStrategy;
+  private readonly privacy: PrivacyConfig;
+  private readonly tracer?: RequestTracer;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -102,6 +111,8 @@ export class ChatCompletionUseCase {
     this.skipCacheForStreaming = options.skipCacheForStreaming ?? true;
     this.keyRegistry = options.keyRegistry;
     this.keyRotationStrategy = options.keyRotationStrategy ?? 'adaptive';
+    this.privacy = options.privacy ?? DEFAULT_PRIVACY;
+    this.tracer = options.tracer;
   }
 
   async execute(
@@ -112,6 +123,11 @@ export class ChatCompletionUseCase {
     const requestId = randomUUID();
     const correlationId = requestId;
     const startedAt = Date.now();
+
+    // Start a request trace (#30).
+    if (this.tracer) {
+      this.tracer.start(requestId, request.model);
+    }
 
     await this.events.publish(
       buildEvent<RequestReceivedEvent>(
@@ -145,7 +161,10 @@ export class ChatCompletionUseCase {
     // Streaming requests skip the cache entirely by default — partial
     // streamed responses can't be reliably replayed through the sink without
     // buffering the whole thing, which defeats the point of streaming.
-    const cacheable = this.cache && !(request.stream && this.skipCacheForStreaming);
+    // Privacy mode can also disable cache persistence (#31).
+    const cacheable = this.cache
+      && !(request.stream && this.skipCacheForStreaming)
+      && !this.privacy.skipCachePersistence;
     if (cacheable) {
       const cacheKey = this.cacheKey(effectiveRequest);
       const cached = await this.cache!.get<ChatCompletionResponse>(cacheKey);
@@ -159,6 +178,14 @@ export class ChatCompletionUseCase {
         );
         if (this.plugins) {
           await this.plugins.invokeHook('onResponse', cached);
+        }
+        if (this.tracer) {
+          this.tracer.recordCacheHit(requestId, false);
+          this.tracer.recordSuccess(requestId, {
+            input: cached.usage.promptTokens,
+            output: cached.usage.completionTokens,
+            total: cached.usage.totalTokens,
+          }, cached.costUsd ?? 0);
         }
         return cached;
       }
@@ -177,6 +204,10 @@ export class ChatCompletionUseCase {
           );
           if (this.plugins) {
             await this.plugins.invokeHook('onResponse', semanticHit.value);
+          }
+          if (this.tracer) {
+            this.tracer.recordCacheHit(requestId, true);
+            this.tracer.recordSuccess(requestId, { input: 0, output: 0, total: 0 }, 0);
           }
           return semanticHit.value as ChatCompletionResponse;
         }
@@ -197,6 +228,17 @@ export class ChatCompletionUseCase {
       capabilities: effectiveRequest.routing?.capabilities,
     };
     let decision = await this.routing.resolve(routingReq);
+
+    // Trace: record routing decision.
+    if (this.tracer) {
+      this.tracer.recordRoutingDecision(
+        requestId,
+        decision.endpoint.id,
+        decision.endpoint.providerId,
+        decision.alternatives.length,
+        (request.routing?.strategy as string) ?? 'default',
+      );
+    }
 
     // ─── Plugin hook: onRouteResolved ──────────────────────────────────────
     if (this.plugins) {
@@ -339,12 +381,43 @@ export class ChatCompletionUseCase {
           }
         }
 
+        // Trace: record success.
+        if (this.tracer) {
+          this.tracer.recordAttempt(requestId, {
+            attempt,
+            endpointId: endpoint.id,
+            providerId: endpoint.providerId,
+            keyId: selectedKeyId,
+            status: 200,
+            latencyMs,
+          });
+          this.tracer.recordSuccess(requestId, {
+            input: response.usage.promptTokens,
+            output: response.usage.completionTokens,
+            total: response.usage.totalTokens,
+          }, cost.totalCostUsd);
+        }
+
         return finalResult;
       } catch (err) {
         const error = err as Error;
         const classification = classifyFailure(error);
         const retryable = classification.retryable;
         await this.routing.recordFailure(endpoint.id, error, retryable);
+
+        // Trace: record failed attempt.
+        if (this.tracer) {
+          this.tracer.recordAttempt(requestId, {
+            attempt,
+            endpointId: endpoint.id,
+            providerId: endpoint.providerId,
+            keyId: selectedKeyId,
+            status: classification.status,
+            latencyMs: Date.now() - startedAt,
+            error: error.message,
+            failureReason: classification.reason,
+          });
+        }
 
         // Apply key-action classification (master prompt #14).
         // 429 → cooldown (handled by KeyRegistry.recordFailure with status=429)
@@ -401,6 +474,10 @@ export class ChatCompletionUseCase {
       }
     }
 
+    // Trace: record overall failure (all attempts exhausted).
+    if (this.tracer) {
+      this.tracer.recordFailure(requestId, `All providers exhausted for model '${request.model}'`);
+    }
     throw new AllProvidersExhaustedError(request.model, attempted);
   }
 

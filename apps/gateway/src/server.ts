@@ -1,3 +1,4 @@
+/* eslint-disable import/order */
 import { randomUUID } from 'node:crypto';
 
 import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
@@ -11,7 +12,10 @@ import type {
   EmbeddingRequest,
   EventBusPort,
   ModelRegistry,
+  PrivacyConfig,
   ProviderAdapter,
+  ProviderEndpoint,
+  RequestTracer,
   RoutingEnginePort,
   CachePort,
   KeyRegistry,
@@ -33,6 +37,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
 
+import { AgentDetector } from './agent-detector.js';
 import {
   newStreamState,
   translateAnthropicRequest,
@@ -40,8 +45,8 @@ import {
   translateToAnthropicResponse,
   type AnthropicRequest,
 } from './anthropic-compat.js';
-import type { GatewayConfig } from './config.js';
 import { ModelAliasRegistry, type AliasRankingStrategy } from './model-aliases.js';
+import type { GatewayConfig } from './config.js';
 
 /**
  * HTTP server. Exposes Phase 1-4 endpoints.
@@ -75,6 +80,9 @@ export interface HttpServerDeps {
   readonly keyRegistry: KeyRegistry;
   readonly modelRegistry: ModelRegistry;
   readonly aliasRegistry: ModelAliasRegistry;
+  readonly tracer: RequestTracer;
+  readonly privacy: PrivacyConfig;
+  readonly agentDetector: AgentDetector;
 }
 
 export class HttpServer {
@@ -506,6 +514,227 @@ export class HttpServer {
     // ── Cache stats ────────────────────────────────────────────────────
     this.fastify.get('/v1/cache/stats', async () => {
       return this.deps.cache.stats();
+    });
+
+    // ── Request tracing (master prompt #30) ────────────────────────────
+    // Every request gets a trace ID. Traces record the full routing decision:
+    // requested model, resolved model (if alias), routing decision, per-attempt
+    // details (endpoint, key, latency, status, error), cache hit/miss, TTFT,
+    // tokens used, cost. Inspectable via /v1/traces/:id.
+    this.fastify.get('/v1/traces', async (request) => {
+      const q = request.query as { limit?: number; status?: string; model?: string };
+      return {
+        traces: this.deps.tracer.list({
+          limit: q.limit ? Number(q.limit) : 100,
+          status: q.status,
+          model: q.model,
+        }),
+      };
+    });
+
+    this.fastify.get('/v1/traces/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const trace = this.deps.tracer.get(id);
+      if (!trace) return reply.code(404).send(this.reply404('trace not found'));
+      return trace;
+    });
+
+    this.fastify.get('/v1/traces/stats', async () => {
+      return this.deps.tracer.stats();
+    });
+
+    // ── Privacy mode (master prompt #31) ───────────────────────────────
+    // Returns the current privacy configuration. The level can be changed
+    // at runtime via POST /v1/privacy (no restart required).
+    this.fastify.get('/v1/privacy', async () => {
+      return this.deps.privacy;
+    });
+
+    this.fastify.post('/v1/privacy', async (request) => {
+      const body = request.body as { level?: 'off' | 'redacted' | 'strict'; maxContentChars?: number };
+      if (body.level) {
+        (this.deps.privacy as { level: 'off' | 'redacted' | 'strict' }).level = body.level;
+        if (body.level === 'strict') {
+          (this.deps.privacy as { skipCachePersistence: boolean }).skipCachePersistence = true;
+        }
+      }
+      if (body.maxContentChars !== undefined) {
+        (this.deps.privacy as { maxContentChars: number }).maxContentChars = body.maxContentChars;
+      }
+      return { ok: true, privacy: this.deps.privacy };
+    });
+
+    // ── Coding-agent auto-detection (master prompt #9) ─────────────────
+    // Scans PATH, npm globals, and config files to detect installed coding
+    // agents (Claude Code, Codex, Gemini CLI, etc.).
+    this.fastify.get('/v1/agents/detect', async () => {
+      const detected = await this.deps.agentDetector.detectAll();
+      return {
+        platform: process.platform,
+        arch: process.arch,
+        agents: detected,
+        foundCount: detected.filter((a) => a.found).length,
+        totalCount: detected.length,
+      };
+    });
+
+    this.fastify.get('/v1/agents/detect/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const agent = await this.deps.agentDetector.detectById(id);
+      if (!agent) return reply.code(404).send(this.reply404('agent id not recognized'));
+      return agent;
+    });
+
+    // ── API compatibility tester (master prompt #49) ───────────────────
+    // Tests a specific provider/model/key combination by issuing a tiny
+    // chat completion. Returns a real report with latency, streaming
+    // support, tool-calling support, and error details.
+    this.fastify.post('/v1/test', async (request, reply) => {
+      const body = request.body as {
+        providerId: string;
+        model: string;
+        keyId?: string;
+        tests?: ('auth' | 'chat' | 'streaming' | 'tools' | 'json')[];
+      };
+      if (!body?.providerId || !body?.model) {
+        return reply.code(400).send({ error: { message: 'providerId and model are required' } });
+      }
+
+      const endpoint = this.deps.routing.listEndpoints().find((e) => e.providerId === body.providerId);
+      if (!endpoint) {
+        return reply.code(404).send({ error: { message: `No endpoint for provider '${body.providerId}'` } });
+      }
+      const adapter = this.deps.adapters.get(body.providerId);
+      if (!adapter) {
+        return reply.code(404).send({ error: { message: `No adapter for provider '${body.providerId}'` } });
+      }
+
+      // Resolve the API key.
+      let apiKey: string | undefined;
+      if (body.keyId) {
+        apiKey = await this.deps.keyRegistry.getPlaintext(body.keyId);
+        if (!apiKey) {
+          return reply.code(404).send({ error: { message: `Key '${body.keyId}' not found in vault` } });
+        }
+      } else {
+        // Try env-var fallback (adapter's getApiKey will handle this).
+        apiKey = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+      }
+
+      const testEndpoint = { ...endpoint, apiKey: apiKey ?? '' } as never;
+      const tests = body.tests ?? ['auth', 'chat', 'streaming', 'tools', 'json'];
+      const results: Record<string, { ok: boolean; latencyMs?: number; error?: string; detail?: unknown }> = {};
+
+      for (const test of tests) {
+        if (test === 'auth') {
+          // Auth test = health check.
+          const start = Date.now();
+          try {
+            const ok = await adapter.healthCheck(testEndpoint, AbortSignal.timeout(10_000) as never);
+            results['auth'] = { ok, latencyMs: Date.now() - start };
+          } catch (err) {
+            results['auth'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
+          }
+        } else if (test === 'chat') {
+          const start = Date.now();
+          try {
+            const r = await adapter.chatCompletion(testEndpoint, {
+              model: body.model,
+              messages: [{ role: 'user', content: 'Say "ok" and nothing else.' }],
+              maxTokens: 5,
+            } as never, AbortSignal.timeout(15_000) as never);
+            results['chat'] = {
+              ok: true,
+              latencyMs: Date.now() - start,
+              detail: { model: r.model, usage: r.usage },
+            };
+          } catch (err) {
+            results['chat'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
+          }
+        } else if (test === 'streaming') {
+          const start = Date.now();
+          try {
+            let chunkCount = 0;
+            let firstChunkMs = 0;
+            for await (const _chunk of adapter.streamChatCompletion(testEndpoint, {
+              model: body.model,
+              messages: [{ role: 'user', content: 'Say "ok"' }],
+              maxTokens: 5,
+              stream: true,
+            } as never, AbortSignal.timeout(15_000) as never)) {
+              if (chunkCount === 0) firstChunkMs = Date.now() - start;
+              chunkCount++;
+              if (chunkCount > 50) break; // safety limit
+            }
+            results['streaming'] = {
+              ok: chunkCount > 0,
+              latencyMs: Date.now() - start,
+              detail: { chunks: chunkCount, ttftMs: firstChunkMs },
+            };
+          } catch (err) {
+            results['streaming'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
+          }
+        } else if (test === 'tools') {
+          const start = Date.now();
+          try {
+            const r = await adapter.chatCompletion(testEndpoint, {
+              model: body.model,
+              messages: [{ role: 'user', content: 'What is 2+2?' }],
+              maxTokens: 50,
+              tools: [{
+                type: 'function',
+                function: {
+                  name: 'calculate',
+                  description: 'Perform a calculation',
+                  parameters: {
+                    type: 'object',
+                    properties: { expression: { type: 'string' } },
+                    required: ['expression'],
+                  },
+                },
+              }],
+              toolChoice: 'auto',
+            } as never, AbortSignal.timeout(15_000) as never);
+            const hasToolCalls = !!(r.choices[0]?.message as { tool_calls?: unknown[] })?.tool_calls?.length;
+            results['tools'] = {
+              ok: true,
+              latencyMs: Date.now() - start,
+              detail: { invokedTools: hasToolCalls },
+            };
+          } catch (err) {
+            results['tools'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
+          }
+        } else if (test === 'json') {
+          const start = Date.now();
+          try {
+            const r = await adapter.chatCompletion(testEndpoint, {
+              model: body.model,
+              messages: [{ role: 'user', content: 'Return JSON: {"ok": true}' }],
+              maxTokens: 50,
+              responseFormat: { type: 'json_object' },
+            } as never, AbortSignal.timeout(15_000) as never);
+            results['json'] = {
+              ok: true,
+              latencyMs: Date.now() - start,
+              detail: { content: r.choices[0]?.message.content?.slice(0, 100) },
+            };
+          } catch (err) {
+            results['json'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
+          }
+        }
+      }
+
+      return {
+        providerId: body.providerId,
+        model: body.model,
+        keyId: body.keyId ?? 'env-default',
+        tests: results,
+        summary: {
+          passed: Object.values(results).filter((r) => r.ok).length,
+          failed: Object.values(results).filter((r) => !r.ok).length,
+          total: Object.keys(results).length,
+        },
+      };
     });
 
     // ── API key management (multi-key per provider) ───────────────────
