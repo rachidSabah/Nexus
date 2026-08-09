@@ -543,6 +543,179 @@ export class HttpServer {
       return this.deps.tracer.stats();
     });
 
+    // ── Unified adaptive router metrics (master prompt #13) ─────────────
+    // Aggregates metrics across all dimensions: per-key, per-provider,
+    // per-model, per-trace. Gives the adaptive router and the dashboard
+    // a single endpoint to consult for routing decisions.
+    this.fastify.get('/v1/metrics', async () => {
+      const traces = this.deps.tracer.stats();
+      const cache = this.deps.cache.stats();
+      const models = this.deps.modelRegistry.stats();
+      const endpoints = this.deps.routing.listEndpoints();
+      const keys = this.deps.keyRegistry.listAll();
+
+      // Per-provider breakdown.
+      const byProvider: Record<string, {
+        endpointCount: number;
+        healthy: number;
+        degraded: number;
+        open: number;
+        keys: number;
+        activeKeys: number;
+        cooldownKeys: number;
+        invalidKeys: number;
+        totalRequests: number;
+        totalTokens: number;
+        totalErrors: number;
+        rateLimitedCount: number;
+        avgLatencyMs: number;
+      }> = {};
+
+      for (const ep of endpoints) {
+        const pid = ep.providerId;
+        if (!byProvider[pid]) {
+          byProvider[pid] = {
+            endpointCount: 0, healthy: 0, degraded: 0, open: 0,
+            keys: 0, activeKeys: 0, cooldownKeys: 0, invalidKeys: 0,
+            totalRequests: 0, totalTokens: 0, totalErrors: 0, rateLimitedCount: 0,
+            avgLatencyMs: 0,
+          };
+        }
+        byProvider[pid].endpointCount++;
+        if (ep.health === 'healthy') byProvider[pid].healthy++;
+        else if (ep.health === 'degraded') byProvider[pid].degraded++;
+        else if (ep.health === 'circuit_open') byProvider[pid].open++;
+      }
+
+      // Aggregate per-key metrics into per-provider.
+      const allLatencies: number[] = [];
+      let totalAllRequests = 0;
+      let totalAllTokens = 0;
+      let totalAllErrors = 0;
+      let totalAllRateLimited = 0;
+
+      for (const k of keys) {
+        const pid = k.providerId;
+        if (!byProvider[pid]) {
+          byProvider[pid] = {
+            endpointCount: 0, healthy: 0, degraded: 0, open: 0,
+            keys: 0, activeKeys: 0, cooldownKeys: 0, invalidKeys: 0,
+            totalRequests: 0, totalTokens: 0, totalErrors: 0, rateLimitedCount: 0,
+            avgLatencyMs: 0,
+          };
+        }
+        byProvider[pid].keys++;
+        if (k.status === 'active') byProvider[pid].activeKeys++;
+        else if (k.status === 'cooldown') byProvider[pid].cooldownKeys++;
+        else if (k.status === 'invalid') byProvider[pid].invalidKeys++;
+        byProvider[pid].totalRequests += k.requests;
+        byProvider[pid].totalTokens += k.tokens;
+        byProvider[pid].totalErrors += k.errors;
+        byProvider[pid].rateLimitedCount += k.rateLimitedCount;
+        if (k.latencyMs > 0) {
+          allLatencies.push(k.latencyMs);
+          totalAllRequests += k.requests;
+          totalAllTokens += k.tokens;
+          totalAllErrors += k.errors;
+          totalAllRateLimited += k.rateLimitedCount;
+        }
+      }
+
+      // Compute avg latency per provider.
+      for (const pid of Object.keys(byProvider)) {
+        const providerKeys = keys.filter((k) => k.providerId === pid && k.latencyMs > 0);
+        if (providerKeys.length > 0) {
+          byProvider[pid]!.avgLatencyMs = Math.round(
+            providerKeys.reduce((s, k) => s + k.latencyMs, 0) / providerKeys.length,
+          );
+        }
+      }
+
+      // Overall success rate.
+      const successRate = traces.totalTraces > 0
+        ? (traces.successCount + traces.cachedCount) / traces.totalTraces
+        : 1.0;
+
+      // Tokens/sec (approximate — based on last 1000 traces' total tokens
+      // divided by their total latency in seconds).
+      const recentTraces = this.deps.tracer.list({ limit: 1000 });
+      let totalTokens = 0;
+      let totalLatencySec = 0;
+      for (const t of recentTraces) {
+        if (t.tokensUsed) {
+          totalTokens += t.tokensUsed.total;
+        }
+        totalLatencySec += t.totalLatencyMs / 1000;
+      }
+      const tokensPerSec = totalLatencySec > 0 ? Math.round(totalTokens / totalLatencySec) : 0;
+
+      return {
+        // Aggregate trace metrics.
+        requests: {
+          total: traces.totalTraces,
+          success: traces.successCount,
+          failed: traces.failedCount,
+          cached: traces.cachedCount,
+          successRate: Math.round(successRate * 1000) / 10, // percentage with 1 decimal
+          fallbackRate: Math.round(traces.fallbackRate * 1000) / 10,
+        },
+        // Latency metrics (from traces).
+        latency: {
+          avgMs: traces.avgLatencyMs,
+          avgTtftMs: traces.avgTtftMs,
+        },
+        // Throughput.
+        throughput: {
+          tokensPerSec,
+          totalTokens: totalAllTokens,
+          totalRequests: totalAllRequests,
+        },
+        // Cache.
+        cache: {
+          hits: cache.hits,
+          misses: cache.misses,
+          size: cache.size,
+          hitRate: Math.round(cache.hitRate * 1000) / 10,
+        },
+        // Model discovery.
+        models: {
+          total: models.totalModels,
+          free: models.freeModels,
+          stale: models.staleModels,
+          byProvider: models.byProvider,
+          lastRefreshAt: models.lastRefreshAt,
+          refreshing: models.refreshing,
+          errors: models.errors,
+        },
+        // Per-key aggregate.
+        keys: {
+          total: keys.length,
+          active: keys.filter((k) => k.status === 'active').length,
+          cooldown: keys.filter((k) => k.status === 'cooldown').length,
+          invalid: keys.filter((k) => k.status === 'invalid').length,
+          totalRequests: totalAllRequests,
+          totalTokens: totalAllTokens,
+          totalErrors: totalAllErrors,
+          rateLimitedCount: totalAllRateLimited,
+          errorRate: totalAllRequests > 0
+            ? Math.round((totalAllErrors / totalAllRequests) * 1000) / 10
+            : 0,
+          rateLimitRate: totalAllRequests > 0
+            ? Math.round((totalAllRateLimited / totalAllRequests) * 1000) / 10
+            : 0,
+        },
+        // Per-provider breakdown.
+        byProvider,
+        // System.
+        system: {
+          uptime: process.uptime(),
+          memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+          nodeVersion: process.version,
+          platform: process.platform,
+        },
+      };
+    });
+
     // ── Privacy mode (master prompt #31) ───────────────────────────────
     // Returns the current privacy configuration. The level can be changed
     // at runtime via POST /v1/privacy (no restart required).
