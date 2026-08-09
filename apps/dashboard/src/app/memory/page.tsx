@@ -16,13 +16,20 @@ interface MemoryRecord {
   tokenCount: number;
 }
 
+interface MemoryListResponse {
+  count: number;
+  records: MemoryRecord[];
+}
+
 export default function MemoryPage() {
   const [namespace, setNamespace] = useState('default');
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{ record: MemoryRecord; score: number }>>([]);
 
-  const { data, isLoading } = useSWR<{ count: number }>(`/api/v1/memory/${namespace}/list?limit=50`, fetcher, { refreshInterval: 5000 });
-  const { data: memories } = useSWR<readonly MemoryRecord[]>(`/api/v1/memory/${namespace}/list?limit=50`, fetcher, { refreshInterval: 5000 });
+  const { data, isLoading } = useSWR<MemoryListResponse>(`/api/v1/memory/${namespace}/list?limit=50`, fetcher, { refreshInterval: 5000 });
+
+  // The API returns { count, records } — extract the array safely
+  const memories: MemoryRecord[] = Array.isArray(data?.records) ? data!.records : (Array.isArray(data) ? data as unknown as MemoryRecord[] : []);
 
   async function search() {
     if (!query) return;
@@ -31,8 +38,8 @@ export default function MemoryPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, limit: 10 }),
     });
-    const data = (await r.json()) as { results: Array<{ record: MemoryRecord; score: number }> };
-    setSearchResults(data.results ?? []);
+    const resp = (await r.json()) as { results: Array<{ record: MemoryRecord; score: number }> };
+    setSearchResults(resp.results ?? []);
   }
 
   return (
@@ -99,14 +106,14 @@ export default function MemoryPage() {
       </div>
 
       <div className="card">
-        <h2 className="mb-4 text-sm font-medium text-white/80">Recent memories in "{namespace}"</h2>
+        <h2 className="mb-4 text-sm font-medium text-white/80">Recent memories in &quot;{namespace}&quot;</h2>
         <div className="max-h-96 overflow-y-auto font-mono text-xs">
           {isLoading ? (
             <div className="py-8 text-center text-white/40">Loading…</div>
-          ) : (memories ?? []).length === 0 ? (
+          ) : memories.length === 0 ? (
             <div className="py-8 text-center text-white/40">No memories yet.</div>
           ) : (
-            (memories ?? []).map((m) => (
+            memories.map((m) => (
               <div key={m.id} className="border-b border-white/[0.02] py-2">
                 <div className="flex items-center gap-3">
                   <span className="text-white/30">{new Date(m.createdAt).toLocaleString()}</span>

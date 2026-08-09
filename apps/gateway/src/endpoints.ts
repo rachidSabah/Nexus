@@ -95,6 +95,21 @@ const PROVIDER_DEFAULT_CAPS: Record<string, ProviderCapabilities> = {
     embeddings: true, reasoning: false, jsonMode: true,
     maxOutputTokens: 16384, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
   },
+  'opencode-zen': {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  'opencode-go': {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  'nvidia-nim': {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
 };
 
 const FALLBACK_CAPS: ProviderCapabilities = {
@@ -159,8 +174,16 @@ export async function registerDefaultEndpoints(
       { providerId: 'anthropic', envVar: 'ANTHROPIC_API_KEY', baseUrl: 'https://api.anthropic.com', pricing: { inputPer1K: 0.003, outputPer1K: 0.015, currency: 'USD' } },
       { providerId: 'deepseek', envVar: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com/v1', pricing: { inputPer1K: 0.001, outputPer1K: 0.002, currency: 'USD' } },
       { providerId: 'openrouter', envVar: 'OPENROUTER_API_KEY', baseUrl: 'https://openrouter.ai/api/v1', pricing: { inputPer1K: 0.005, outputPer1K: 0.015, currency: 'USD' } },
-      { providerId: 'groq', envVar: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', pricing: { inputPer1K: 0.0005, outputPer1K: 0.0008, currency: 'USD' } },
+      { providerId: 'groq', envVar: 'GROQ_API_KEY', baseUrl: 'https://api.groq.com/openai/v1', pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'google', envVar: 'GOOGLE_API_KEY', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', pricing: { inputPer1K: 0.00125, outputPer1K: 0.005, currency: 'USD' } },
+      { providerId: 'mistral', envVar: 'MISTRAL_API_KEY', baseUrl: 'https://api.mistral.ai/v1', pricing: { inputPer1K: 0.001, outputPer1K: 0.003, currency: 'USD' } },
+      { providerId: 'xai', envVar: 'XAI_API_KEY', baseUrl: 'https://api.x.ai/v1', pricing: { inputPer1K: 0.005, outputPer1K: 0.015, currency: 'USD' } },
+      { providerId: 'together', envVar: 'TOGETHER_API_KEY', baseUrl: 'https://api.together.xyz/v1', pricing: { inputPer1K: 0.002, outputPer1K: 0.008, currency: 'USD' } },
+      { providerId: 'fireworks', envVar: 'FIREWORKS_API_KEY', baseUrl: 'https://api.fireworks.ai/inference/v1', pricing: { inputPer1K: 0.002, outputPer1K: 0.008, currency: 'USD' } },
+      { providerId: 'cerebras', envVar: 'CEREBRAS_API_KEY', baseUrl: 'https://api.cerebras.ai/v1', pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'nvidia-nim', envVar: 'NVIDIA_API_KEY', baseUrl: 'https://integrate.api.nvidia.com/v1', pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'opencode-zen', envVar: 'OPENCODE_ZEN_API_KEY', baseUrl: 'https://api.opencode.ai/zen/v1', pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'opencode-go', envVar: 'OPENCODE_GO_API_KEY', baseUrl: 'https://api.opencode.ai/go/v1', pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'ollama', envVar: '', baseUrl: 'http://localhost:11434/v1', pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
     ];
 
