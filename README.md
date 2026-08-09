@@ -161,6 +161,36 @@ Plus:
 
 ## Quick Start
 
+### One-Command Install (recommended)
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.ps1 | iex
+```
+
+**Linux / macOS / WSL:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.sh | bash
+```
+
+The installer automatically:
+1. Installs Node.js 22+ (via nvm/winget if missing)
+2. Installs pnpm
+3. Clones the repo
+4. Installs all dependencies
+5. Builds all packages
+6. Registers the `anx` CLI globally
+7. Starts the gateway (background, 127.0.0.1:8787)
+8. Starts the dashboard (background, localhost:3000)
+9. Verifies health
+10. Detects coding agents
+11. Opens the dashboard in your browser
+
+After installation:
+- **Gateway**: http://127.0.0.1:8787
+- **Dashboard**: http://localhost:3000
+- **CLI**: `anx doctor` (diagnostics), `anx models --free` (free models), `anx integrations install --all` (auto-configure coding agents)
+
 ### Run with Docker
 
 ```bash
