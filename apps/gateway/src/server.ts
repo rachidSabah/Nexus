@@ -7,16 +7,22 @@ import type { A2ACoordinator, TeamManager } from '@anx/a2a';
 import type { AgentRegistry } from '@anx/agents';
 import { ChatCompletionUseCase } from '@anx/core';
 import type {
+  BudgetManager,
   ChatCompletionChunk,
   ChatCompletionRequest,
+  ContextWindowManager,
+  CostPredictor,
   EmbeddingRequest,
   EventBusPort,
   ModelRegistry,
   PrivacyConfig,
+  ProactiveRateLimitTracker,
+  PromptCompressor,
   ProviderAdapter,
   ProviderEndpoint,
   RequestTracer,
   RoutingEnginePort,
+  TaskClassifier,
   CachePort,
   KeyRegistry,
 } from '@anx/core';
@@ -84,6 +90,13 @@ export interface HttpServerDeps {
   readonly tracer: RequestTracer;
   readonly privacy: PrivacyConfig;
   readonly agentDetector: AgentDetector;
+  // Phase 5: advanced optimization features
+  readonly budgetManager: BudgetManager;
+  readonly promptCompressor: PromptCompressor;
+  readonly rateLimitTracker: ProactiveRateLimitTracker;
+  readonly taskClassifier: TaskClassifier;
+  readonly contextWindowManager: ContextWindowManager;
+  readonly costPredictor: CostPredictor;
 }
 
 export class HttpServer {
@@ -757,6 +770,163 @@ export class HttpServer {
       const agent = await this.deps.agentDetector.detectById(id);
       if (!agent) return reply.code(404).send(this.reply404('agent id not recognized'));
       return agent;
+    });
+
+    // ── Budget manager (master prompt: Budget-Aware Routing) ────────────
+    // GET /v1/budget        — current budget snapshot (spent, remaining,
+    //                          percent used, current mode, period bounds).
+    // POST /v1/budget       — update budget config at runtime. Accepts a
+    //                          subset of BudgetConfig: enable (alias for
+    //                          `enabled`), limitUsd, period. The mode is
+    //                          recomputed on the next request.
+    this.fastify.get('/v1/budget', async () => {
+      return this.deps.budgetManager.getSnapshot();
+    });
+
+    this.fastify.post('/v1/budget', async (request) => {
+      const body = request.body as {
+        enable?: boolean;
+        limitUsd?: number;
+        period?: 'daily' | 'weekly' | 'monthly';
+      };
+      const updates: { enabled?: boolean; limitUsd?: number; period?: 'daily' | 'weekly' | 'monthly' } = {};
+      if (body.enable !== undefined) updates.enabled = body.enable;
+      if (body.limitUsd !== undefined) {
+        if (typeof body.limitUsd !== 'number' || !isFinite(body.limitUsd) || body.limitUsd < 0) {
+          return { ok: false, error: 'limitUsd must be a non-negative number' };
+        }
+        updates.limitUsd = body.limitUsd;
+      }
+      if (body.period !== undefined) {
+        if (body.period !== 'daily' && body.period !== 'weekly' && body.period !== 'monthly') {
+          return { ok: false, error: `period must be one of: daily, weekly, monthly (got '${body.period}')` };
+        }
+        updates.period = body.period;
+      }
+      this.deps.budgetManager.updateConfig(updates);
+      return { ok: true, budget: this.deps.budgetManager.getSnapshot() };
+    });
+
+    // ── Prompt compression (master prompt: Prompt Compression) ──────────
+    // GET /v1/compression   — compression stats (tokens saved, requests,
+    //                          avg per request) + current config (enabled
+    //                          flag — the only config field exposed via
+    //                          PromptCompressor.getStats()).
+    // POST /v1/compression  — update config. Accepts `enable` (boolean) and
+    //                          `strategies` (a map of strategy-name → bool
+    //                          toggling each individual strategy).
+    this.fastify.get('/v1/compression', async () => {
+      const stats = this.deps.promptCompressor.getStats();
+      return {
+        stats,
+        config: { enabled: stats.enabled },
+      };
+    });
+
+    this.fastify.post('/v1/compression', async (request) => {
+      const body = request.body as {
+        enable?: boolean;
+        strategies?: {
+          stopWordRemoval?: boolean;
+          schemaCompression?: boolean;
+          systemPromptDedup?: boolean;
+          summarizeThreshold?: number;
+        };
+      };
+      const updates: {
+        enabled?: boolean;
+        stopWordRemoval?: boolean;
+        schemaCompression?: boolean;
+        systemPromptDedup?: boolean;
+        summarizeThreshold?: number;
+      } = {};
+      if (body.enable !== undefined) updates.enabled = body.enable;
+      if (body.strategies) {
+        if (body.strategies.stopWordRemoval !== undefined) updates.stopWordRemoval = body.strategies.stopWordRemoval;
+        if (body.strategies.schemaCompression !== undefined) updates.schemaCompression = body.strategies.schemaCompression;
+        if (body.strategies.systemPromptDedup !== undefined) updates.systemPromptDedup = body.strategies.systemPromptDedup;
+        if (body.strategies.summarizeThreshold !== undefined) {
+          if (typeof body.strategies.summarizeThreshold !== 'number' || body.strategies.summarizeThreshold < 0) {
+            return { ok: false, error: 'strategies.summarizeThreshold must be a non-negative number' };
+          }
+          updates.summarizeThreshold = body.strategies.summarizeThreshold;
+        }
+      }
+      this.deps.promptCompressor.updateConfig(updates);
+      return { ok: true, stats: this.deps.promptCompressor.getStats() };
+    });
+
+    // ── Proactive rate-limit tracking ──────────────────────────────────
+    // GET /v1/rate-limits  — returns all tracked rate-limit info keyed by
+    //                          key id. Entries expire after 5 minutes.
+    this.fastify.get('/v1/rate-limits', async () => {
+      const limits = this.deps.rateLimitTracker.getAll();
+      return {
+        limits,
+        count: Object.keys(limits).length,
+      };
+    });
+
+    // ── Task classification ────────────────────────────────────────────
+    // POST /v1/task-classify — classifies a chat completion request body
+    //                          (model + messages + optional tools) and
+    //                          returns the task type, confidence, signals,
+    //                          complexity, and recommended model tier.
+    this.fastify.post('/v1/task-classify', async (request, reply) => {
+      const body = request.body as { model?: string; messages?: unknown; tools?: unknown[] };
+      if (!body?.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
+        return reply.code(400).send({ error: { message: 'messages (non-empty array) is required' } });
+      }
+      const classification = this.deps.taskClassifier.classify({
+        model: body.model ?? 'unknown',
+        messages: body.messages as never,
+        tools: body.tools as never,
+      } as never);
+      // Attach the capability requirements the routing engine would consult
+      // for this task type — useful for the dashboard's model picker.
+      return {
+        ...classification,
+        capabilityRequirements: this.deps.taskClassifier.getCapabilityRequirements(classification.type),
+      };
+    });
+
+    // ── Context window manager ─────────────────────────────────────────
+    // GET /v1/context-manager   — current context window config.
+    // POST /v1/context-manager  — update config (blockOversized,
+    //                              maxMessagesWhenTrimming, summarizeTrimmed).
+    this.fastify.get('/v1/context-manager', async () => {
+      return this.deps.contextWindowManager.getConfig();
+    });
+
+    this.fastify.post('/v1/context-manager', async (request) => {
+      const body = request.body as {
+        blockOversized?: boolean;
+        maxMessagesWhenTrimming?: number;
+        summarizeTrimmed?: boolean;
+      };
+      const updates: {
+        blockOversized?: boolean;
+        maxMessagesWhenTrimming?: number;
+        summarizeTrimmed?: boolean;
+      } = {};
+      if (body.blockOversized !== undefined) updates.blockOversized = body.blockOversized;
+      if (body.maxMessagesWhenTrimming !== undefined) {
+        if (typeof body.maxMessagesWhenTrimming !== 'number' || body.maxMessagesWhenTrimming < 1) {
+          return { ok: false, error: 'maxMessagesWhenTrimming must be a positive number' };
+        }
+        updates.maxMessagesWhenTrimming = body.maxMessagesWhenTrimming;
+      }
+      if (body.summarizeTrimmed !== undefined) updates.summarizeTrimmed = body.summarizeTrimmed;
+      this.deps.contextWindowManager.updateConfig(updates);
+      return { ok: true, config: this.deps.contextWindowManager.getConfig() };
+    });
+
+    // ── Cost predictor ─────────────────────────────────────────────────
+    // GET /v1/cost-predictor — current cost predictor config (per-request
+    //                          threshold, auto-switch flag, capability
+    //                          matching flag).
+    this.fastify.get('/v1/cost-predictor', async () => {
+      return this.deps.costPredictor.getConfig();
     });
 
     // ── API compatibility tester (master prompt #49) ───────────────────

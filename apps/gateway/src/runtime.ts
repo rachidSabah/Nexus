@@ -5,7 +5,10 @@ import { AIServiceMesh } from '@agent-nexus/service-mesh';
 import { AgentRegistry as A2AAgentRegistry, A2ACoordinator, TeamManager } from '@anx/a2a';
 import { AgentRegistry, registerBuiltinAgents } from '@anx/agents';
 import {
+  BudgetManager,
   ChatCompletionUseCase,
+  ContextWindowManager,
+  CostPredictor,
   DefaultCostCalculator,
   DefaultFailover,
   InMemoryAuditLog,
@@ -13,8 +16,11 @@ import {
   InMemoryEventBus,
   KeyRegistry,
   ModelRegistry,
+  ProactiveRateLimitTracker,
+  PromptCompressor,
   RequestTracer,
   RoutingEngine,
+  TaskClassifier,
   type CachePort,
   type ChatCompletionChunk,
   type ChatCompletionRequest,
@@ -83,6 +89,13 @@ export class GatewayRuntime {
   readonly tracer!: RequestTracer;
   readonly privacy!: PrivacyConfig;
   readonly agentDetector!: AgentDetector;
+  // Phase 5: advanced optimization features
+  readonly budgetManager!: BudgetManager;
+  readonly promptCompressor!: PromptCompressor;
+  readonly rateLimitTracker!: ProactiveRateLimitTracker;
+  readonly taskClassifier!: TaskClassifier;
+  readonly contextWindowManager!: ContextWindowManager;
+  readonly costPredictor!: CostPredictor;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -119,6 +132,12 @@ export class GatewayRuntime {
     tracer: RequestTracer;
     privacy: PrivacyConfig;
     agentDetector: AgentDetector;
+    budgetManager: BudgetManager;
+    promptCompressor: PromptCompressor;
+    rateLimitTracker: ProactiveRateLimitTracker;
+    taskClassifier: TaskClassifier;
+    contextWindowManager: ContextWindowManager;
+    costPredictor: CostPredictor;
   }) {
     Object.assign(this, opts);
   }
@@ -250,6 +269,73 @@ export class GatewayRuntime {
     // Master prompt #9.
     const agentDetector = new AgentDetector();
 
+    // ─── Phase 5: advanced optimization features ────────────────────────
+    // Budget-aware routing — tracks spend against a daily/weekly/monthly
+    // budget and auto-switches alias resolution to cheaper models at
+    // thresholds. The limit can be set via the ANX_BUDGET_LIMIT env var
+    // (USD amount); if unset, defaults to $5/period (budget stays disabled
+    // until explicitly enabled via POST /v1/budget { enable: true }).
+    const budgetLimitFromEnv = process.env['ANX_BUDGET_LIMIT'];
+    const budgetManager = new BudgetManager(
+      budgetLimitFromEnv !== undefined && budgetLimitFromEnv !== ''
+        ? { limitUsd: Number(budgetLimitFromEnv) }
+        : {},
+    );
+
+    // Prompt compression — reduces token count before sending to the
+    // provider. Enabled by default (system-prompt dedup, stop-word
+    // removal, schema compression, conversation summarization). Saves
+    // money on coding-agent workloads where boilerplate system prompts
+    // (e.g. Claude Code's 2000-token system prompt) are sent in every
+    // request.
+    const promptCompressor = new PromptCompressor({ enabled: true });
+
+    // Proactive rate-limit tracker — parses X-RateLimit-* headers from
+    // provider responses and feeds them into the KeyRegistry's adaptive
+    // selector so requests prefer keys with more remaining quota (zero
+    // 429s). The server records headers after each provider call.
+    const rateLimitTracker = new ProactiveRateLimitTracker();
+
+    // Task classifier — inspects a chat completion request and classifies
+    // the task type (simple_completion / code_generation / debugging / ...)
+    // enabling smarter model routing. Used by /v1/task-classify and (future)
+    // by the routing engine to pick models by recommended tier.
+    const taskClassifier = new TaskClassifier();
+
+    // Context window manager — prevents HTTP 413 errors by estimating
+    // token count before routing and switching to a larger-context model
+    // (or trimming the conversation) when needed.
+    const contextWindowManager = new ContextWindowManager();
+
+    // Cost predictor — estimates the cost of a request before sending it
+    // and recommends a cheaper alternative model when the estimate exceeds
+    // the per-request threshold.
+    const costPredictor = new CostPredictor();
+
+    // The ChatCompletionUseCase options interface doesn't yet have fields
+    // for the budget manager, prompt compressor, or rate-limit tracker
+    // (they're consumed directly by the server endpoints). We attach them
+    // as extra fields on the options object so the use case has a reference
+    // to them when it's eventually upgraded to consult them. TypeScript
+    // excess-property checks only fire on fresh literals, so we build the
+    // options in a named const first.
+    const chatUseCaseOptions = {
+      cache,
+      plugins,
+      embed: embedFn,
+      semanticThreshold: 0.92,
+      cacheTtlMs: 5 * 60 * 1000,
+      skipCacheForStreaming: true,
+      keyRegistry,
+      keyRotationStrategy: 'adaptive' as const,
+      privacy,
+      tracer,
+      // Extra fields — currently ignored by ChatCompletionUseCase, used
+      // directly by the server endpoints.
+      budgetManager,
+      promptCompressor,
+      rateLimitTracker,
+    };
     const chatUseCase = new ChatCompletionUseCase(
       routing,
       new DefaultFailover(),
@@ -257,18 +343,7 @@ export class GatewayRuntime {
       events,
       new DefaultCostCalculator(),
       config.routing.maxFailovers,
-      {
-        cache,
-        plugins,
-        embed: embedFn,
-        semanticThreshold: 0.92,
-        cacheTtlMs: 5 * 60 * 1000,
-        skipCacheForStreaming: true,
-        keyRegistry,
-        keyRotationStrategy: 'adaptive',
-        privacy,
-        tracer,
-      },
+      chatUseCaseOptions,
     );
 
     // ─── Phase 4: Agents / Runtime / Workflow / Memory / Tools / Planner / Teams ──
@@ -419,6 +494,13 @@ export class GatewayRuntime {
       tracer,
       privacy,
       agentDetector,
+      // Phase 5
+      budgetManager,
+      promptCompressor,
+      rateLimitTracker,
+      taskClassifier,
+      contextWindowManager,
+      costPredictor,
     });
 
     return new GatewayRuntime({
@@ -456,6 +538,13 @@ export class GatewayRuntime {
       tracer,
       privacy,
       agentDetector,
+      // Phase 5
+      budgetManager,
+      promptCompressor,
+      rateLimitTracker,
+      taskClassifier,
+      contextWindowManager,
+      costPredictor,
     });
   }
 

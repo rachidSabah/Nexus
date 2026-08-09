@@ -39,6 +39,12 @@ export {
   type PrivacyConfig,
 } from './application/privacy.js';
 export { RequestTracer, type RequestTrace, type TraceAttempt, type RequestTracerOptions } from './application/request-tracer.js';
+export { BudgetManager, type BudgetConfig, type BudgetMode, type BudgetPeriod, type BudgetSnapshot, DEFAULT_BUDGET_CONFIG } from './application/budget-manager.js';
+export { PromptCompressor, type CompressionConfig, type CompressionResult, DEFAULT_COMPRESSION_CONFIG } from './application/prompt-compressor.js';
+export { ProactiveRateLimitTracker, type RateLimitInfo } from './application/rate-limit-tracker.js';
+export { TaskClassifier, type TaskType, type TaskClassification } from './application/task-classifier.js';
+export { ContextWindowManager, type ContextWindowConfig, type ContextCheckResult, DEFAULT_CONTEXT_CONFIG } from './application/context-window-manager.js';
+export { CostPredictor, type CostPredictorConfig, type CostEstimate, type CostPredictionResult, DEFAULT_COST_CONFIG } from './application/cost-predictor.js';
 
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.1.0';

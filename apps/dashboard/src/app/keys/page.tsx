@@ -6,6 +6,31 @@ import useSWR from 'swr';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
+/**
+ * The 17 provider IDs built into the gateway (see packages/providers/src/index.ts).
+ * These are always available in the dropdown so keys can be registered for a
+ * provider before any endpoint is configured — endpoints can be added later.
+ */
+const KNOWN_PROVIDER_IDS = [
+  'openai',
+  'anthropic',
+  'google',
+  'openrouter',
+  'deepseek',
+  'mistral',
+  'xai',
+  'groq',
+  'together',
+  'fireworks',
+  'cerebras',
+  'cloudflare',
+  'ollama',
+  'vllm',
+  'lmstudio',
+  'litellm',
+  'azure-openai',
+] as const;
+
 interface ApiKey {
   id: string;
   providerId: string;
@@ -186,11 +211,11 @@ export default function KeysPage() {
       {/* Add key button */}
       <div className="flex items-center gap-3">
         <button
-          onClick={() => setShowAdd(!showAdd)}
+          onClick={() => setShowAdd((prev) => !prev)}
           className="rounded-lg bg-nexus-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-nexus-500"
         >
           <Plus className="mr-1 inline h-4 w-4" />
-          Add API Key
+          {showAdd ? 'Close Form' : 'Add API Key'}
         </button>
         {addMsg && <span className="text-xs text-white/60">{addMsg}</span>}
       </div>
@@ -208,14 +233,18 @@ export default function KeysPage() {
                 className="mt-1 h-8 w-full rounded-md border border-white/5 bg-white/[0.02] px-2 text-sm text-white"
               >
                 <option value="">Select provider...</option>
-                {allProviderIds.map((pid) => (
+                {/* Always show the 17 built-in provider IDs, even before any
+                     endpoint is registered on the gateway. */}
+                {KNOWN_PROVIDER_IDS.map((pid) => (
                   <option key={pid} value={pid}>{pid}</option>
                 ))}
-                {/* Allow custom provider IDs */}
-                {['openai', 'anthropic', 'google', 'openrouter', 'deepseek', 'groq', 'together', 'fireworks', 'cerebras', 'mistral', 'xai', 'ollama', 'vllm', 'lmstudio', 'litellm', 'azure']
-                  .filter((p) => !allProviderIds.includes(p))
-                  .map((p) => (
-                    <option key={p} value={p}>{p} (not yet configured)</option>
+                {/* Also surface any provider IDs the gateway already knows
+                     about (from endpoints or previously-registered keys) that
+                     aren't in the hardcoded list above (e.g. custom providers). */}
+                {allProviderIds
+                  .filter((pid) => !(KNOWN_PROVIDER_IDS as readonly string[]).includes(pid))
+                  .map((pid) => (
+                    <option key={pid} value={pid}>{pid}</option>
                   ))}
               </select>
             </label>

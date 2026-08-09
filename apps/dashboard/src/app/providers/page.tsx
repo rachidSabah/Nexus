@@ -5,7 +5,7 @@ import Link from 'next/link';
 import useSWR from 'swr';
 
 import { ProviderTable } from '@/components/ProviderTable';
-import { useProviders } from '@/hooks/api';
+import type { Provider } from '@/hooks/api';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -16,7 +16,7 @@ interface ApiKey {
 }
 
 export default function ProvidersPage() {
-  const { data: providers, isLoading } = useProviders();
+  const { data: providers, isLoading } = useSWR<Provider[]>('/api/v1/providers', fetcher, { refreshInterval: 5000 });
   const { data: keys } = useSWR<ApiKey[]>('/api/v1/keys', fetcher, { refreshInterval: 5000 });
 
   // Count keys per provider
