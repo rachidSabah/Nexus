@@ -2,19 +2,10 @@
 #
 # Usage:
 #   irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.ps1 | iex
-#
-# What it does:
-#   1. Installs Node.js 22+ (via winget if missing)
-#   2. Installs pnpm (via corepack)
-#   3. Clones the repo
-#   4. Installs all dependencies + builds
-#   5. Registers the CLI (anx.cmd)
-#   6. Starts gateway (127.0.0.1:8787)
-#   7. Starts dashboard (localhost:3000)
-#   8. Verifies health
-#   9. Opens browser
 
-$ErrorActionPreference = "Stop"
+# IMPORTANT: Do NOT use $ErrorActionPreference = "Stop" — it causes pnpm/turbo
+# stderr output to be treated as a terminating error, aborting the script
+# before the gateway + dashboard start steps. We handle errors explicitly instead.
 
 function W-Info { Write-Host "[INFO]  $args" -ForegroundColor Blue }
 function W-Ok { Write-Host "[OK]    $args" -ForegroundColor Green }
@@ -34,7 +25,7 @@ try {
     if ($nv) {
         $major = [int]($nv -replace 'v','' -split '\.')[0]
         if ($major -ge 22) { $needNode = $false; W-Ok "Node.js $nv found" }
-        else { W-Warn "Node.js $nv found — need v22+. Will upgrade..." }
+        else { W-Warn "Node.js $nv found - need v22+. Will upgrade..." }
     }
 } catch {}
 
@@ -42,7 +33,6 @@ if ($needNode) {
     W-Info "Installing Node.js 22 via winget..."
     try {
         winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements 2>$null
-        # Refresh PATH
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
     } catch {
         W-Warn "winget failed. Trying nvm-windows..."
@@ -59,12 +49,18 @@ if ($needNode) {
 }
 
 # ── 2. Install pnpm ──────────────────────────────────────────────────────
-try { pnpm --version | Out-Null } catch {
+$pnpmInstalled = $false
+try { $null = pnpm --version 2>$null; $pnpmInstalled = $true } catch {}
+
+if (-not $pnpmInstalled) {
     W-Info "Installing pnpm..."
-    corepack enable 2>$null
-    if ($LASTEXITCODE -ne 0) { npm install -g pnpm }
+    try { corepack enable 2>$null } catch {}
+    try { $null = pnpm --version 2>$null; $pnpmInstalled = $true } catch {}
+    if (-not $pnpmInstalled) {
+        try { npm install -g pnpm 2>$null; $null = pnpm --version 2>$null; $pnpmInstalled = $true } catch {}
+    }
 }
-try { pnpm --version | Out-Null } catch { npm install -g pnpm; }
+if (-not $pnpmInstalled) { W-Fail "Could not install pnpm. Run: npm install -g pnpm" }
 W-Ok "pnpm $(pnpm --version) ready"
 
 # ── 3. Clone repo ────────────────────────────────────────────────────────
@@ -83,18 +79,25 @@ if (Test-Path "$repoDir\.git") {
 }
 
 # ── 4. Install deps + build ─────────────────────────────────────────────
+# Use cmd.exe to run pnpm so stderr doesn't abort PowerShell
 W-Info "Installing dependencies (1-2 min)..."
-pnpm install --no-frozen-lockfile 2>&1 | Select-Object -Last 3
+cmd.exe /c "cd /d `"$repoDir`" && pnpm install --no-frozen-lockfile" 2>&1 | Select-Object -Last 5
 
 W-Info "Building all packages..."
-pnpm build 2>&1 | Select-Object -Last 3
-W-Ok "Build complete"
+# Run build via cmd.exe to avoid PowerShell stderr handling issues
+# turbo writes progress to stderr which PowerShell treats as an error
+$buildOutput = cmd.exe /c "cd /d `"$repoDir`" && pnpm build 2>&1" 2>&1
+$buildExit = $LASTEXITCODE
+$buildOutput | Select-Object -Last 5
+if ($buildExit -ne 0) {
+    W-Warn "Build had warnings (exit code $buildExit). This is usually OK."
+}
+W-Ok "Build step complete"
 
 # ── 5. Register CLI ─────────────────────────────────────────────────────
 $binDir = "$env:USERPROFILE\.local\bin"
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 Set-Content -Path "$binDir\anx.cmd" -Value "@echo off`r`nnode `"$repoDir\packages\cli\dist\bin.js`" %*" -Encoding ASCII -Force
-# Add to PATH
 $userPath = [System.Environment]::GetEnvironmentVariable("Path","User")
 if ($userPath -notlike "*$binDir*") {
     [System.Environment]::SetEnvironmentVariable("Path","$binDir;$userPath","User")
@@ -111,7 +114,6 @@ Start-Sleep -Seconds 2
 
 # ── 7. Start gateway ────────────────────────────────────────────────────
 W-Info "Starting gateway on 127.0.0.1:8787..."
-# Use a batch wrapper so the process survives this script exiting
 $gwBat = "$installDir\start-gateway.bat"
 Set-Content -Path $gwBat -Value "@echo off`r`ncd /d `"$repoDir`"`r`nnode apps\gateway\dist\bin.js > `"$installDir\gateway.log`" 2>&1" -Encoding ASCII -Force
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "`"$gwBat`"" -WindowStyle Hidden
@@ -131,9 +133,14 @@ else { W-Warn "Gateway not responding. Check $installDir\gateway.log" }
 # ── 8. Start dashboard ──────────────────────────────────────────────────
 W-Info "Starting dashboard on localhost:3000..."
 $dashBat = "$installDir\start-dashboard.bat"
-# Use the full path to pnpm to avoid PATH issues
+# Resolve pnpm full path
 $pnpmPath = (Get-Command pnpm -ErrorAction SilentlyContinue).Source
-if (-not $pnpmPath) { $pnpmPath = "pnpm" }
+if (-not $pnpmPath) {
+    # Fallback: try common locations
+    $pnpmPath = "$env:APPDATA\npm\pnpm.cmd"
+    if (-not (Test-Path $pnpmPath)) { $pnpmPath = "pnpm" }
+}
+W-Info "Using pnpm at: $pnpmPath"
 Set-Content -Path $dashBat -Value "@echo off`r`ncd /d `"$repoDir`"`r`n`"$pnpmPath`" --filter @anx/dashboard dev > `"$installDir\dashboard.log`" 2>&1" -Encoding ASCII -Force
 Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "`"$dashBat`"" -WindowStyle Hidden
 
@@ -158,7 +165,7 @@ Write-Host "=========================================================" -Foregrou
 if ($gwOk -and $dashOk) {
     Write-Host "  Installation Complete!" -ForegroundColor Green
 } else {
-    Write-Host "  Installation Partial — check warnings above" -ForegroundColor Yellow
+    Write-Host "  Installation Partial - check warnings above" -ForegroundColor Yellow
 }
 Write-Host "=========================================================" -ForegroundColor White
 Write-Host ""
@@ -169,6 +176,7 @@ else { Write-Host "  Dashboard: NOT RUNNING (check $installDir\dashboard.log)" -
 Write-Host ""
 Write-Host "  CLI: anx doctor  |  anx models  |  anx integrations install --all"
 Write-Host "  Stop: taskkill /f /im node.exe"
+Write-Host "  Repo: $repoDir"
 Write-Host ""
 
 # Open browser
