@@ -1,0 +1,57 @@
+{
+  "annotations": { "list": [] },
+  "title": "Agent Nexus Gateway — Overview",
+  "uid": "anx-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Requests/sec",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "rate(anx_request_total[1m])", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Active Providers",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "anx_providers_healthy", "refId": "A" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Total Cost (USD)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "anx_cost_usd_total", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Cache Hit Rate",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "anx_cache_hit_rate", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent" } }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Request Latency (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{ "expr": "anx_request_latency_ms", "refId": "A" }]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Tokens (input + output)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "rate(anx_tokens_input_total[1m])", "refId": "A", "legendFormat": "Input" },
+        { "expr": "rate(anx_tokens_output_total[1m])", "refId": "B", "legendFormat": "Output" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Failover Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [{ "expr": "rate(anx_failover_total[5m])", "refId": "A" }]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Request Failures by Code",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [{ "expr": "rate(anx_request_failures_total[5m])", "refId": "A" }]
+    }
+  ]
+}

@@ -45,6 +45,7 @@ export { ProactiveRateLimitTracker, type RateLimitInfo } from './application/rat
 export { TaskClassifier, type TaskType, type TaskClassification } from './application/task-classifier.js';
 export { ContextWindowManager, type ContextWindowConfig, type ContextCheckResult, DEFAULT_CONTEXT_CONFIG } from './application/context-window-manager.js';
 export { CostPredictor, type CostPredictorConfig, type CostEstimate, type CostPredictionResult, DEFAULT_COST_CONFIG } from './application/cost-predictor.js';
+export { NaiveTokenCounter, CodeAwareTokenCounter, defaultTokenCounter, type TokenCounter } from './application/token-counter.js';
 
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.1.0';

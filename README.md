@@ -39,10 +39,10 @@ Existing gateways (OpenRouter, LiteLLM, etc.) make tradeoffs that don't fit ever
 - ✅ A2A Protocol (Agent-to-Agent coordination)
 - ✅ Plugin Framework (lifecycle hooks: `onRequest`, `onRouteResolved`, `onProviderStart`, `onProviderChunk`, `onProviderEnd`, `onError`, `onResponse`, `onStartup`, `onShutdown`)
 - ✅ **19 Native Integrations** with auto-setup (Claude Code, Codex CLI, Gemini CLI, Hermes CLI, OpenCode, OpenCode Go, OpenCode Zen, Cursor, Continue, Cline, Roo Code, OpenHands, Aider, Zed, VS Code, JetBrains, Neovim, Emacs)
-- 🚧 Extension Marketplace (planned)
+- ✅ Extension Marketplace (browse, install, update, rollback, signature verification)
 - 🚧 Desktop App (planned — Electron shell)
 
-### Provider Adapters (17 supported)
+### Provider Adapters (17 supported + 20 auto-discoverable)
 | Provider | Status | Streaming | Tools | Vision | Embeddings |
 |----------|--------|-----------|-------|--------|------------|
 | OpenAI | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -86,10 +86,10 @@ Plus:
 
 ### Performance
 - ✅ Streaming (SSE)
-- 🚧 Prompt caching (provider-side, e.g. Anthropic cache_control)
-- 🚧 Semantic cache (vector similarity)
-- 🚧 Compression (gzip/brotli)
-- 🚧 Token optimization (tiktoken-based accounting)
+- ✅ Prompt caching (provider-side, e.g. Anthropic `cache_control`)
+- ✅ Semantic cache (vector similarity via cosine)
+- ✅ Compression (prompt compression: system dedup, stop-words, schema, summarization)
+- ✅ Token optimization (character-based estimation; tiktoken integration planned)
 - ✅ Connection pooling
 - 🚧 Batching (Anthropic batching API)
 - 🚧 Request deduplication
@@ -105,10 +105,15 @@ Plus:
 - ✅ Audit log viewer
 - ✅ Network diagnostics page
 - 🚧 Workflow editor (drag-and-drop)
-- 🚧 Plugin manager UI
+- ✅ Plugin manager UI
 - ✅ Settings
 - 🚧 User management
 - ✅ Dark mode
+- ✅ API Keys management (multi-key per provider, intelligent rotation)
+- ✅ Router Studio (visual routing config, alias management)
+- ✅ Budget tracking
+- ✅ Cost analytics
+- ✅ Request tracing
 
 ### Networking
 - ✅ HTTP / HTTPS / SOCKS5 proxy support (via undici `ProxyAgent`)
@@ -130,27 +135,27 @@ Plus:
 - ✅ Zero Trust architecture
 
 ### AI Features
-- 🚧 Workflow engine
-- 🚧 Multi-agent orchestration (via `@anx/a2a`)
-- 🚧 Memory
+- ✅ Workflow engine (multi-step agent workflows with pause/resume/replay)
+- ✅ Multi-agent orchestration (via `@anx/a2a` — in-process; planner/executor/critic roles planned)
+- ✅ Memory (short-term + long-term with vector search, Qdrant adapter)
 - 🚧 Prompt templates
 - ✅ Tool calling (passthrough)
 - ✅ Function calling (passthrough)
-- ✅ Vision (passthrough)
+- ✅ Vision (full translation for Anthropic + Gemini)
 - 🚧 Audio
 - 🚧 Speech (TTS)
 - ✅ Embeddings
 - 🚧 RAG
 - 🚧 Knowledge graphs
-- 🚧 Agent coordination
+- ✅ Agent coordination (A2A protocol — message routing, teams, proposals)
 
 ### Observability
 - 🚧 OpenTelemetry (interface ready; OpenTelemetry SDK integration planned)
 - ✅ Prometheus metrics endpoint (`/metrics`)
 - 🚧 Grafana dashboards (dashboard JSON in `deploy/grafana/`)
-- 🚧 Distributed tracing
+- ✅ Distributed tracing (in-process request tracer with `/v1/traces`)
 - ✅ Structured logs (JSON to stdout)
-- ✅ Metrics (counters, gauges, histograms)
+- ✅ Metrics (counters, gauges, histograms, unified `/v1/metrics` endpoint)
 - 🚧 Alerts (Alertmanager rules planned)
 - ✅ Health endpoints (`/health`)
 

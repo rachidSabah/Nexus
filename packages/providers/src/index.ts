@@ -1,6 +1,7 @@
 export { OpenAIAdapter, syntheticChunk } from './adapters/openai.js';
 export { AnthropicAdapter } from './adapters/anthropic.js';
 export { GoogleAdapter } from './adapters/google.js';
+export { BedrockAdapter } from './adapters/bedrock.js';
 export {
   OpenRouterAdapter,
   DeepSeekAdapter,
@@ -21,6 +22,7 @@ export {
 import type { ProviderAdapter } from '@anx/core';
 
 import { AnthropicAdapter } from './adapters/anthropic.js';
+import { BedrockAdapter } from './adapters/bedrock.js';
 import { GoogleAdapter } from './adapters/google.js';
 import {
   OpenRouterAdapter,
@@ -63,6 +65,7 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
     new LmStudioAdapter(),
     new LitellmAdapter(),
     new AzureOpenAIAdapter(),
+    new BedrockAdapter(),
   ];
   const map = new Map<string, ProviderAdapter>();
   for (const a of adapters) map.set(a.providerId, a);

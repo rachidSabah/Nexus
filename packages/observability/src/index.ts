@@ -44,20 +44,77 @@ export class StructuredLogger {
  * Default in-process telemetry implementation. Records spans in memory and
  * exposes metrics via a Prometheus-compatible scrape endpoint.
  *
- * For production, swap with `@opentelemetry/sdk-node` backed implementation
- * — the interface is identical.
+ * OpenTelemetry SDK integration: when the OTEL_EXPORTER_OTLP_ENDPOINT env var
+ * is set, spans are also exported via OTLP to the configured collector
+ * (Jaeger, Tempo, Honeycomb, etc.). The in-process implementation continues
+ * to work alongside the OTLP exporter — the OTLP exporter is additive.
+ *
+ * To enable OTLP export:
+ *   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+ *   OTEL_SERVICE_NAME=agent-nexus-gateway
  */
 export class InProcessTelemetry implements TelemetryPort {
   readonly spans = new Map<string, SpanImpl>();
   readonly counters = new Map<string, { value: number; attrs: Record<string, number> }>();
   readonly gauges = new Map<string, { value: number; attrs: Record<string, number> }>();
   readonly histograms = new Map<string, { count: number; sum: number; attrs: Record<string, number> }>();
+  /** OTLP exporter — activated when OTEL_EXPORTER_OTLP_ENDPOINT is set. */
+  private readonly otlpEndpoint: string | undefined;
+  private readonly serviceName: string;
+
+  constructor() {
+    this.otlpEndpoint = process.env['OTEL_EXPORTER_OTLP_ENDPOINT'];
+    this.serviceName = process.env['OTEL_SERVICE_NAME'] ?? 'agent-nexus-gateway';
+    if (this.otlpEndpoint) {
+      // Log that OTLP export is active. We use console directly since the
+      // structured logger might not be initialized yet at construction time.
+      // eslint-disable-next-line no-console
+      console.info(`[telemetry] OTLP export active → ${this.otlpEndpoint} (service: ${this.serviceName})`);
+    }
+  }
 
   startSpan(name: string, attributes: Record<string, unknown> = {}): SpanImpl {
     const spanId = randomUUID();
     const span = new SpanImpl(spanId, name, attributes);
     this.spans.set(spanId, span);
+    // If OTLP is configured, export the span on end.
+    if (this.otlpEndpoint) {
+      span.onEnd = () => this.exportSpanOtlp(span);
+    }
     return span;
+  }
+
+  /** Exports a span via OTLP/HTTP to the configured collector. */
+  private async exportSpanOtlp(span: SpanImpl): Promise<void> {
+    if (!this.otlpEndpoint) return;
+    try {
+      const traceId = randomUUID().replace(/-/g, '');
+      const otlpSpan = {
+        traceId,
+        spanId: span.id.replace(/-/g, '').slice(0, 16),
+        name: span.name,
+        kind: 0, // INTERNAL
+        startTimeUnixNano: `${span.startTime}000000`,
+        endTimeUnixNano: `${Date.now()}000000`,
+        attributes: Object.entries(span.attributes).map(([k, v]) => ({
+          key: k,
+          value: { stringValue: String(v) },
+        })),
+        status: span.error ? { code: 2, message: span.error.message } : { code: 1 },
+      };
+      await fetch(`${this.otlpEndpoint}/v1/traces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resourceSpans: [{
+            resource: { attributes: [{ key: 'service.name', value: { stringValue: this.serviceName } }] },
+            scopeSpans: [{ scope: { name: this.serviceName }, spans: [otlpSpan] }],
+          }],
+        }),
+      });
+    } catch {
+      // OTLP export failure should never break the request — swallow silently.
+    }
   }
 
   meter(_name: string): {
@@ -122,9 +179,11 @@ class SpanImpl {
   endTime?: number;
   readonly attributes: Record<string, unknown> = {};
   error?: Error;
+  /** Called when the span ends — used by OTLP exporter. */
+  onEnd?: () => void;
 
   constructor(
-    readonly spanId: string,
+    readonly id: string,
     readonly name: string,
     attributes: Record<string, unknown>,
   ) {
@@ -141,6 +200,9 @@ class SpanImpl {
 
   end(): void {
     this.endTime = Date.now();
+    if (this.onEnd) {
+      try { this.onEnd(); } catch { /* swallow */ }
+    }
   }
 }
 

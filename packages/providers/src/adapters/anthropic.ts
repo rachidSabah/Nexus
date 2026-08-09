@@ -213,7 +213,13 @@ export class AnthropicAdapter implements ProviderAdapter {
       const systemText = systemMessages
         .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
         .join('\n\n');
-      body['system'] = systemText;
+      // Use Anthropic's prompt caching (cache_control) for the system prompt.
+      // This caches the system prompt for 5 minutes, reducing cost by ~90%
+      // on repeat requests with the same system prompt (common for coding agents
+      // like Claude Code that send the same 2000-token system prompt every request).
+      body['system'] = [
+        { type: 'text', text: systemText, cache_control: { type: 'ephemeral' } },
+      ];
     }
 
     if (req.temperature !== undefined) body['temperature'] = req.temperature;
