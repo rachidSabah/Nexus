@@ -419,6 +419,36 @@ See [docs/ROADMAP.md](docs/ROADMAP.md). Highlights:
 | 17 provider adapters | ✅ | ~10 | 1 |
 | Honest (no limit evasion) | ✅ | ✅ | ❌ |
 
+## Uninstall
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall.ps1 | iex
+```
+
+**Linux / macOS / WSL:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall.sh | bash
+```
+
+Or manually:
+```bash
+# Stop processes
+pkill -f 'node.*gateway/dist/bin'
+pkill -f 'next dev'
+
+# Remove files
+rm -rf ~/.agent-nexus/codingghosts
+rm -f ~/.local/bin/anx
+
+# Windows PowerShell:
+#   Stop-Process -Name node -Force
+#   Remove-Item -Recurse -Force "$env:USERPROFILE\.agent-nexus"
+#   Remove-Item "$env:USERPROFILE\.local\bin\anx.cmd"
+```
+
+Node.js and pnpm are left installed (remove manually if needed).
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

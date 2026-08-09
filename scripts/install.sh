@@ -190,9 +190,9 @@ info "Starting dashboard on localhost:3000..."
 setsid bash -c "cd $REPO_DIR && exec pnpm --filter @anx/dashboard dev" > "$INSTALL_DIR/dashboard.log" 2>&1 < /dev/null &
 disown
 
-info "Waiting for dashboard to start..."
+info "Waiting for dashboard to start (may take 30-60s for first compile)..."
 DASH_OK=false
-for i in $(seq 1 20); do
+for i in $(seq 1 30); do
   CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 2>/dev/null || echo "000")
   if [ "$CODE" = "200" ] || [ "$CODE" = "307" ]; then
     DASH_OK=true
@@ -204,8 +204,9 @@ done
 if [ "$DASH_OK" = "true" ]; then
   ok "Dashboard is running at http://localhost:3000"
 else
-  warn "Dashboard didn't respond within 40s. Check: $INSTALL_DIR/dashboard.log"
-  echo "    You can start it manually: cd $REPO_DIR && pnpm --filter @anx/dashboard dev"
+  warn "Dashboard didn't respond within 60s. It may still be compiling."
+  echo "    Check: $INSTALL_DIR/dashboard.log"
+  echo "    Or start manually: cd $REPO_DIR && pnpm --filter @anx/dashboard dev"
 fi
 
 # ── 10. Detect coding agents ──────────────────────────────────────────────
