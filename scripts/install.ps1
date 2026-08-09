@@ -1,75 +1,180 @@
-# Agent Nexus Gateway — installer (Windows)
-# Usage (PowerShell as admin):
-#   iwr -useb https://agent-nexus-gateway.dev/install.ps1 | iex
+# Agent Nexus Gateway — one-command installer for Windows PowerShell
+#
+# Usage:
+#   irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.ps1 | iex
+#
+# Or from a local clone:
+#   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+#
+# Master prompt #26: "Create installation commands for Windows PowerShell:
+#   irm <official-install-url> | iex"
+#
+# The installer:
+#   1. Detects OS + architecture
+#   2. Checks for Node.js 22+ and pnpm
+#   3. Installs pnpm if missing (via corepack)
+#   4. Clones the repo (or uses existing clone)
+#   5. Installs dependencies + builds
+#   6. Registers the CLI globally (anx)
+#   7. Starts the gateway as a background service
+#   8. Verifies health
+#   9. Detects coding agents
+#   10. Displays dashboard URL
 
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = "Stop"
 
-$Version = if ($env:ANX_VERSION) { $env:ANX_VERSION } else { '0.1.0' }
-$InstallDir = if ($env:ANX_INSTALL_DIR) { $env:ANX_INSTALL_DIR } else { "$env:LOCALAPPDATA\Programs\agent-nexus-gateway" }
+function Write-Info { Write-Host "ℹ $args" -ForegroundColor Blue }
+function Write-Ok { Write-Host "✓ $args" -ForegroundColor Green }
+function Write-Warn { Write-Host "⚠ $args" -ForegroundColor Yellow }
+function Write-Fail { Write-Host "✗ $args" -ForegroundColor Red; exit 1 }
 
-Write-Host "Installing Agent Nexus Gateway v$Version..." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "═══════════════════════════════════════════════════════════"
+Write-Host "  Agent Nexus Gateway — Installer (Windows PowerShell)"
+Write-Host "═══════════════════════════════════════════════════════════"
+Write-Host ""
 
-# Check Node.js
-$nodeVersion = & node -v 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Node.js is required (v22+). Install from https://nodejs.org/" -ForegroundColor Red
-    exit 1
-}
-$major = [int]($nodeVersion -replace '^v(\d+)\..*', '$1')
-if ($major -lt 22) {
-    Write-Host "Node.js 22+ is required (found $nodeVersion)." -ForegroundColor Red
-    exit 1
-}
+# ── 1. Detect OS + architecture ─────────────────────────────────────────
+$os = "Windows"
+$arch = $env:PROCESSOR_ARCHITECTURE
+Write-Info "OS: $os $arch"
 
-# Check pnpm
-$pnpmVersion = & pnpm -v 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "pnpm not found. Enabling via corepack..."
-    & corepack enable
-    & corepack prepare pnpm@9.12.0 --activate
-}
-
-# Create install dir
-if (-not (Test-Path $InstallDir)) {
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-}
-
-# Download
-$Url = "https://github.com/rachidSabah/codingghosts/releases/download/v$Version/agent-nexus-gateway-$Version-windows.tar.gz"
-$TempFile = "$env:TEMP\anx.tar.gz"
-
+# ── 2. Check for Node.js 22+ ──────────────────────────────────────────────
+$nodeVersion = $null
 try {
-    Write-Host "Downloading $Url..."
-    Invoke-WebRequest -Uri $Url -OutFile $TempFile -UseBasicParsing
-} catch {
-    Write-Host "Download failed. Building from source instead..." -ForegroundColor Yellow
-    git clone --depth 1 --branch "v$Version" https://github.com/rachidSabah/codingghosts.git "$env:TEMP\anx"
-    Push-Location "$env:TEMP\anx"
-    & pnpm install
-    & pnpm build
-    & pnpm --filter @anx/cli link --global
-    Pop-Location
-    Write-Host "Installed via build-from-source." -ForegroundColor Green
-    exit 0
+    $nodeVersion = (node --version 2>$null) -replace 'v', '' -split '.' | Select-Object -First 1
+} catch {}
+
+if (-not $nodeVersion) {
+    Write-Fail "Node.js is not installed. Install Node.js 22+ from https://nodejs.org/ first."
 }
 
-# Extract (requires tar on Windows 10+)
-tar -xzf $TempFile -C $InstallDir
+if ([int]$nodeVersion -lt 22) {
+    Write-Fail "Node.js v$nodeVersion is too old. Install Node.js 22+ from https://nodejs.org/"
+}
+Write-Ok "Node.js $(node --version) detected"
 
-# Add to PATH
-$userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-if ($userPath -notlike "*$InstallDir*") {
-    [Environment]::SetEnvironmentVariable('PATH', "$userPath;$InstallDir", 'User')
-    Write-Host "Added $InstallDir to user PATH. Restart your terminal for changes to take effect."
+# ── 3. Install pnpm if missing ───────────────────────────────────────────
+$pnpmInstalled = $false
+try { pnpm --version | Out-Null; $pnpmInstalled = $true } catch {}
+
+if (-not $pnpmInstalled) {
+    Write-Info "Installing pnpm via corepack..."
+    corepack enable 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        npm install -g pnpm
+    }
+}
+Write-Ok "pnpm $(pnpm --version) detected"
+
+# ── 4. Clone or use existing repo ─────────────────────────────────────────
+$installDir = if ($env:ANX_HOME) { $env:ANX_HOME } else { "$env:USERPROFILE\.agent-nexus" }
+$repoDir = "$installDir\codingghosts"
+
+if (Test-Path "$repoDir\.git") {
+    Write-Info "Existing repo found at $repoDir — pulling latest..."
+    Set-Location $repoDir
+    git pull --ff-only 2>$null
+    if ($LASTEXITCODE -ne 0) { Write-Warn "Could not pull latest (offline?)" }
+} else {
+    Write-Info "Cloning repo to $repoDir..."
+    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+    git clone --depth 1 https://github.com/rachidSabah/codingghosts.git $repoDir
+    Set-Location $repoDir
 }
 
-# Verify
+# ── 5. Install dependencies + build ──────────────────────────────────────
+Write-Info "Installing dependencies..."
+pnpm install --no-frozen-lockfile 2>&1 | Select-Object -Last 3
+
+Write-Info "Building all packages..."
+pnpm build 2>&1 | Select-Object -Last 3
+Write-Ok "Build complete"
+
+# ── 6. Register CLI globally ─────────────────────────────────────────────
+Write-Info "Registering CLI..."
+$binDir = "$env:USERPROFILE\.local\bin"
+New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+
+# Create a wrapper script instead of a symlink (Windows doesn't do symlinks easily)
+$wrapperContent = @"
+@echo off
+node "$repoDir\packages\cli\dist\bin.js" %*
+"@
+Set-Content -Path "$binDir\anx.cmd" -Value $wrapperContent -Force
+
+# Add to PATH if not already there
+$pathEntries = $env:Path -split ';'
+if ($binDir -notin $pathEntries) {
+    Write-Warn "Add $binDir to your PATH to use 'anx' globally."
+    Write-Host "  Run this in PowerShell as admin:"
+    Write-Host "    [Environment]::SetEnvironmentVariable('Path', '$binDir;' + `$env:Path, 'User')"
+}
+Write-Ok "CLI registered at $binDir\anx.cmd"
+
+# ── 7. Start gateway as background service ────────────────────────────────
+Write-Info "Starting gateway on 127.0.0.1:8787..."
+
+# Kill any existing instance
+Get-Process -Name "node" -ErrorAction SilentlyContinue | Where-Object {
+    $_.CommandLine -like "*gateway*dist*bin*"
+} | Stop-Process -Force -ErrorAction SilentlyContinue
+
+Start-Sleep -Seconds 1
+
+# Start as a background job
+Start-Process -FilePath "node" -ArgumentList "$repoDir\apps\gateway\dist\bin.js" -WorkingDirectory $repoDir -WindowStyle Hidden -RedirectStandardOutput "$installDir\gateway.log" -RedirectStandardError "$installDir\gateway-error.log"
+
+# ── 8. Verify health ──────────────────────────────────────────────────────
+Write-Info "Waiting for gateway to start..."
+$healthOk = $false
+for ($i = 1; $i -le 15; $i++) {
+    try {
+        $response = Invoke-RestMethod -Uri "http://127.0.0.1:8787/health" -TimeoutSec 2 -ErrorAction Stop
+        $healthOk = $true
+        break
+    } catch {
+        Start-Sleep -Seconds 1
+    }
+}
+
+if ($healthOk) {
+    Write-Ok "Gateway is healthy: $($response.status) · $($response.endpoints.healthy)/$($response.endpoints.total) endpoints"
+} else {
+    Write-Warn "Gateway didn't respond within 15s. Check $installDir\gateway.log"
+}
+
+# ── 9. Detect coding agents ───────────────────────────────────────────────
+if ($healthOk) {
+    Write-Info "Detecting coding agents..."
+    try {
+        $detect = Invoke-RestMethod -Uri "http://127.0.0.1:8787/v1/agents/detect" -TimeoutSec 10
+        Write-Ok "Coding agents detected: $($detect.foundCount)/$($detect.totalCount)"
+    } catch {
+        Write-Warn "Could not detect agents."
+    }
+}
+
+# ── 10. Display dashboard URL + next steps ──────────────────────────────
 Write-Host ""
-Write-Host "Installed: $InstallDir\anx.exe" -ForegroundColor Green
+Write-Host "═══════════════════════════════════════════════════════════"
+Write-Host "  Installation Complete!"
+Write-Host "═══════════════════════════════════════════════════════════"
 Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Cyan
-Write-Host "  1. Set your provider API key:  `$env:OPENAI_API_KEY = 'sk-...'"
-Write-Host "  2. Start the gateway:          anx-gateway"
-Write-Host "  3. Test it:                    anx health"
+Write-Host "  Gateway:  http://127.0.0.1:8787"
+Write-Host "  Health:   curl http://127.0.0.1:8787/health"
+Write-Host "  CLI:      anx doctor    (run diagnostics)"
+Write-Host "            anx health    (check gateway)"
+Write-Host "            anx models    (list models)"
+Write-Host "            anx models --free  (list free models)"
 Write-Host ""
-Write-Host "Documentation: https://github.com/rachidSabah/codingghosts/blob/main/docs/README.md"
+Write-Host "  To start the dashboard:"
+Write-Host "    cd $repoDir; pnpm --filter @anx/dashboard dev"
+Write-Host "    Then open http://localhost:3000"
+Write-Host ""
+Write-Host "  To stop the gateway:"
+Write-Host "    Get-Process node | Where-Object { `$_.CommandLine -like '*gateway*' } | Stop-Process"
+Write-Host ""
+Write-Host "  Logs: $installDir\gateway.log"
+Write-Host "  Repo: $repoDir"
+Write-Host ""

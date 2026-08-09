@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, Boxes, Brain, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Store, Terminal, Users, Workflow } from 'lucide-react';
+import { Activity, Boxes, Brain, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Settings2, Store, Terminal, Users, Workflow } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -14,6 +14,7 @@ const NAV = [
   { href: '/requests', label: 'Requests', icon: Activity },
   { href: '/integrations', label: 'Integrations', icon: Plug },
   { href: '/marketplace', label: 'Marketplace', icon: Store },
+  { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/logs', label: 'Logs', icon: ScrollText },
   { href: '/plugins', label: 'Plugins', icon: Layers },
   { href: '/network', label: 'Network', icon: Network },
