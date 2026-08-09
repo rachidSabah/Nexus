@@ -60,7 +60,7 @@ export interface PluginLoader {
 
 export interface PluginSpec {
   readonly id: string;
-  readonly source: 'inline' | 'module' | 'npm';
+  readonly source: 'inline' | 'module';
   readonly path?: string;
   readonly config?: Record<string, unknown>;
 }
@@ -199,12 +199,6 @@ export class InlinePluginLoader implements PluginLoader {
         throw new PluginError(spec.id, `module ${spec.path} did not export a factory`);
       }
       return factory(spec.config);
-    }
-    if (spec.source === 'npm') {
-      throw new PluginError(
-        spec.id,
-        'npm plugin loading not yet implemented — install the package and use "module" source',
-      );
     }
     throw new PluginError(spec.id, `unknown source: ${spec.source}`);
   }

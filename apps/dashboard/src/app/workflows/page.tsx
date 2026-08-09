@@ -1,6 +1,6 @@
 'use client';
 
-import { Workflow, Play, Pause, Square, RotateCcw, Plus } from 'lucide-react';
+import { Workflow, Play, Pause, Square, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import useSWR from 'swr';
 
@@ -126,12 +126,6 @@ export default function WorkflowsPage() {
                 <h2 className="text-sm font-medium text-white/80">
                   {workflows?.find((w) => w.id === selectedId)?.name} — visual builder
                 </h2>
-                <button
-                  className="rounded-lg bg-white/5 px-3 py-1 text-xs font-medium text-white/60 transition hover:bg-white/10"
-                  title="Step editor is read-only for now — define steps via the API"
-                >
-                  <Plus className="h-3 w-3" /> Step
-                </button>
               </div>
               {/* Visual step flow */}
               <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">

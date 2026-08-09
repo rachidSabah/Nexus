@@ -25,7 +25,7 @@ import {
 } from '@anx/core';
 import { McpClient } from '@anx/mcp-client';
 import { McpServer } from '@anx/mcp-server';
-import { DefaultMemory, InMemoryVectorStore, FakeEmbeddingsProvider } from '@anx/memory';
+import { DefaultMemory, InMemoryVectorStore, GatewayEmbeddingsProvider } from '@anx/memory';
 import { DefaultNetworkService, preferIpv4 } from '@anx/networking';
 import { InProcessTelemetry, StructuredLogger, wireEventsToTelemetry } from '@anx/observability';
 import { PluginRuntime } from '@anx/plugins';
@@ -40,6 +40,7 @@ import { ConfigLoader, type GatewayConfig } from './config.js';
 import { AgentDetector } from './agent-detector.js';
 import { registerDefaultEndpoints } from './endpoints.js';
 import { ModelAliasRegistry } from './model-aliases.js';
+import { GATEWAY_VERSION } from './version.js';
 import { HttpServer } from './server.js';
 
 /**
@@ -176,17 +177,38 @@ export class GatewayRuntime {
     const adapters = createDefaultAdapters();
     await registerDefaultEndpoints(routing, config, vault);
 
-    // In-memory cache for prompt + semantic cache hits. The embed function
-    // uses the gateway's own /v1/embeddings endpoint via GatewayEmbeddingsProvider
-    // when a real embeddings provider is available; for now we use the
-    // FakeEmbeddingsProvider (deterministic 8-dim hash) so the semantic cache
-    // works out of the box for development.
+    // In-memory cache for prompt + semantic cache hits.
+    // Uses GatewayEmbeddingsProvider which calls the gateway's own
+    // /v1/embeddings endpoint. If no embeddings-capable endpoint is
+    // registered, semantic cache is disabled (exact-match only) and
+    // a warning is logged. No fake/mock embeddings in production.
     const cache = new InMemoryCache({
       semanticThreshold: 0.92,
       maxEntries: 10_000,
     });
-    const memoryEmbedder = new FakeEmbeddingsProvider();
-    const embedFn = (text: string) => memoryEmbedder.embed(text);
+
+    // Build the embed function. GatewayEmbeddingsProvider calls the
+    // gateway's own /v1/embeddings endpoint. If no embeddings-capable
+    // endpoint exists, embedFn is undefined and the semantic cache +
+    // memory search degrade gracefully (exact-match only).
+    const gatewayUrl = `http://127.0.0.1:${config.server.port}`;
+    const hasEmbeddingsEndpoint = routing.listEndpoints().some(
+      (e) => e.capabilities.embeddings,
+    );
+    let embedFn: ((text: string) => Promise<readonly number[]>) | undefined;
+    if (hasEmbeddingsEndpoint) {
+      const embedder = new GatewayEmbeddingsProvider(
+        gatewayUrl,
+        config.security.principals?.find((p) => p.apiKey)?.apiKey,
+      );
+      embedFn = (text: string) => embedder.embed(text);
+    } else {
+      logger.warn(
+        'No embeddings-capable endpoint registered — semantic cache and ' +
+          'long-term memory search are disabled (exact-match cache only). ' +
+          'Configure a provider with embeddings support (e.g. OpenAI) to enable.',
+      );
+    }
 
     // Multi-API-key registry — allows N keys per provider with intelligent
     // rotation (round-robin / least-used / lru / latency / health / adaptive).
@@ -271,9 +293,18 @@ export class GatewayRuntime {
       await workflows.create(template as never);
     }
 
+    // Long-term memory — uses the real GatewayEmbeddingsProvider for semantic
+    // search if an embeddings endpoint is available. Otherwise stores records
+    // without embeddings (exact-match search only).
+    const memoryEmbedder = hasEmbeddingsEndpoint
+      ? new GatewayEmbeddingsProvider(
+          gatewayUrl,
+          config.security.principals?.find((p) => p.apiKey)?.apiKey,
+        )
+      : undefined;
     const memory = new DefaultMemory(
       new InMemoryVectorStore(),
-      new FakeEmbeddingsProvider(), // production: GatewayEmbeddingsProvider
+      memoryEmbedder ?? null,
       events,
     );
 
@@ -286,7 +317,7 @@ export class GatewayRuntime {
     const a2a = new A2ACoordinator(a2aRegistry);
     const teams = new TeamManager(events);
 
-    const marketplace = new ExtensionMarketplace(config.server.versionLabel ?? '0.4.0', {
+    const marketplace = new ExtensionMarketplace(config.server.versionLabel ?? GATEWAY_VERSION, {
       signatureVerification: config.security.vaultKey !== undefined,
     });
 
@@ -298,7 +329,7 @@ export class GatewayRuntime {
 
     const mcpServer = new McpServer({
       name: 'agent-nexus-gateway',
-      version: '0.4.0',
+      version: GATEWAY_VERSION,
       tools: [
         {
           name: 'list_providers',

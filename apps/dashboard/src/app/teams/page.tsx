@@ -1,6 +1,6 @@
 'use client';
 
-import { Users, FileText, Vote } from 'lucide-react';
+import { Users, Vote } from 'lucide-react';
 import useSWR from 'swr';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -104,15 +104,6 @@ export default function TeamsPage() {
               ))}
             </div>
           )}
-        </div>
-      </div>
-
-      <div className="card">
-        <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-white/80">
-          <FileText className="h-4 w-4" /> Shared Workspace Artifacts
-        </h2>
-        <div className="py-4 text-center text-sm text-white/40">
-          Select a team to view its shared artifacts (decisions, reviews, code, notes).
         </div>
       </div>
     </div>

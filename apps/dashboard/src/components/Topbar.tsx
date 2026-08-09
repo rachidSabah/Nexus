@@ -104,8 +104,8 @@ export function Topbar() {
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-full bg-gradient-to-br from-nexus-500 to-fuchsia-500" />
           <div className="text-xs">
-            <div className="font-medium">admin</div>
-            <div className="text-white/40">admin role</div>
+            <div className="font-medium">Gateway</div>
+            <div className="text-white/40">Local</div>
           </div>
         </div>
       </div>

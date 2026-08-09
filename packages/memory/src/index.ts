@@ -20,8 +20,6 @@ import {
  * Vector store adapters:
  *   - InMemoryVectorStore (default, no external deps)
  *   - QdrantVectorStore    (HTTP adapter — QDRANT_URL)
- *   - ChromaVectorStore    (HTTP adapter — CHROMA_URL)
- *   - PgVectorStore        (PostgreSQL + pgvector — DATABASE_URL)
  *
  * All adapters implement the VectorStorePort interface.
  *
@@ -184,7 +182,7 @@ export class DefaultMemory implements Memory {
 
   constructor(
     private readonly longTermStore: VectorStorePort,
-    private readonly embeddings: EmbeddingsProvider,
+    private readonly embeddings: EmbeddingsProvider | null,
     private readonly events: EventBusPort,
     opts: { tokenCounter?: TokenCounter } = {},
   ) {
@@ -210,8 +208,10 @@ export class DefaultMemory implements Memory {
     if (opts.scope === 'short') {
       this.shortTerm.set(id, record);
     } else {
-      // Compute embedding if not provided
-      if (!record.embedding) {
+      // Compute embedding if not provided AND an embeddings provider is configured.
+      // If no embeddings provider is available, store without embedding
+      // (exact-match search only — no semantic recall).
+      if (!record.embedding && this.embeddings) {
         const embedding = await this.embeddings.embed(data);
         Object.assign(record, { embedding });
       }
@@ -261,6 +261,11 @@ export class DefaultMemory implements Memory {
 
     // Long-term: vector search
     if (opts.scope === 'long' || opts.scope === undefined) {
+      if (!this.embeddings) {
+        // No embeddings provider configured — return empty results for
+        // long-term search (short-term substring search above already ran).
+        return [];
+      }
       const embedding = typeof query === 'string' ? await this.embeddings.embed(query) : query;
       const results = await this.longTermStore.search(embedding, {
         namespace: opts.namespace,
@@ -444,12 +449,20 @@ export class QdrantVectorStore implements VectorStorePort {
 
   async delete(id: string): Promise<boolean> {
     // Qdrant requires the collection name to delete from. We don't know it
-    // from the id alone — search all collections. For small deployments
-    // this is fine; for large ones, callers should pass the namespace.
-    // For now, return false (not found) since we can't resolve the collection.
-    // A future API can take (namespace, id) to delete efficiently.
-    void id;
-    return false;
+    // from the id alone — walk all collections (same approach as get()).
+    const collections = await this.listCollections();
+    let deleted = false;
+    for (const c of collections) {
+      // Only try anx_* collections (skip any non-gateway collections).
+      if (!c.startsWith('anx_')) continue;
+      const r = await fetch(`${this.baseUrl}/collections/${c}/points/delete?wait=true`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify({ points: [id] }),
+      });
+      if (r.ok) deleted = true;
+    }
+    return deleted;
   }
 
   async deleteByNamespace(namespace: string, id: string): Promise<boolean> {
@@ -561,42 +574,6 @@ export class QdrantVectorStore implements VectorStorePort {
       tokenCount: (payload['tokenCount'] as number) ?? 0,
     };
   }
-}
-
-/**
- * Chroma adapter — talks to a Chroma server's REST API.
- *
- * Stub: Chroma's REST API surface is still in flux; this implementation
- * throws on construction with a clear message pointing operators to the
- * InMemoryVectorStore or QdrantVectorStore until a stable adapter lands.
- */
-export class ChromaVectorStore implements VectorStorePort {
-  constructor(_url: string) {
-    throw new Error(
-      'ChromaVectorStore not yet implemented. Use InMemoryVectorStore for development ' +
-        'or QdrantVectorStore for production vector storage. Chroma adapter is planned for v0.5.',
-    );
-  }
-  async upsert(): Promise<void> { throw new Error('not implemented'); }
-  async search(): Promise<readonly MemorySearchResult[]> { throw new Error('not implemented'); }
-  async delete(): Promise<boolean> { throw new Error('not implemented'); }
-  async get(): Promise<MemoryRecord | undefined> { throw new Error('not implemented'); }
-  async list(): Promise<readonly MemoryRecord[]> { throw new Error('not implemented'); }
-}
-
-/**
- * pgvector adapter — stub. Planned for v0.5 alongside the Postgres
- * persistence adapters.
- */
-export class PgVectorStore implements VectorStorePort {
-  constructor(_connectionString: string) {
-    throw new Error('PgVectorStore not yet implemented (planned v0.5). Use QdrantVectorStore or InMemoryVectorStore.');
-  }
-  async upsert(): Promise<void> { throw new Error('not implemented'); }
-  async search(): Promise<readonly MemorySearchResult[]> { throw new Error('not implemented'); }
-  async delete(): Promise<boolean> { throw new Error('not implemented'); }
-  async get(): Promise<MemoryRecord | undefined> { throw new Error('not implemented'); }
-  async list(): Promise<readonly MemoryRecord[]> { throw new Error('not implemented'); }
 }
 
 /**

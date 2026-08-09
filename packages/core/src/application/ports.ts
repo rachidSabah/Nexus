@@ -268,7 +268,7 @@ export interface PluginRuntimePort {
  */
 export interface PluginSpec {
   readonly id: string;
-  readonly source: 'inline' | 'module' | 'npm';
+  readonly source: 'inline' | 'module';
   readonly path?: string;
   readonly config?: Record<string, unknown>;
 }

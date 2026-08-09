@@ -46,6 +46,7 @@ import {
   type AnthropicRequest,
 } from './anthropic-compat.js';
 import { ModelAliasRegistry, type AliasRankingStrategy } from './model-aliases.js';
+import { GATEWAY_VERSION } from './version.js';
 import type { GatewayConfig } from './config.js';
 
 /**
@@ -119,7 +120,7 @@ export class HttpServer {
       const healthy = endpoints.filter((e) => e.health === 'healthy').length;
       return {
         status: healthy > 0 ? 'ok' : 'degraded',
-        version: '0.1.0',
+        version: GATEWAY_VERSION,
         endpoints: { total: endpoints.length, healthy, degraded: endpoints.filter((e) => e.health === 'degraded').length, open: endpoints.filter((e) => e.health === 'circuit_open').length },
         uptime: process.uptime(),
       };
@@ -1455,7 +1456,7 @@ export class HttpServer {
     // ── Root: gateway info ─────────────────────────────────────────────
     this.fastify.get('/', async () => ({
       name: 'Agent Nexus Gateway',
-      version: '0.1.0',
+      version: GATEWAY_VERSION,
       description: 'The most advanced local AI Gateway',
       docs: '/docs',
       health: '/health',

@@ -48,7 +48,7 @@ export function Sidebar() {
         })}
       </nav>
       <div className="border-t border-white/5 px-5 py-3 text-xs text-white/30">
-        v0.1.0 · Apache-2.0
+        Apache-2.0
       </div>
     </aside>
   );

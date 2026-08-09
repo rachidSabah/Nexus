@@ -23,7 +23,6 @@ import { randomUUID } from 'node:crypto';
 import type {
   EndpointRepository,
   AuditLogPort,
-  CredentialVaultPort,
 } from '@anx/core';
 import type { ProviderEndpoint } from '@anx/core';
 
@@ -266,65 +265,13 @@ export class SqliteAuditLogRepository implements AuditLogPort {
   }
 }
 
-// ─── PostgreSQL stub ────────────────────────────────────────────────────────
-//
-// Full implementation would use `pg` Pool. Stubbed here to avoid hard dep.
-
-export class PostgresEndpointRepository implements EndpointRepository {
-  constructor(_connectionString: string) {
-    throw new Error(
-      'PostgresEndpointRepository not yet implemented. Install `pg` and use the adapter from @anx/persistence/adapters/postgres (coming in v0.5).',
-    );
-  }
-  async list(): Promise<readonly ProviderEndpoint[]> { return []; }
-  async get(): Promise<ProviderEndpoint | undefined> { return undefined; }
-  async save(): Promise<void> {}
-  async delete(): Promise<void> {}
-}
-
-export class PostgresAuditLogRepository implements AuditLogPort {
-  constructor(_connectionString: string) {
-    throw new Error('PostgresAuditLogRepository not yet implemented (planned v0.5).');
-  }
-  async append(): Promise<void> {}
-  async query(): Promise<readonly AuditEntry[]> { return []; }
-}
-
-// ─── Redis stub ─────────────────────────────────────────────────────────────
-
-export class RedisEndpointRepository implements EndpointRepository {
-  constructor(_redisUrl: string) {
-    throw new Error(
-      'RedisEndpointRepository not yet implemented. Install `ioredis` and use the adapter from @anx/persistence/adapters/redis (coming in v0.5).',
-    );
-  }
-  async list(): Promise<readonly ProviderEndpoint[]> { return []; }
-  async get(): Promise<ProviderEndpoint | undefined> { return undefined; }
-  async save(): Promise<void> {}
-  async delete(): Promise<void> {}
-}
-
-// ─── Vault stub (Redis-backed) ──────────────────────────────────────────────
-
-export class RedisCredentialVault implements CredentialVaultPort {
-  constructor(_redisUrl: string) {
-    throw new Error('RedisCredentialVault not yet implemented (planned v0.5).');
-  }
-  async get(): Promise<string | undefined> { return undefined; }
-  async set(): Promise<void> {}
-  async delete(): Promise<void> {}
-  async list(): Promise<readonly string[]> { return []; }
-}
-
 // ─── Factory ────────────────────────────────────────────────────────────────
 
-export type PersistenceBackend = 'memory' | 'sqlite' | 'postgres' | 'redis';
+export type PersistenceBackend = 'memory' | 'sqlite';
 
 export interface PersistenceConfig {
   readonly backend: PersistenceBackend;
   readonly sqlitePath?: string;
-  readonly postgresUrl?: string;
-  readonly redisUrl?: string;
 }
 
 export interface PersistenceLayer {
@@ -334,6 +281,9 @@ export interface PersistenceLayer {
 
 /**
  * Build a persistence layer from config.
+ * Supported backends: 'memory' (in-process, lost on restart) and
+ * 'sqlite' (persistent file-based, survives restarts).
+ * Postgres and Redis backends are planned for a future release.
  */
 export function createPersistence(config: PersistenceConfig): PersistenceLayer {
   switch (config.backend) {
@@ -350,18 +300,6 @@ export function createPersistence(config: PersistenceConfig): PersistenceLayer {
         auditLog: new SqliteAuditLogRepository(opts),
       };
     }
-    case 'postgres':
-      if (!config.postgresUrl) throw new Error('postgresUrl required for postgres backend');
-      return {
-        endpoints: new PostgresEndpointRepository(config.postgresUrl),
-        auditLog: new PostgresAuditLogRepository(config.postgresUrl),
-      };
-    case 'redis':
-      if (!config.redisUrl) throw new Error('redisUrl required for redis backend');
-      return {
-        endpoints: new RedisEndpointRepository(config.redisUrl),
-        auditLog: new InMemoryAuditLogRepository(), // audit log stays in-memory until Redis adapter is done
-      };
     default:
       throw new Error(`Unknown backend: ${config.backend as string}`);
   }

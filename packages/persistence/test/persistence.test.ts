@@ -97,14 +97,6 @@ describe('createPersistence', () => {
     expect(() => createPersistence({ backend: 'sqlite' } as PersistenceConfig)).toThrow('sqlitePath required');
   });
 
-  it('throws for postgres without url', () => {
-    expect(() => createPersistence({ backend: 'postgres' } as PersistenceConfig)).toThrow('postgresUrl required');
-  });
-
-  it('throws for redis without url', () => {
-    expect(() => createPersistence({ backend: 'redis' } as PersistenceConfig)).toThrow('redisUrl required');
-  });
-
   it('throws for unknown backend', () => {
     expect(() => createPersistence({ backend: 'unknown' as never } as PersistenceConfig)).toThrow('Unknown backend');
   });

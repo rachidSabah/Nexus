@@ -191,25 +191,34 @@ export class ChatCompletionUseCase {
       }
 
       // Semantic cache lookup — only if an embed function is configured.
+      // Wrapped in try-catch so that if the embeddings endpoint is unavailable,
+      // we gracefully skip the semantic cache (fall through to cache miss)
+      // rather than failing the entire request.
       if (this.embed && this.cache!.semantic) {
-        const embedding = await this.embed(this.requestToText(effectiveRequest));
-        const semanticHit = await this.cache!.semantic(embedding, this.semanticThreshold);
-        if (semanticHit) {
-          await this.events.publish(
-            buildEvent<CacheHitEvent>(
-              'cache.hit',
-              { requestId, cacheKey: semanticHit.key, cacheType: 'semantic' },
-              correlationId,
-            ),
-          );
-          if (this.plugins) {
-            await this.plugins.invokeHook('onResponse', semanticHit.value);
+        try {
+          const embedding = await this.embed(this.requestToText(effectiveRequest));
+          const semanticHit = await this.cache!.semantic(embedding, this.semanticThreshold);
+          if (semanticHit) {
+            await this.events.publish(
+              buildEvent<CacheHitEvent>(
+                'cache.hit',
+                { requestId, cacheKey: semanticHit.key, cacheType: 'semantic' },
+                correlationId,
+              ),
+            );
+            if (this.plugins) {
+              await this.plugins.invokeHook('onResponse', semanticHit.value);
+            }
+            if (this.tracer) {
+              this.tracer.recordCacheHit(requestId, true);
+              this.tracer.recordSuccess(requestId, { input: 0, output: 0, total: 0 }, 0);
+            }
+            return semanticHit.value as ChatCompletionResponse;
           }
-          if (this.tracer) {
-            this.tracer.recordCacheHit(requestId, true);
-            this.tracer.recordSuccess(requestId, { input: 0, output: 0, total: 0 }, 0);
-          }
-          return semanticHit.value as ChatCompletionResponse;
+        } catch {
+          // Embeddings endpoint unavailable — skip semantic cache, fall
+          // through to cache miss. This is expected when no embeddings-
+          // capable provider is configured or the gateway is still starting.
         }
       }
 
