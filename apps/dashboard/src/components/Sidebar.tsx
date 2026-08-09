@@ -6,15 +6,16 @@ import { usePathname } from 'next/navigation';
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Gauge },
+  { href: '/providers', label: 'Providers', icon: Boxes },
+  { href: '/keys', label: 'API Keys', icon: KeyRound },
+  { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/agents', label: 'Agents', icon: Boxes },
   { href: '/workflows', label: 'Workflows', icon: Workflow },
   { href: '/teams', label: 'Teams', icon: Users },
   { href: '/memory', label: 'Memory', icon: Brain },
-  { href: '/providers', label: 'Providers', icon: Boxes },
   { href: '/requests', label: 'Requests', icon: Activity },
   { href: '/integrations', label: 'Integrations', icon: Plug },
   { href: '/marketplace', label: 'Marketplace', icon: Store },
-  { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/logs', label: 'Logs', icon: ScrollText },
   { href: '/plugins', label: 'Plugins', icon: Layers },
   { href: '/network', label: 'Network', icon: Network },

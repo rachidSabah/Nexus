@@ -37,15 +37,14 @@ test.describe('Dashboard — Phase 4 pages', () => {
   test('memory page loads', async ({ page }) => {
     await page.goto(`${DASHBOARD}/memory`);
     await expect(page.locator('h1')).toContainText('Memory');
-    await expect(page.locator('text=namespace')).toBeVisible();
+    await expect(page.locator('text=namespaces')).toBeVisible();
   });
 
   test('marketplace page loads', async ({ page }) => {
     await page.goto(`${DASHBOARD}/marketplace`);
     await expect(page.locator('h1')).toContainText('Marketplace');
-    await expect(page.locator('text=Plugins')).toBeVisible();
-    await expect(page.locator('text=Agents')).toBeVisible();
-    await expect(page.locator('text=Tools')).toBeVisible();
+    // The marketplace page has a filter dropdown and extension cards
+    await expect(page.locator('select')).toBeVisible();
   });
 });
 

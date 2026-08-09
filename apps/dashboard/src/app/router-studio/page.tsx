@@ -1,6 +1,7 @@
 'use client';
 
-import { Settings2, Play, Zap, DollarSign, Eye, Brain, Gauge, Shuffle, ArrowRight } from 'lucide-react';
+import { Settings2, Play, Zap, DollarSign, Eye, Brain, Gauge, Shuffle, ArrowRight, KeyRound, Link2 } from 'lucide-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import useSWR from 'swr';
 
@@ -19,6 +20,20 @@ interface Alias {
   builtin: boolean;
 }
 
+interface ApiKey {
+  id: string;
+  providerId: string;
+  status: 'active' | 'cooldown' | 'exhausted' | 'invalid';
+}
+
+interface Provider {
+  id: string;
+  providerId: string;
+  displayName: string;
+  health: string;
+  capabilities: Record<string, boolean>;
+}
+
 interface AliasResolution {
   modelId: string;
   providerId: string;
@@ -28,6 +43,8 @@ interface AliasResolution {
 
 export default function RouterStudioPage() {
   const { data: aliases } = useSWR<{ aliases: Alias[] }>('/api/v1/aliases', fetcher, { refreshInterval: 10000 });
+  const { data: keys } = useSWR<ApiKey[]>('/api/v1/keys', fetcher, { refreshInterval: 5000 });
+  const { data: providers } = useSWR<Provider[]>('/api/v1/providers', fetcher, { refreshInterval: 10000 });
   const [resolveResult, setResolveResult] = useState<AliasResolution | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [newAlias, setNewAlias] = useState({
@@ -39,6 +56,16 @@ export default function RouterStudioPage() {
     ranking: 'cheapest' as string,
   });
   const [createMsg, setCreateMsg] = useState<string | null>(null);
+
+  // Group keys by provider for the provider-keys panel
+  const keysByProvider = (keys ?? []).reduce<Record<string, { total: number; active: number; cooldown: number; invalid: number }>>((acc, k) => {
+    if (!acc[k.providerId]) acc[k.providerId] = { total: 0, active: 0, cooldown: 0, invalid: 0 };
+    acc[k.providerId]!.total++;
+    if (k.status === 'active') acc[k.providerId]!.active++;
+    else if (k.status === 'cooldown') acc[k.providerId]!.cooldown++;
+    else if (k.status === 'invalid') acc[k.providerId]!.invalid++;
+    return acc;
+  }, {});
 
   async function resolveAlias(alias: string) {
     setResolveResult(null);
@@ -141,6 +168,60 @@ export default function RouterStudioPage() {
           <div className="rounded-lg border border-white/5 bg-white/[0.02] p-2 text-center min-w-[100px]">
             Provider
           </div>
+        </div>
+      </div>
+
+      {/* Provider + Key status panel */}
+      <div className="card">
+        <div className="flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-medium text-white/80">
+            <KeyRound className="h-4 w-4 text-nexus-400" />
+            Provider Key Status
+          </h2>
+          <Link
+            href="/keys"
+            className="flex items-center gap-1 rounded-md bg-white/5 px-2 py-1 text-xs text-white/60 transition hover:bg-white/10"
+          >
+            <Link2 className="h-3 w-3" />
+            Manage API Keys
+          </Link>
+        </div>
+        <p className="mt-1 text-xs text-white/40">
+          Each provider can have multiple API keys. Keys rotate automatically using the adaptive strategy.
+          When a key hits 429, it enters cooldown and the next key is used.
+        </p>
+        <div className="mt-3 space-y-2">
+          {(providers ?? []).map((p) => {
+            const keyInfo = keysByProvider[p.providerId];
+            return (
+              <div key={p.id} className="flex items-center justify-between rounded-lg bg-white/[0.02] p-3">
+                <div className="flex items-center gap-3">
+                  <div>
+                    <span className="font-medium">{p.providerId}</span>
+                    <span className="ml-2 text-xs text-white/40">{p.health}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  {keyInfo ? (
+                    <>
+                      <span className="text-emerald-400">{keyInfo.active} active</span>
+                      {keyInfo.cooldown > 0 && <span className="text-amber-400">{keyInfo.cooldown} cooldown</span>}
+                      {keyInfo.invalid > 0 && <span className="text-rose-400">{keyInfo.invalid} invalid</span>}
+                      <span className="text-white/40">{keyInfo.total} total</span>
+                    </>
+                  ) : (
+                    <span className="text-amber-400">No keys — add via API Keys page</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {(providers ?? []).length === 0 && (
+            <div className="py-4 text-center text-sm text-white/40">
+              No providers configured. Set API keys in env vars or add them on the{' '}
+              <Link href="/keys" className="text-nexus-400 underline">API Keys</Link> page.
+            </div>
+          )}
         </div>
       </div>
 
