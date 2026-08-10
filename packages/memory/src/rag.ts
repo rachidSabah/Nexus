@@ -127,8 +127,8 @@ export class TextChunker {
       }
 
       // Move position with overlap
-      pos = chunkEnd - config.chunkOverlap;
-      if (pos <= 0) pos = chunkEnd; // Prevent infinite loop
+      const nextPos = chunkEnd - config.chunkOverlap;
+      pos = nextPos > pos ? nextPos : chunkEnd;
       if (pos >= text.length) break;
     }
 

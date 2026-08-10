@@ -62,7 +62,7 @@ Existing gateways (OpenRouter, LiteLLM, etc.) make tradeoffs that don't fit ever
 | LM Studio | ✅ | ✅ | ✅ | — | ✅ |
 | LiteLLM | ✅ | ✅ | ✅ | — | — |
 | Azure OpenAI | ✅ | ✅ | ✅ | ✅ | ✅ |
-| AWS Bedrock | 🚧 | — | — | — | — |
+| AWS Bedrock | ✅ | ✅ | ✅ | — | — |
 | Vertex AI | 🚧 | — | — | — | — |
 
 ### Routing Engine (8 strategies)
@@ -89,7 +89,7 @@ Plus:
 - ✅ Prompt caching (provider-side, e.g. Anthropic `cache_control`)
 - ✅ Semantic cache (vector similarity via cosine)
 - ✅ Compression (prompt compression: system dedup, stop-words, schema, summarization)
-- ✅ Token optimization (character-based estimation; tiktoken integration planned)
+- ✅ Token optimization (character & code-aware token estimation)
 - ✅ Connection pooling
 - 🚧 Batching (Anthropic batching API)
 - 🚧 Request deduplication
@@ -104,7 +104,7 @@ Plus:
 - ✅ Request logs (live event feed)
 - ✅ Audit log viewer
 - ✅ Network diagnostics page
-- 🚧 Workflow editor (drag-and-drop)
+- ✅ Workflow editor (drag-and-drop & visual step preview)
 - ✅ Plugin manager UI
 - ✅ Settings
 - 🚧 User management
@@ -136,7 +136,7 @@ Plus:
 
 ### AI Features
 - ✅ Workflow engine (multi-step agent workflows with pause/resume/replay)
-- ✅ Multi-agent orchestration (via `@anx/a2a` — in-process; planner/executor/critic roles planned)
+- ✅ Multi-agent orchestration (via `@anx/a2a` — Planner, Executor, Critic primitives + Orchestrator)
 - ✅ Memory (short-term + long-term with vector search, Qdrant adapter)
 - 🚧 Prompt templates
 - ✅ Tool calling (passthrough)
@@ -145,14 +145,14 @@ Plus:
 - 🚧 Audio
 - 🚧 Speech (TTS)
 - ✅ Embeddings
-- 🚧 RAG
+- ✅ RAG Pipeline (chunking, embedding, vector storage, context augmentation)
 - 🚧 Knowledge graphs
 - ✅ Agent coordination (A2A protocol — message routing, teams, proposals)
 
 ### Observability
-- 🚧 OpenTelemetry (interface ready; OpenTelemetry SDK integration planned)
+- ✅ OpenTelemetry (in-process spans + OTLP HTTP collector exporter)
 - ✅ Prometheus metrics endpoint (`/metrics`)
-- 🚧 Grafana dashboards (dashboard JSON in `deploy/grafana/`)
+- ✅ Grafana dashboards (dashboard JSON in `deploy/grafana/`)
 - ✅ Distributed tracing (in-process request tracer with `/v1/traces`)
 - ✅ Structured logs (JSON to stdout)
 - ✅ Metrics (counters, gauges, histograms, unified `/v1/metrics` endpoint)
@@ -161,14 +161,16 @@ Plus:
 
 ## Quick Start
 
-### One-Command Install (recommended)
+### One-Command Install & Build All (Windows & WSL)
+
+Run a single command to install Node 22, pnpm, clone, install all dependencies, build all packages/apps, and launch:
 
 **Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.ps1 | iex
 ```
 
-**Linux / macOS / WSL:**
+**WSL / Linux / macOS:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.sh | bash
 ```

@@ -302,7 +302,7 @@ export class Orchestrator {
     for (const subtask of plan.subtasks) {
       let currentSubtask = subtask;
       let lastResult: unknown;
-      let lastCriticResult: CriticResult;
+      let lastCriticResult: CriticResult | undefined;
 
       for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
         totalAttempts++;
@@ -342,9 +342,9 @@ export class Orchestrator {
       results.push({
         subtask: currentSubtask,
         result: lastResult,
-        criticResult: results.length < plan.subtasks.length
-          ? (this.critic.evaluate(currentSubtask, lastResult))
-          : (results[results.length - 1]?.criticResult ?? this.critic.evaluate(currentSubtask, lastResult)),
+        // Use the critic result from the final attempt — the one that determined
+        // whether to accept or fail, not a re-evaluation on the mutated subtask.
+        criticResult: lastCriticResult ?? this.critic.evaluate(currentSubtask, lastResult),
       });
     }
 
