@@ -28,8 +28,8 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
-import type { ModelDescriptor, ProviderEndpoint } from '../domain/types.js';
 import { buildEvent } from '../domain/events.js';
+import type { ModelDescriptor, ProviderEndpoint } from '../domain/types.js';
 
 import type { EventBusPort, ProviderAdapter, RoutingEnginePort } from './ports.js';
 import { classifyPricing, mergePricing } from './pricing.js';

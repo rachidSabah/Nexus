@@ -7,6 +7,7 @@
 
 import { readdir, stat } from 'node:fs/promises';
 import { resolve, isAbsolute } from 'node:path';
+
 import type { WorkspaceConfig, WorkspaceVerificationResult } from '../domain/agy-builder.js';
 
 const MANIFEST_FILES = [

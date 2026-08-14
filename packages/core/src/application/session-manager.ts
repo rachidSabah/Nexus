@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import type { EventBusPort } from './ports.js';
-import type { SessionStorePort } from './session-store.js';
-import {
-  SubprocessSessionRuntime,
-  type AgentSessionRuntime,
-} from './session-runtime.js';
+
 import {
   assertTransition,
   type AgentSession,
   type SessionCheckpoint,
   type SessionStatus,
 } from '../domain/session.js';
+
+import type { EventBusPort } from './ports.js';
+import {
+  SubprocessSessionRuntime,
+  type AgentSessionRuntime,
+} from './session-runtime.js';
+import type { SessionStorePort } from './session-store.js';
 
 export interface CreateSessionInput {
   agentId: string;

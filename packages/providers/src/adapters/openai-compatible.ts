@@ -1,7 +1,8 @@
 import type { ChatCompletionRequest, ChatCompletionResponse, ModelDescriptor, ProviderEndpoint } from '@anx/core';
 
-import { OpenAIAdapter } from './openai.js';
 import { buildHeaders } from '../shared/http.js';
+
+import { OpenAIAdapter } from './openai.js';
 
 /**
  * OpenRouter — OpenAI-compatible aggregator.

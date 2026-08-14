@@ -55,7 +55,7 @@ export async function fetchJson<T>(
     }
     try {
       return JSON.parse(text) as T;
-    } catch (err) {
+    } catch (_err) {
       // Some providers (e.g. opencode.ai/zen) return HTTP 200 with a plain-text
       // body like "Not Found" when the API key is invalid — surface that.
       throw new ProviderResponseError(

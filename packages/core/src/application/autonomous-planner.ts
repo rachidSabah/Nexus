@@ -11,9 +11,10 @@
  * AGY builds; Nexus plans.
  */
 import { type WorkflowDefinition, type WorkflowNode, type WorkflowEdge } from '../domain/workflow.js';
-import { TaskClassifier } from './task-classifier.js';
-import { RiskEngine, type RiskAnalysis } from './risk-engine.js';
+
 import { DAGEngine } from './dag-engine.js';
+import { RiskEngine, type RiskAnalysis } from './risk-engine.js';
+import { TaskClassifier } from './task-classifier.js';
 
 export interface AutonomousPlanResult {
   readonly definition: WorkflowDefinition;

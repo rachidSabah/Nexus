@@ -543,37 +543,33 @@ export class ChatCompletionUseCase {
     let finishReason = 'stop';
     const id = randomUUID();
 
-    try {
-      for await (let chunk of adapter.streamChatCompletion(endpoint, request, signal)) {
-        // ─── Plugin hook: onProviderChunk (can mutate the chunk) ────────
-        if (this.plugins) {
-          const results = await this.plugins.invokeHook<ChatCompletionChunk>('onProviderChunk', chunk);
-          for (let i = results.length - 1; i >= 0; i--) {
-            if (results[i] !== undefined) {
-              chunk = results[i]!;
-              break;
-            }
+    // Sink notification on error happens in the use case's retry decision (and the
+    // HTTP handler's catch) — NOT here: a pre-byte failure that will be failed over
+    // must not emit a terminal error event prematurely, and a post-byte failure must
+    // not double-notify the client.
+    for await (let chunk of adapter.streamChatCompletion(endpoint, request, signal)) {
+      // ─── Plugin hook: onProviderChunk (can mutate the chunk) ────────
+      if (this.plugins) {
+        const results = await this.plugins.invokeHook<ChatCompletionChunk>('onProviderChunk', chunk);
+        for (let i = results.length - 1; i >= 0; i--) {
+          if (results[i] !== undefined) {
+            chunk = results[i]!;
+            break;
           }
         }
-        chunks.push(chunk);
-        if (chunk.choices[0]?.delta?.content) {
-          contentBuffer += chunk.choices[0].delta.content;
-        }
-        if (chunk.choices[0]?.delta?.reasoning) {
-          reasoningBuffer += chunk.choices[0].delta.reasoning;
-        }
-        if (chunk.usage) lastUsage = chunk.usage;
-        if (chunk.choices[0]?.finish_reason) {
-          finishReason = chunk.choices[0].finish_reason;
-        }
-        if (sink) await sink.write(chunk);
       }
-    } catch (err) {
-      // Sink notification happens in the use case's retry decision (and the
-      // HTTP handler's catch) — NOT here: a pre-byte failure that will be
-      // failed over must not emit a terminal error event prematurely, and a
-      // post-byte failure must not double-notify the client.
-      throw err;
+      chunks.push(chunk);
+      if (chunk.choices[0]?.delta?.content) {
+        contentBuffer += chunk.choices[0].delta.content;
+      }
+      if (chunk.choices[0]?.delta?.reasoning) {
+        reasoningBuffer += chunk.choices[0].delta.reasoning;
+      }
+      if (chunk.usage) lastUsage = chunk.usage;
+      if (chunk.choices[0]?.finish_reason) {
+        finishReason = chunk.choices[0].finish_reason;
+      }
+      if (sink) await sink.write(chunk);
     }
 
     if (sink) await sink.end();

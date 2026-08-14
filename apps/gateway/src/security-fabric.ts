@@ -233,8 +233,8 @@ export class AuditLogger {
 // Order matters: specific patterns first.
 const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/sk-[A-Za-z0-9_-]{8,}/g, 'sk-************'],
-  [/Bearer\s+[A-Za-z0-9._\-]+/gi, 'Bearer ************'],
-  [/Authorization:\s*[A-Za-z0-9._\-]+/gi, 'Authorization: ************'],
+  [/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer ************'],
+  [/Authorization:\s*[A-Za-z0-9._-]+/gi, 'Authorization: ************'],
   [/x-anx-[A-Za-z0-9_-]{8,}/gi, 'x-anx-************'],
   [/AKIA[0-9A-Z]{16}/g, 'AKIA************'],
   [/[a-z0-9]{32,}/gi, '************'], // generic long token fallback (length-gated)

@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
+
 import { type AgentTask, type TaskCategory, type TaskPriority } from '../domain/orchestration.js';
-import { TaskClassifier } from './task-classifier.js';
+
+import { type AgentExecutorPort } from './agent-executor.js';
 import { AgentSelector, type AgentCandidate } from './agent-selector.js';
 import { type RoutingEnginePort } from './ports.js';
 import { type EventBusPort } from './ports.js';
+import { TaskClassifier } from './task-classifier.js';
 import { type TaskStorePort } from './task-store.js';
-import { type AgentExecutorPort } from './agent-executor.js';
 
 export interface CreateTaskOptions {
   prompt: string;
