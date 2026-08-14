@@ -59,5 +59,12 @@ ehthumbs.db
 *.lcov
 .cache/
 
-# Local agent state (keys, memory, rag) — always outside the repo
+# Local agent state & workspaces (keys, memory, rag, workspaces)
 .agent-nexus/
+.nexus/
+applications/
+.tmp/
+tmp/
+*.secret
+*.p12
+*.crt

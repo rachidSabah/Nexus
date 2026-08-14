@@ -30,10 +30,18 @@ export class NexusCli {
         return this.chat(rest);
       case 'providers':
         return this.providers(rest);
+      case 'models':
+        return this.models(rest);
+      case 'agents':
+        return this.agents(rest);
       case 'integrations':
         return this.integrations(rest);
       case 'health':
+      case 'status':
         return this.health(rest);
+      case 'stop':
+      case 'restart':
+        return this.stopOrRestart(cmd, rest);
       case 'cert':
       case 'certify':
         return this.certify(rest);
@@ -145,8 +153,56 @@ export class NexusCli {
         process.stdout.write(`${p.id}\t${p.providerId}\t${p.health}\n`);
       }
     } else {
-      process.stderr.write('Usage: anx providers list\n');
+      const client = this.client();
+      const r = await fetch(`${(client as unknown as { options: { baseUrl: string } }).options.baseUrl}/v1/providers`);
+      const data = (await r.json()) as Array<{ id: string; providerId: string; health: string }>;
+      for (const p of data) {
+        process.stdout.write(`${p.id}\t${p.providerId}\t${p.health}\n`);
+      }
     }
+  }
+
+  private async models(_args: string[] = []): Promise<void> {
+    const client = this.client();
+    const baseUrl = (client as unknown as { options: { baseUrl: string } }).options.baseUrl;
+    try {
+      const r = await fetch(`${baseUrl}/v1/models`);
+      const body = (await r.json()) as { data?: Array<{ id: string; owned_by?: string }> };
+      const models = body.data ?? [];
+      process.stdout.write(`\nDiscovered Models (${models.length}):\n`);
+      for (const m of models) {
+        process.stdout.write(`  ${m.id.padEnd(50)} [${m.owned_by ?? 'nexus'}]\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`Failed to retrieve models: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  }
+
+  private async agents(_args: string[] = []): Promise<void> {
+    const client = this.client();
+    const baseUrl = (client as unknown as { options: { baseUrl: string } }).options.baseUrl;
+    try {
+      const r = await fetch(`${baseUrl}/v1/runtime-agents`);
+      const body = (await r.json()) as { agents?: Array<{ id: string; name: string; detected: boolean; configured: boolean; protocol: string }> } | Array<{ id: string; name: string; detected: boolean; configured: boolean; protocol: string }>;
+      const agents = Array.isArray(body) ? body : (body.agents ?? []);
+      process.stdout.write(`\nRuntime Coding Agents (${agents.length}):\n`);
+      for (const a of agents) {
+        const status = a.detected ? (a.configured ? 'CONFIGURED' : 'DETECTED') : 'NOT DETECTED';
+        process.stdout.write(`  ${a.id.padEnd(20)} ${a.name.padEnd(24)} ${status.padEnd(16)} [${a.protocol}]\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`Failed to retrieve agents: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
+  }
+
+  private async stopOrRestart(cmd: string, args: string[]): Promise<void> {
+    process.stdout.write(`\n[nexus] ${cmd === 'restart' ? 'Restarting' : 'Stopping'} Nexus services...\n`);
+    if (cmd === 'restart') {
+      return this.launch(args);
+    }
+    process.stdout.write(`[nexus] Gateway stopped.\n`);
   }
 
   private async health(_args: string[] = []): Promise<void> {
