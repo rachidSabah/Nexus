@@ -1,6 +1,6 @@
 'use client';
 
-import { Cpu, RefreshCw, Sparkles, Zap, CircleDollarSign, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
+import { Cpu, RefreshCw, Sparkles, Zap, CircleDollarSign, AlertTriangle, CheckCircle2, Search, Eye, Brain, Wrench, Copy, Check, Terminal, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 
@@ -13,14 +13,17 @@ interface DiscoveredModel {
   id: string;
   providerId: string;
   nativeModelId?: string;
+  displayName?: string;
   isFree?: boolean;
   freeTier?: string;
   pricingSource?: string;
   availability?: string;
   contextWindow?: number;
+  maxOutputTokens?: number;
   pricing?: { inputPer1K?: number; outputPer1K?: number; isFree?: boolean; freeTier?: string };
   capabilities?: Record<string, unknown>;
   stale?: boolean;
+  discoveredAt?: number;
 }
 
 interface DiscoverResponse {
@@ -37,8 +40,11 @@ interface StatsResponse {
 }
 
 export default function ModelsPage() {
-  const [filter, setFilter] = useState<'all' | 'free' | 'paid' | 'stale'>('all');
+  const [filter, setFilter] = useState<'all' | 'free' | 'paid' | 'vision' | 'reasoning' | 'tools' | 'stale'>('all');
   const [query, setQuery] = useState('');
+  const [selectedModel, setSelectedModel] = useState<DiscoveredModel | null>(null);
+  const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
+
   const { data: discover, isLoading, mutate } = useSWR<DiscoverResponse>('/api/v1/models/discover', fetcher, {
     refreshInterval: 15000,
   });
@@ -50,6 +56,9 @@ export default function ModelsPage() {
     return all.filter((m) => {
       if (filter === 'free') return m.isFree === true || m.freeTier === 'FREE' || m.pricing?.isFree === true;
       if (filter === 'paid') return m.freeTier === 'PAID' || (m.isFree !== true && m.pricing?.isFree !== true);
+      if (filter === 'vision') return m.capabilities?.vision === true;
+      if (filter === 'reasoning') return m.capabilities?.reasoning === true || m.id.includes('think') || m.id.includes('r1') || m.id.includes('reason');
+      if (filter === 'tools') return m.capabilities?.functionCalling === true || m.capabilities?.tools === true;
       if (filter === 'stale') return m.stale === true;
       return true;
     }).filter((m) => {
@@ -89,6 +98,12 @@ export default function ModelsPage() {
     }
   };
 
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedSnippet(label);
+    setTimeout(() => setCopiedSnippet(null), 2000);
+  };
+
   return (
     <div className="space-y-8 relative pb-12">
       <div className="pointer-events-none absolute -top-10 -right-10 h-96 w-96 rounded-full bg-nexus-600/10 blur-[120px]" />
@@ -101,11 +116,10 @@ export default function ModelsPage() {
           </div>
           <h1 className="flex items-center gap-3 text-3xl font-extrabold tracking-tight text-white drop-shadow-sm">
             <Cpu className="h-8 w-8 text-nexus-400" />
-            Discovered Models
+            Model Explorer & Normalization
           </h1>
           <p className="mt-1 text-sm text-white/60 max-w-2xl">
-            Every model discovered across configured providers (OpenCode Zen, Nvidia NIM, Ollama, OpenAI, Anthropic...).
-            Filter by free tier, check pricing, capabilities and availability. Sources: <span className="text-white/80">/v1/models/discover</span> + <span className="text-white/80">/v1/models/stats</span>.
+            Live catalog of dynamically discovered models across all registered AI providers. Filter by capabilities, inspect pricing, and copy ready-to-use coding agent configs.
           </p>
         </div>
 
@@ -154,17 +168,26 @@ export default function ModelsPage() {
         {/* Filter chips + provider breakdown */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            {(['all', 'free', 'paid', 'stale'] as const).map((f) => (
+            {[
+              { id: 'all', label: `All (${discover?.models?.length ?? 0})` },
+              { id: 'free', label: `Free (${freeCount})` },
+              { id: 'paid', label: `Paid (${paidCount})` },
+              { id: 'vision', label: 'Vision', icon: Eye },
+              { id: 'reasoning', label: 'Reasoning', icon: Brain },
+              { id: 'tools', label: 'Tools', icon: Wrench },
+              { id: 'stale', label: `Stale (${statStale})` },
+            ].map((f) => (
               <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold border transition ${
-                  filter === f
+                key={f.id}
+                onClick={() => setFilter(f.id as typeof filter)}
+                className={`flex items-center gap-1 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition ${
+                  filter === f.id
                     ? 'border-nexus-500/50 bg-nexus-500/20 text-nexus-200'
                     : 'border-white/10 bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'
                 }`}
               >
-                {f === 'all' ? `All (${discover?.models?.length ?? 0})` : f === 'free' ? `Free (${freeCount})` : f === 'paid' ? `Paid (${paidCount})` : `Stale (${statStale})`}
+                {f.icon && <f.icon className="h-3 w-3" />}
+                {f.label}
               </button>
             ))}
           </div>
@@ -187,7 +210,7 @@ export default function ModelsPage() {
             No models match this filter. Trigger a refresh to run provider discovery.
           </div>
         ) : (
-          <div className="w-full">
+          <div className="w-full overflow-x-auto">
             <table className="w-full text-left text-sm table-fixed">
               <thead>
                 <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-white/50">
@@ -196,7 +219,7 @@ export default function ModelsPage() {
                   <th className="w-[10%] pb-3 pr-4 font-semibold">Tier</th>
                   <th className="w-[12%] pb-3 pr-4 font-semibold">Context</th>
                   <th className="w-[18%] pb-3 pr-4 font-semibold">Capabilities</th>
-                  <th className="w-[15%] pb-3 font-semibold">Pricing / Status</th>
+                  <th className="w-[15%] pb-3 font-semibold">Pricing / Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -210,9 +233,13 @@ export default function ModelsPage() {
                   const input = m.pricing?.inputPer1K ?? undefined;
                   const output = m.pricing?.outputPer1K ?? undefined;
                   return (
-                    <tr key={`${m.providerId}-${m.id}-${index}`} className="transition hover:bg-white/[0.03]">
+                    <tr
+                      key={`${m.providerId}-${m.id}-${index}`}
+                      onClick={() => setSelectedModel(m)}
+                      className="cursor-pointer transition hover:bg-white/[0.05]"
+                    >
                       <td className="py-3 pr-4 overflow-hidden">
-                        <div className="font-mono text-xs text-white truncate" title={m.id}>{m.id}</div>
+                        <div className="font-mono text-xs text-white truncate font-medium" title={m.id}>{m.id}</div>
                         {m.nativeModelId && m.nativeModelId !== m.id && (
                           <div className="font-mono text-[10px] text-white/35 truncate" title={m.nativeModelId}>{m.nativeModelId}</div>
                         )}
@@ -230,7 +257,7 @@ export default function ModelsPage() {
                           {isFree ? 'FREE' : m.freeTier ?? (m.pricing?.freeTier ?? 'PAID')}
                         </span>
                       </td>
-                      <td className="py-3 pr-4">
+                      <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
                         <ContextWindowEditor
                           provider={m.providerId}
                           modelId={m.nativeModelId ?? m.id}
@@ -247,7 +274,7 @@ export default function ModelsPage() {
                         </div>
                       </td>
                       <td className="py-3 font-mono text-[11px] text-white/60">
-                        <div className="flex flex-col gap-0.5">
+                        <div className="flex items-center justify-between">
                           <span>
                             {isFree
                               ? 'free'
@@ -255,11 +282,8 @@ export default function ModelsPage() {
                                 ? `$${input}/${output}`
                                 : '—'}
                           </span>
-                          <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${
-                            m.stale ? 'text-amber-400' : 'text-emerald-400'
-                          }`}>
-                            <CheckCircle2 className="h-2.5 w-2.5" />
-                            {m.stale ? 'stale' : m.availability ?? 'available'}
+                          <span className="text-nexus-400 text-xs font-semibold hover:underline">
+                            Inspect &rarr;
                           </span>
                         </div>
                       </td>
@@ -271,6 +295,104 @@ export default function ModelsPage() {
           </div>
         )}
       </div>
+
+      {/* Model Details Modal / Drawer */}
+      {selectedModel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
+          <div className="relative w-full max-w-2xl rounded-2xl border border-white/15 bg-neutral-950 p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div>
+                <div className="text-xs text-nexus-400 font-mono uppercase">{selectedModel.providerId}</div>
+                <h3 className="text-lg font-bold text-white font-mono mt-0.5">{selectedModel.id}</h3>
+              </div>
+              <button
+                onClick={() => setSelectedModel(null)}
+                className="text-white/40 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                <div className="text-white/40 text-[10px] uppercase font-semibold">Context Window</div>
+                <div className="text-sm font-bold text-white mt-0.5">{(selectedModel.contextWindow ?? 8192).toLocaleString()} tokens</div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                <div className="text-white/40 text-[10px] uppercase font-semibold">Pricing Tier</div>
+                <div className="text-sm font-bold text-emerald-400 mt-0.5">{selectedModel.isFree ? 'FREE TIER' : 'PAID'}</div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                <div className="text-white/40 text-[10px] uppercase font-semibold">Health Status</div>
+                <div className="text-sm font-bold text-emerald-400 mt-0.5 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Healthy
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                <div className="text-white/40 text-[10px] uppercase font-semibold">Nexus Model URI</div>
+                <div className="text-xs font-mono font-bold text-cyan-300 truncate mt-0.5">nexus/{selectedModel.providerId}/{selectedModel.id}</div>
+              </div>
+            </div>
+
+            {/* Coding Agent Configs */}
+            <div className="space-y-3 pt-2">
+              <div className="text-xs font-semibold uppercase tracking-wider text-white/70 flex items-center gap-1.5">
+                <Terminal className="h-4 w-4 text-nexus-400" /> Use Through Nexus with Coding Agents
+              </div>
+
+              <div className="space-y-2">
+                {[
+                  {
+                    name: 'Claude Code',
+                    snippet: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787/v1"\nexport ANTHROPIC_API_KEY="nexus"\nclaude --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'OpenAI Codex CLI',
+                    snippet: `codex --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'Hermes CLI',
+                    snippet: `hermes -m nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'AGY Builder',
+                    snippet: `agy -m nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'cURL / REST API',
+                    snippet: `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "nexus/${selectedModel.providerId}/${selectedModel.id}", "messages": [{"role": "user", "content": "Hello"}]}'`,
+                  },
+                ].map((agent) => (
+                  <div key={agent.name} className="rounded-xl border border-white/10 bg-black/60 p-3">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-semibold text-white/80">{agent.name}</span>
+                      <button
+                        onClick={() => copyToClipboard(agent.snippet, agent.name)}
+                        className="flex items-center gap-1 text-[11px] text-nexus-400 hover:text-nexus-300 font-medium"
+                      >
+                        {copiedSnippet === agent.name ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                        {copiedSnippet === agent.name ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                    <pre className="text-[11px] font-mono text-white/60 overflow-x-auto p-2 rounded-lg bg-white/[0.03] select-all">
+                      {agent.snippet}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-white/10 pt-4">
+              <button
+                onClick={() => setSelectedModel(null)}
+                className="rounded-xl bg-white/10 px-4 py-2 text-xs font-semibold text-white hover:bg-white/20"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

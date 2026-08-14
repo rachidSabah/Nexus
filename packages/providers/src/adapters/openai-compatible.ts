@@ -309,5 +309,20 @@ export class AzureOpenAIAdapter extends OpenAIAdapter {
   }
 }
 
+export class GenericOpenAIAdapter extends OpenAIAdapter {
+  readonly providerId: string;
+  readonly displayName: string;
+  protected override apiBase: string;
+  protected override apiKeyEnv: string;
+
+  constructor(providerId: string, displayName?: string, apiBase?: string) {
+    super();
+    this.providerId = providerId;
+    this.displayName = displayName ?? providerId;
+    this.apiBase = apiBase ?? '';
+    this.apiKeyEnv = `${providerId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`;
+  }
+}
+
 // Re-export the type so subclasses can import it together.
 // (Type imports are hoisted to the top of the file for ESLint import/order compliance.)

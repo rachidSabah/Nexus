@@ -510,6 +510,30 @@ export class ModelRegistry {
     return { fromVersion: sinceVersion, toVersion, fullSyncRequired: false, added, updated, removed };
   }
 
+  /** Removes all models belonging to a provider (e.g. when provider is deleted). */
+  removeProvider(providerId: string): number {
+    let count = 0;
+    for (const [key, m] of this.models) {
+      if (m.providerId === providerId) {
+        this.models.delete(key);
+        this.explicit.delete(key);
+        this.recordChange(key, 'removed');
+        this.publish('model.removed', {
+          providerId,
+          modelId: m.id,
+          reason: 'provider_removed',
+        });
+        count++;
+      }
+    }
+    this.providerDiagnostics.delete(providerId);
+    this.lastErrors.delete(providerId);
+    if (count > 0) {
+      this.catalogVersion++;
+    }
+    return count;
+  }
+
   private recordChange(key: string, op: 'added' | 'updated' | 'removed'): void {
     if (this.changeLog.size >= ModelRegistry.CHANGE_LOG_MAX && !this.changeLog.has(key)) {
       // Bound the log: drop the oldest remembered entry to make room.

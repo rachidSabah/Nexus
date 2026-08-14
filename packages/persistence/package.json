@@ -1,6 +1,6 @@
 {
   "name": "@anx/persistence",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Persistence adapters — PostgreSQL, SQLite, Redis via repository pattern",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@anx/agents",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Agent Registry — register, discover, and monitor AI agents connected to Nexus OS",
   "type": "module",
   "main": "./dist/index.js",

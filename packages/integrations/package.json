@@ -1,6 +1,6 @@
 {
   "name": "@anx/integrations",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Native integrations: auto-configure AI tools (Claude Code, Cursor, OpenCode, …) to use Agent Nexus Gateway",
   "type": "module",
   "main": "./dist/index.js",

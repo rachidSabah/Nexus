@@ -33,7 +33,7 @@ describe('GatewayRuntime integration', () => {
     const r = await fetch('http://localhost:18787/health');
     expect(r.ok).toBe(true);
     const body = await r.json();
-    expect(body['version']).toBe('0.1.0');
+    expect(body['version']).toBe('0.5.0');
     expect(body['status']).toBeDefined();
   });
 

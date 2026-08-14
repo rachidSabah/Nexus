@@ -1,6 +1,6 @@
 {
   "name": "@agent-nexus/marketplace",
-  "version": "0.7.0",
+  "version": "0.5.0",
   "description": "Extension Marketplace for Agent Nexus Gateway - Browse, install, and manage extensions, providers, MCP servers, workflows, and prompts",
   "license": "Apache-2.0",
   "author": "Agent Nexus Gateway Contributors",

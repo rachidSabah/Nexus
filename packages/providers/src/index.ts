@@ -20,6 +20,7 @@ export {
   OpenCodeZenAdapter,
   OpenCodeGoAdapter,
   NvidiaNimAdapter,
+  GenericOpenAIAdapter,
 } from './adapters/openai-compatible.js';
 
 import type { ProviderAdapter } from '@anx/core';

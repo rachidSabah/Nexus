@@ -1,6 +1,6 @@
 {
   "name": "@anx/token-efficiency",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Token-efficiency layer for coding agents: SAFE-mode deduplication, token estimation, and savings metrics",
   "type": "module",
   "main": "./dist/index.js",

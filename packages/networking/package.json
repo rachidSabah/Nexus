@@ -1,6 +1,6 @@
 {
   "name": "@anx/networking",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Networking: HTTP/HTTPS/SOCKS5 proxy, DNS-over-HTTPS, failover, diagnostics",
   "type": "module",
   "main": "./dist/index.js",

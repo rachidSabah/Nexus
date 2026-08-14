@@ -1,6 +1,6 @@
 {
   "name": "@agent-nexus/service-mesh",
-  "version": "0.6.0",
+  "version": "0.5.0",
   "description": "AI Service Mesh for Agent Nexus Gateway - Service discovery, traffic management, and resilient routing",
   "license": "Apache-2.0",
   "author": "Agent Nexus Gateway Contributors",

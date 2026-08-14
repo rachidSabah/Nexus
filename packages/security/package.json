@@ -1,6 +1,6 @@
 {
   "name": "@anx/security",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Security primitives: encrypted vault, JWT, RBAC, audit logging",
   "type": "module",
   "main": "./dist/index.js",

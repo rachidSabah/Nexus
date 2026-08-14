@@ -1,6 +1,6 @@
 {
   "name": "@anx/tools",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Tool Management — permissions, sandboxing, discovery, logging for agent tools",
   "type": "module",
   "main": "./dist/index.js",

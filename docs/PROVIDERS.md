@@ -31,14 +31,52 @@ This document describes how to add and configure provider adapters in Agent Nexu
 | LM Studio | `lmstudio` | none | `http://localhost:1234/v1` |
 | LiteLLM Proxy | `litellm` | Bearer token | `http://localhost:4000/v1` |
 
-### Planned (v0.5)
+## Zero-Config Universal Provider Onboarding (Nexus v0.5.0)
 
-| Provider | `providerId` | Status |
-|---|---|---|
-| AWS Bedrock | `aws-bedrock` | Stub — needs boto3 signing |
-| Vertex AI | `vertex-ai` | Stub — needs GCP auth |
+Nexus v0.5.0 introduces the **Universal Provider Fabric**: connect any OpenAI-compatible or cloud provider once through the REST API or Dashboard Provider Center, and Nexus automatically executes the 9-stage onboarding lifecycle:
 
-## Configuration
+```
+DISCOVER → VALIDATE → AUTHENTICATE → FETCH MODELS → NORMALIZE → REGISTER → INDEX → HEALTH CHECK → READY
+```
+
+### Onboarding via REST API
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/providers/onboard \
+  -H "Content-Type: application/json" \
+  -d '{
+    "providerId": "groq",
+    "displayName": "Groq Cloud",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "apiKey": "gsk_..."
+  }'
+```
+
+### Response
+
+```json
+{
+  "ok": true,
+  "status": "READY",
+  "providerId": "groq",
+  "endpointId": "auto-groq",
+  "displayName": "Groq Cloud",
+  "baseUrl": "https://api.groq.com/openai/v1",
+  "modelsDiscovered": 14,
+  "message": "Provider 'Groq Cloud' successfully onboarded with 14 model(s) ready for routing."
+}
+```
+
+### Testing Connection / Probing without Persisting
+
+```bash
+curl -X POST http://127.0.0.1:8787/v1/providers/probe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "apiKey": "gsk_..."
+  }'
+```
 
 ### Via config file
 

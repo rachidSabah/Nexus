@@ -8,9 +8,9 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-9.12-orange)](https://pnpm.io)
-[![Version](https://img.shields.io/badge/version-0.4.1-blueviolet)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-blueviolet)](CHANGELOG.md)
 
-*Nexus is not an AI model. Nexus is the infrastructure layer between your coding agents and every model provider.*
+*Nexus is not an AI model. Nexus is the universal provider fabric and infrastructure layer between your coding agents and every model provider.*
 
 <br/>
 
@@ -22,10 +22,11 @@
 
 ## What is Nexus?
 
-Nexus is a **universal AI coding-agent gateway and autonomous control plane** that dynamically discovers models across providers and exposes them through one OpenAI-compatible and Anthropic-compatible local endpoint (`http://127.0.0.1:8787`).
+Nexus is a **universal AI coding-agent gateway, provider fabric, and autonomous control plane** that dynamically discovers models across providers and exposes them through one OpenAI-compatible and Anthropic-compatible local endpoint (`http://127.0.0.1:8787`).
 
 You point **one URL** at Nexus. Nexus handles everything else:
 
+- **Universal Provider Fabric:** Connect any OpenAI-compatible provider once — Nexus automatically discovers models, normalizes capabilities, encrypts keys, and creates instant routing bindings.
 - **Dynamic Model Discovery:** Discovers every model from every provider you configure — automatically, with zero hardcoded catalogs.
 - **Intelligent Routing:** Routes each request to the best available, healthy, cost-appropriate model using policies like `nexus/best-coding`, `nexus/free`, `nexus/fast`, and `nexus/reasoning`.
 - **Multi-Key Rotation & Cooldown:** Rotates API keys, isolates 429 rate limits, and automatically fails over across models, keys, and providers.

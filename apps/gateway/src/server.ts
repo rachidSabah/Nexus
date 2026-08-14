@@ -65,6 +65,7 @@ import { hashApiKey } from '@anx/security';
 import type { ExecutionPlanner } from '@anx/task-router';
 import type { ToolRuntime } from '@anx/tools';
 import type { WorkflowEngine } from '@anx/workflow';
+import { GenericOpenAIAdapter } from '@anx/providers';
 import fastifyCors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
@@ -2121,21 +2122,382 @@ export class HttpServer {
       return resolution;
     });
 
-    // ── Providers (gateway-specific) ───────────────────────────────────
+    // ── Universal Provider Fabric & Zero-Config Model Onboarding ──────
+    // GET /v1/providers — lists all registered providers with live discovery & key telemetry
     this.fastify.get('/v1/providers', async () => {
-      return this.deps.routing.listEndpoints().map((e) => ({
-        id: e.id,
-        providerId: e.providerId,
-        displayName: e.displayName,
-        health: e.health,
-        priority: e.priority,
-        weight: e.weight,
-        region: e.region,
-        tags: e.tags,
-        capabilities: e.capabilities,
-        pricing: e.pricing,
-        updatedAt: e.updatedAt,
-      }));
+      const endpoints = this.deps.routing.listEndpoints();
+      const allModels = this.deps.modelRegistry.list();
+      const allKeys = this.deps.keyRegistry.listAll();
+      const providerDiags = this.deps.modelRegistry.getProviderDiagnostics();
+
+      return endpoints.map((e) => {
+        const providerModels = allModels.filter((m) => m.providerId === e.providerId);
+        const providerKeys = allKeys.filter((k) => k.providerId === e.providerId);
+        const activeKeys = providerKeys.filter((k) => k.status === 'active');
+        const diag = providerDiags ? providerDiags[e.providerId] : undefined;
+
+        return {
+          id: e.id,
+          providerId: e.providerId,
+          displayName: e.displayName,
+          baseUrl: e.baseUrl,
+          health: e.health,
+          status: e.health === 'healthy' ? 'READY' : e.health === 'degraded' ? 'DEGRADED' : 'UNAVAILABLE',
+          modelsCount: providerModels.length,
+          keysCount: providerKeys.length,
+          activeKeysCount: activeKeys.length,
+          priority: e.priority,
+          weight: e.weight,
+          region: e.region,
+          tags: e.tags,
+          capabilities: e.capabilities,
+          pricing: e.pricing,
+          lastSync: diag?.lastDiscovery ?? e.updatedAt ?? Date.now(),
+          lastSuccess: diag?.lastSuccess ?? e.updatedAt ?? Date.now(),
+          lastError: diag?.lastError,
+          updatedAt: e.updatedAt ?? Date.now(),
+        };
+      });
+    });
+
+    // POST /v1/providers/probe — connection & credential verification test without persisting
+    this.fastify.post('/v1/providers/probe', async (request, reply) => {
+      const body = request.body as {
+        baseUrl?: string;
+        apiKey?: string;
+        providerId?: string;
+        customHeaders?: Record<string, string>;
+      };
+
+      const rawBase = (body?.baseUrl ?? '').trim().replace(/\/+$/, '');
+      if (!rawBase) {
+        return reply.code(400).send({ error: { message: 'baseUrl is required for probe', code: 'INVALID_BASE_URL' } });
+      }
+
+      const cleanBase = rawBase.endsWith('/v1') ? rawBase : `${rawBase}/v1`;
+      const modelsUrl = `${cleanBase}/models`;
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        ...(body?.customHeaders ?? {}),
+      };
+
+      if (body?.apiKey) {
+        headers['Authorization'] = `Bearer ${body.apiKey}`;
+      }
+
+      const steps = {
+        gatewayReachable: false,
+        authenticationSuccessful: false,
+        modelsEndpointReachable: false,
+        modelsDiscoveredCount: 0,
+      };
+
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+        const res = await fetch(modelsUrl, {
+          method: 'GET',
+          headers,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        steps.gatewayReachable = true;
+
+        if (res.status === 401 || res.status === 403) {
+          return reply.code(200).send({
+            ok: false,
+            step: 'AUTHENTICATE',
+            steps,
+            error: `Authentication failed (HTTP ${res.status}). Verify your API key.`,
+          });
+        }
+
+        if (!res.ok) {
+          return reply.code(200).send({
+            ok: false,
+            step: 'FETCH_MODELS',
+            steps,
+            error: `Upstream models endpoint returned HTTP ${res.status}: ${res.statusText}`,
+          });
+        }
+
+        steps.authenticationSuccessful = true;
+        steps.modelsEndpointReachable = true;
+
+        const data = (await res.json()) as { data?: Array<{ id: string; owned_by?: string }> };
+        const rawList = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? (data as Array<{ id: string; owned_by?: string }>) : [];
+        steps.modelsDiscoveredCount = rawList.length;
+
+        return reply.send({
+          ok: true,
+          status: 'PROBE_SUCCESSFUL',
+          baseUrl: cleanBase,
+          steps,
+          modelsPreview: rawList.slice(0, 30).map((m: { id: string; owned_by?: string }) => ({ id: m.id, owner: m.owned_by ?? body?.providerId ?? 'custom' })),
+        });
+      } catch (err) {
+        return reply.code(200).send({
+          ok: false,
+          step: 'CONNECT',
+          steps,
+          error: (err as Error).message ?? 'Connection to provider failed or timed out',
+        });
+      }
+    });
+
+    // POST /v1/providers/onboard — full lifecycle zero-config provider onboarding
+    this.fastify.post('/v1/providers/onboard', async (request, reply) => {
+      const body = request.body as {
+        providerId?: string;
+        displayName?: string;
+        baseUrl?: string;
+        apiKey?: string;
+        protocol?: string;
+        priority?: number;
+        weight?: number;
+        customHeaders?: Record<string, string>;
+      };
+
+      const rawId = (body?.providerId ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+      if (!rawId) {
+        return reply.code(400).send({ error: { message: 'providerId is required and must be alphanumeric', code: 'INVALID_PROVIDER_ID' } });
+      }
+
+      const rawBase = (body?.baseUrl ?? '').trim().replace(/\/+$/, '');
+      if (!rawBase) {
+        return reply.code(400).send({ error: { message: 'baseUrl is required', code: 'INVALID_BASE_URL' } });
+      }
+
+      const cleanBase = rawBase.endsWith('/v1') ? rawBase : `${rawBase}/v1`;
+      const displayName = (body?.displayName ?? '').trim() || rawId.toUpperCase();
+      const apiKey = body?.apiKey?.trim();
+      const endpointId = `auto-${rawId}`;
+
+      // 1. Register Adapter dynamically if not already existing
+      if (!this.deps.adapters.has(rawId)) {
+        this.deps.adapters.set(rawId, new GenericOpenAIAdapter(rawId, displayName, cleanBase));
+      }
+
+      // 2. Store API Key in KeyRegistry (automatically encrypted into vault)
+      if (apiKey) {
+        const keyId = `key-${rawId}-${Date.now().toString(36)}`;
+        await this.deps.keyRegistry.register({
+          id: keyId,
+          providerId: rawId,
+          plaintext: apiKey,
+          label: `${displayName} Key`,
+        });
+      }
+
+      // 3. Register Endpoint in RoutingEngine
+      const now = new Date();
+      const endpoint: ProviderEndpoint = {
+        id: endpointId,
+        providerId: rawId,
+        displayName,
+        baseUrl: cleanBase,
+        health: 'healthy',
+        priority: body?.priority ?? 100,
+        weight: body?.weight ?? 1,
+        capabilities: defaultCapabilitiesFor(rawId),
+        pricing: defaultPricingFor(rawId),
+        region: 'us',
+        tags: ['onboarded', 'dynamic', 'openai-compatible'],
+        timeoutMs: 30000,
+        maxRetries: 2,
+        concurrencyLimit: 10,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.deps.routing.registerEndpoint(endpoint);
+
+      // 4. Trigger Model Discovery for the newly onboarded provider
+      const discoveryResult = await this.deps.modelRegistry.discoverProvider(rawId);
+
+      // 5. Emit Provider Onboarded Event
+      void this.deps.events?.publish({
+        type: 'provider.onboarded',
+        occurredAt: new Date(),
+        payload: {
+          providerId: rawId,
+          endpointId,
+          displayName,
+          baseUrl: cleanBase,
+          modelsDiscovered: discoveryResult.discovered,
+        },
+      });
+
+      return reply.code(201).send({
+        ok: true,
+        status: 'READY',
+        providerId: rawId,
+        endpointId,
+        displayName,
+        baseUrl: cleanBase,
+        modelsDiscovered: discoveryResult.discovered,
+        message: `Provider '${displayName}' successfully onboarded with ${discoveryResult.discovered} model(s) ready for routing.`,
+      });
+    });
+
+    // DELETE /v1/providers/:id — removes provider endpoint, keys, and sweeps models
+    this.fastify.delete('/v1/providers/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const endpoint = this.deps.routing.listEndpoints().find((e) => e.id === id || e.providerId === id);
+      if (!endpoint) {
+        return reply.code(404).send({ error: { message: `Provider or endpoint '${id}' not found` } });
+      }
+
+      const providerId = endpoint.providerId;
+
+      // 1. Unregister endpoint
+      this.deps.routing.unregisterEndpoint(endpoint.id);
+
+      // 2. Remove all keys for this provider from KeyRegistry and Vault
+      const keys = this.deps.keyRegistry.listByProvider(providerId);
+      for (const k of keys) {
+        await this.deps.keyRegistry.unregister(k.id);
+      }
+
+      // 3. Remove models from ModelRegistry
+      const modelsRemoved = this.deps.modelRegistry.removeProvider(providerId);
+
+      // 4. Emit event
+      void this.deps.events?.publish({
+        type: 'provider.removed',
+        occurredAt: new Date(),
+        payload: { providerId, endpointId: endpoint.id, modelsRemoved },
+      });
+
+      return {
+        ok: true,
+        providerId,
+        endpointId: endpoint.id,
+        modelsRemoved,
+        message: `Provider '${providerId}' removed successfully (${modelsRemoved} models swept from catalog).`,
+      };
+    });
+
+    // POST /v1/providers/:id/sync — forces immediate model discovery for a single provider
+    this.fastify.post('/v1/providers/:id/sync', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const endpoint = this.deps.routing.listEndpoints().find((e) => e.id === id || e.providerId === id);
+      if (!endpoint) {
+        return reply.code(404).send({ error: { message: `Provider '${id}' not found` } });
+      }
+
+      const result = await this.deps.modelRegistry.discoverProvider(endpoint.providerId);
+      return {
+        ok: result.status === 'completed',
+        providerId: endpoint.providerId,
+        status: result.status,
+        discovered: result.discovered,
+        added: result.added,
+        updated: result.updated,
+        lastSync: Date.now(),
+        error: result.error,
+      };
+    });
+
+    // GET /v1/models/explore — rich Model Explorer endpoint with multi-criteria filtering
+    this.fastify.get('/v1/models/explore', async (request) => {
+      const query = request.query as {
+        provider?: string;
+        free?: string;
+        vision?: string;
+        reasoning?: string;
+        tools?: string;
+        streaming?: string;
+        search?: string;
+        limit?: string;
+        offset?: string;
+      };
+
+      let list = this.deps.modelRegistry.list();
+
+      if (query.provider) {
+        const provs = query.provider.toLowerCase().split(',');
+        list = list.filter((m) => provs.includes(m.providerId.toLowerCase()));
+      }
+      if (query.free === 'true') {
+        list = list.filter((m) => m.pricing?.isFree === true);
+      } else if (query.free === 'false') {
+        list = list.filter((m) => m.pricing?.isFree !== true);
+      }
+      if (query.vision === 'true') {
+        list = list.filter((m) => m.capabilities?.vision === true);
+      }
+      if (query.reasoning === 'true') {
+        list = list.filter((m) => m.capabilities?.reasoning === true || m.id.includes('think') || m.id.includes('r1') || m.id.includes('reason'));
+      }
+      if (query.tools === 'true') {
+        list = list.filter((m) => m.capabilities?.toolCalling === true);
+      }
+      if (query.streaming === 'true') {
+        list = list.filter((m) => m.capabilities?.streaming !== false);
+      }
+      if (query.search) {
+        const term = query.search.toLowerCase();
+        list = list.filter((m) => m.id.toLowerCase().includes(term) || (m.displayName ?? '').toLowerCase().includes(term) || m.providerId.toLowerCase().includes(term));
+      }
+
+      const total = list.length;
+      const offset = Math.max(0, parseInt(query.offset ?? '0', 10) || 0);
+      const limit = Math.min(200, Math.max(1, parseInt(query.limit ?? '50', 10) || 50));
+      const paginated = list.slice(offset, offset + limit);
+
+      return {
+        total,
+        offset,
+        limit,
+        models: paginated.map((m) => ({
+          id: m.id,
+          providerId: m.providerId,
+          displayName: m.displayName ?? m.id,
+          contextWindow: m.contextWindow ?? 8192,
+          maxOutputTokens: m.maxOutputTokens ?? 4096,
+          capabilities: m.capabilities,
+          pricing: m.pricing ?? { isFree: false, source: 'unknown' },
+          isFree: m.pricing?.isFree === true,
+          health: m.stale ? 'stale' : 'healthy',
+          discoveredAt: m.discoveredAt,
+          nexusAlias: `nexus/${m.providerId}/${m.id}`,
+        })),
+      };
+    });
+
+    // GET /v1/models/:providerId/:modelId — detailed model metadata and coding agent integration snippets
+    this.fastify.get('/v1/models/:providerId/:modelId', async (request, reply) => {
+      const { providerId, modelId } = request.params as { providerId: string; modelId: string };
+      const model = this.deps.modelRegistry.get(providerId, modelId)
+        ?? this.deps.modelRegistry.list().find((m) => m.providerId === providerId && m.id === modelId);
+
+      if (!model) {
+        return reply.code(404).send({ error: { message: `Model '${providerId}/${modelId}' not found in active catalog` } });
+      }
+
+      const endpoint = this.deps.routing.listEndpoints().find((e) => e.providerId === providerId);
+
+      return {
+        id: model.id,
+        providerId: model.providerId,
+        displayName: model.displayName ?? model.id,
+        contextWindow: model.contextWindow ?? 8192,
+        maxOutputTokens: model.maxOutputTokens ?? 4096,
+        capabilities: model.capabilities,
+        pricing: model.pricing ?? { isFree: false, source: 'unknown' },
+        isFree: model.pricing?.isFree === true,
+        health: model.stale ? 'stale' : (endpoint?.health ?? 'healthy'),
+        discoveredAt: model.discoveredAt,
+        agentSnippets: {
+          claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787/v1"\nexport ANTHROPIC_API_KEY="nexus"\nclaude --model nexus/${model.providerId}/${model.id}`,
+          codexCli: `codex --model nexus/${model.providerId}/${model.id}`,
+          hermesCli: `hermes -m nexus/${model.providerId}/${model.id}`,
+          agy: `agy -m nexus/${model.providerId}/${model.id}`,
+          curl: `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "nexus/${model.providerId}/${model.id}", "messages": [{"role": "user", "content": "Hello"}]}'`,
+        },
+      };
     });
 
     // ── Auth: JWT issuance ─────────────────────────────────────────────

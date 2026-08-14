@@ -1,6 +1,6 @@
 {
   "name": "@anx/task-router",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Intelligent AI Task Router — TaskClassifier, CapabilityMatcher, AgentSelector, ModelSelector, ExecutionPlanner",
   "type": "module",
   "main": "./dist/index.js",
