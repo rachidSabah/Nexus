@@ -295,6 +295,33 @@ export abstract class BaseIntegration implements IntegrationAdapter {
 
   private async commandExists(cmd: string): Promise<boolean> {
     const { spawn } = await import('node:child_process');
+    if (process.platform === 'win32') {
+      const userHome = process.env.USERPROFILE || process.env.HOME || '';
+      const localAppData = process.env.LOCALAPPDATA || (userHome ? join(userHome, 'AppData', 'Local') : '');
+      const directCandidates = [
+        join(userHome, '.local', 'bin', `${cmd}.exe`),
+        join(userHome, '.local', 'bin', `${cmd}.cmd`),
+        join(userHome, '.local', 'bin', cmd),
+        join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin', `${cmd}.exe`),
+        join(localAppData, 'Programs', cmd, 'bin', `${cmd}.exe`),
+        join(localAppData, cmd, `${cmd}-agent`, 'venv', 'Scripts', `${cmd}.exe`),
+        join(localAppData, cmd, 'bin', `${cmd}.exe`),
+      ];
+      for (const p of directCandidates) {
+        if (p && existsSync(p)) return true;
+      }
+
+      return new Promise((resolve) => {
+        const proc = spawn('where.exe', [cmd], { stdio: 'ignore' });
+        proc.on('close', (code) => resolve(code === 0));
+        proc.on('error', () => {
+          const cmdProc = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `where ${cmd}`], { stdio: 'ignore' });
+          cmdProc.on('close', (c) => resolve(c === 0));
+          cmdProc.on('error', () => resolve(false));
+        });
+      });
+    }
+
     return new Promise((resolve) => {
       const proc = spawn('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' });
       proc.on('close', (code) => resolve(code === 0));

@@ -27,6 +27,15 @@ export class ClaudeCodeIntegration extends BaseIntegration {
         merge: 'json-merge' as const,
         content: (ctx: IntegrationContext) =>
           jsonString({
+            env: {
+              ANTHROPIC_BASE_URL: ctx.gatewayUrl,
+              ANTHROPIC_AUTH_TOKEN: ctx.apiKey || 'nexus',
+              CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: '1',
+              DISABLE_TELEMETRY: '1',
+              DISABLE_AUTOUPDATER: '1',
+              DISABLE_ERROR_REPORTING: '1',
+              DISABLE_FEEDBACK_COMMAND: '1',
+            },
             apiBaseUrl: `${ctx.gatewayUrl}/v1`,
             apiKeyHelper: ctx.apiKey
               ? `echo '${ctx.apiKey}'`

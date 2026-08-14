@@ -128,11 +128,16 @@ export function toChatRequest(body: ResponsesRequest): ChatCompletionRequest {
     model: body.model ?? 'claude-sonnet-4-5',
     messages,
     ...(tools.length > 0 ? { tools } : {}),
-    ...(body.max_output_tokens != null ? { max_tokens: body.max_output_tokens } : {}),
+    ...(body.max_output_tokens != null
+      ? {
+          maxTokens: Math.min(body.max_output_tokens, 4096),
+          max_tokens: Math.min(body.max_output_tokens, 4096),
+        }
+      : { maxTokens: 4096 }),
     ...(body.temperature != null ? { temperature: body.temperature } : {}),
     ...(body.top_p != null ? { top_p: body.top_p } : {}),
     stream: body.stream ?? false,
-  };
+  } as ChatCompletionRequest;
 }
 
 // ── Response translation ───────────────────────────────────────────────

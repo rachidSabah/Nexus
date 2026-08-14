@@ -439,7 +439,7 @@ export class HttpServer {
     //     refresh from each provider's GET /models endpoint)
     // When a discovered model has pricing/capabilities, those are included
     // so the dashboard can show "free" badges and capability icons.
-    this.fastify.get('/v1/models', async (request, reply) => {
+    const handleModels = async (request: any, reply: any) => {
       const q = request.query as { free?: string; capability?: string };
       const models = new Map<string, { id: string; object: 'model'; owned_by: string; pricing?: unknown; capabilities?: unknown; context_window?: number }>();
 
@@ -482,22 +482,23 @@ export class HttpServer {
       }
 
       // Claude Code projection (master-prompt §10): every discovered model is
-            // also exposed under an anthropic-compatible claude-gw-<provider>-<model>
-            // alias so Claude Code's /model picker shows the FULL prefetched catalog
-            // (it client-side filters to claude-* ids only). Purely registry-derived:
-            // new models appear automatically; stale models drop out. No hardcode.
-            const byId = new Map<string, ClaudeProjectionEntry>(
-              Array.from(models.values()).map((m) => [m.id, m as ClaudeProjectionEntry]),
-            );
-            // includeNatives: false — natives are already in `models` above; only the
-            // alias entries (nativeId set) are added.
-            for (const e of projectClaudeCatalog(discovered, { includeNatives: false })) {
-              if (!byId.has(e.id)) byId.set(e.id, e);
-            }
+      // also exposed under an anthropic-compatible claude-gw-<provider>-<model>
+      // alias so Claude Code's /model picker shows the FULL prefetched catalog
+      // (it client-side filters to claude-* ids only). Purely registry-derived:
+      // new models appear automatically; stale models drop out. No hardcode.
+      const byId = new Map<string, ClaudeProjectionEntry>(
+        Array.from(models.values()).map((m) => [m.id, m as ClaudeProjectionEntry]),
+      );
+      for (const e of projectClaudeCatalog(discovered, { includeNatives: false })) {
+        if (!byId.has(e.id)) byId.set(e.id, e);
+      }
 
-            reply.header('X-Nexus-Model-Catalog-Version', String(this.deps.modelRegistry.getCatalogVersion()));
-            return reply.send({ object: 'list', data: Array.from(byId.values()) });
-    });
+      reply.header('X-Nexus-Model-Catalog-Version', String(this.deps.modelRegistry.getCatalogVersion()));
+      return reply.send({ object: 'list', data: Array.from(byId.values()) });
+    };
+    this.fastify.get('/v1/models', handleModels);
+    this.fastify.get('/models', handleModels);
+    this.fastify.get('/v1/v1/models', handleModels);
 
     // ── Dynamic model discovery (master prompt #5, #6) ──────────────────
     // GET /v1/models/discover  — list all discovered models with metadata
@@ -2144,7 +2145,7 @@ export class HttpServer {
     });
 
     // ── Chat Completions (OpenAI-compatible, streaming + non-streaming)
-    this.fastify.post('/v1/chat/completions', async (request, reply) => {
+    const handleChatCompletions = async (request: any, reply: any) => {
       const body = request.body as ChatCompletionRequest;
       if (!body?.model || !body?.messages) {
         return reply.code(400).send({ error: { message: 'model and messages are required', type: 'invalid_request_error' } });
@@ -2245,7 +2246,10 @@ export class HttpServer {
         const http = this.httpErrorFor(err as Error);
         return reply.code(http.status).send({ error: { message: http.message, code: (err as { code?: string }).code } });
       }
-    });
+    };
+    this.fastify.post('/v1/chat/completions', handleChatCompletions);
+    this.fastify.post('/chat/completions', handleChatCompletions);
+    this.fastify.post('/v1/v1/chat/completions', handleChatCompletions);
 
     // ── Anthropic-compatible Messages API (POST /v1/messages) ──────────
     // Lets Claude Code (and other Anthropic-protocol agents) talk to the
@@ -2272,7 +2276,9 @@ export class HttpServer {
       }
       const providerHint = this.preferredProviderFor(aliasResolution.model, aliasResolution.resolution);
       const routing = { ...(((body as { routing?: Record<string, unknown> }).routing) ?? {}), ...(providerHint ? { preferredProviders: [providerHint] } : {}) };
-      const effectiveBody = { ...toChatRequest(body), model: aliasResolution.model, routing };
+      const chatReq = toChatRequest(body);
+      const maxTokens = chatReq.maxTokens && chatReq.maxTokens > 4096 ? 4096 : chatReq.maxTokens;
+      const effectiveBody = { ...chatReq, maxTokens, model: aliasResolution.model, routing };
       if (body.stream) {
         reply.raw.writeHead(200, {
           'content-type': 'text/event-stream',
@@ -2324,7 +2330,8 @@ export class HttpServer {
         return reply.code(http.status).send({ error: { message: http.message } });
       }
     });
-    this.fastify.post('/v1/messages', async (request, reply) => {
+
+    const handleMessages = async (request: any, reply: any) => {
       const anthropicReq = request.body as AnthropicRequest;
       if (!anthropicReq?.model || !anthropicReq?.messages || !anthropicReq?.max_tokens) {
         return reply.code(400).send({
@@ -2483,7 +2490,10 @@ let optMessages: never[] | undefined;
           error: { type: 'api_error', message: http.message },
         });
       }
-    });
+    };
+    this.fastify.post('/v1/messages', handleMessages);
+    this.fastify.post('/messages', handleMessages);
+    this.fastify.post('/v1/v1/messages', handleMessages);
 
     // ── Embeddings ─────────────────────────────────────────────────────
     this.fastify.post('/v1/embeddings', async (request, reply) => {

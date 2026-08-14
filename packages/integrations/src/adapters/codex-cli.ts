@@ -20,14 +20,31 @@ export class CodexCliIntegration extends BaseIntegration {
     return ['codex'];
   }
 
-  protected configFiles() {
+  protected configFiles(ctx: IntegrationContext) {
+    const endpoint = `${ctx.gatewayUrl}/v1`;
+    const targetModel = ctx.defaultModel || 'nexus/fast';
+    const key = ctx.apiKey ?? 'no-key-required';
+
     return [
+      {
+        path: '.codex/config.toml',
+        merge: 'overwrite' as const,
+        content: () =>
+          [
+            `model = "${targetModel}"`,
+            `model_provider = "openai"`,
+            ``,
+            `[providers.openai]`,
+            `base_url = "${endpoint}"`,
+            `api_key = "${key}"`,
+          ].join('\n') + '\n',
+      },
       {
         path: '.codex/config.json',
         merge: 'json-merge' as const,
         content: (ctx: IntegrationContext) =>
           jsonString({
-            model: ctx.defaultModel,
+            model: ctx.defaultModel || 'nexus/fast',
             model_provider: 'openai',
             providers: {
               openai: {

@@ -34,10 +34,9 @@ export class HermesCliIntegration extends BaseIntegration {
     return ['hermes'];
   }
 
-  // Refuse by default, but bind automatically when the host signals
-  // NEXUS_BIND_HERMES=1 (dynamic activation after identity checks pass).
+  // First-class building agent: ready to bind to the gateway.
   protected skipIfConfigured(): boolean {
-    return !process.env['NEXUS_BIND_HERMES'];
+    return false;
   }
 
   protected configFiles(ctx: IntegrationContext) {
