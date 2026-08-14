@@ -36,25 +36,25 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.27.9",
-    "@commitlint/cli": "^19.6.0",
-    "@commitlint/config-conventional": "^19.6.0",
+    "@changesets/cli": "^3.0.0",
+    "@commitlint/cli": "^21.2.1",
+    "@commitlint/config-conventional": "^21.2.0",
     "@swc/core": "^1.15.47",
-    "@types/node": "^22.10.2",
-    "@typescript-eslint/eslint-plugin": "^8.18.1",
-    "@typescript-eslint/parser": "^8.18.1",
-    "eslint": "^8.57.0",
-    "eslint-config-prettier": "^9.1.0",
+    "@types/node": "^26.2.0",
+    "@typescript-eslint/eslint-plugin": "^8.67.0",
+    "@typescript-eslint/parser": "^8.67.0",
+    "eslint": "^10.8.1",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.31.0",
-    "eslint-plugin-jsdoc": "^50.6.1",
+    "eslint-plugin-jsdoc": "^64.1.0",
     "husky": "^9.1.7",
-    "lint-staged": "^15.2.11",
+    "lint-staged": "^17.3.0",
     "prettier": "^3.4.2",
     "rimraf": "^6.0.1",
     "tsup": "^8.3.5",
-    "turbo": "^2.3.3",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8"
+    "turbo": "^2.10.9",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
