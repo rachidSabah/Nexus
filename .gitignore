@@ -11,10 +11,12 @@ build/
 *.tsbuildinfo
 coverage/
 
-# Environment
+# Environment / secrets — NEVER commit real credentials
 .env
 .env.local
 .env.*.local
+.envrc
+*.local
 
 # IDE
 .idea/
@@ -23,17 +25,28 @@ coverage/
 *.swo
 .DS_Store
 
-# Logs
+# Logs (may contain local machine paths)
+*.log
+*.e2e.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Test
+# Local helper artifacts / machine-specific scripts
+*.lnk
+convert_icon.ps1
+create_shortcut.ps1
+
+# OS / editor
+Thumbs.db
+ehthumbs.db
+
+# Test / coverage output
 .nyc_output/
 *.lcov
-
-# Misc
-*.log
 .cache/
+
+# Local agent state (keys, memory, rag) — always outside the repo
+.agent-nexus/

@@ -4,8 +4,10 @@ export default defineConfig({
   format: ['esm'],
   dts: true,
   sourcemap: true,
-  clean: true,
+  clean: false,
   target: 'es2022',
   platform: 'node',
-  banner: { js: '#!/usr/bin/env node' },
+  // NOTE: no `banner` here — src/bin.ts already carries its own shebang.
+  // Adding a banner caused a duplicated `#!/usr/bin/env node` in dist/bin.js,
+  // which Node rejects with "SyntaxError: Invalid or unexpected token".
 });

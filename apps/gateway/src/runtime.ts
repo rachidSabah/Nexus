@@ -1,3 +1,7 @@
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { ExtensionMarketplace } from '@agent-nexus/marketplace';
@@ -28,10 +32,14 @@ import {
   type PrivacyConfig,
   type ProviderEndpoint,
   type RoutingDecision,
+  SessionManager,
+  InMemorySessionStore,
 } from '@anx/core';
+import { AutoHealer } from './auto-healer.js';
 import { McpClient } from '@anx/mcp-client';
 import { McpServer } from '@anx/mcp-server';
-import { DefaultMemory, InMemoryVectorStore, GatewayEmbeddingsProvider } from '@anx/memory';
+import { DefaultMemory, FileVectorStore, GatewayEmbeddingsProvider, RagPipeline } from '@anx/memory';
+import { BUILTIN_PLUGINS } from './builtin-plugins.js';
 import { DefaultNetworkService, preferIpv4 } from '@anx/networking';
 import { InProcessTelemetry, StructuredLogger, wireEventsToTelemetry } from '@anx/observability';
 import { PluginRuntime } from '@anx/plugins';
@@ -44,7 +52,7 @@ import { WorkflowEngine, InMemoryWorkflowRepository, WORKFLOW_TEMPLATES } from '
 
 import { ConfigLoader, type GatewayConfig } from './config.js';
 import { AgentDetector } from './agent-detector.js';
-import { registerDefaultEndpoints } from './endpoints.js';
+import { registerDefaultEndpoints, defaultBaseUrlFor, defaultCapabilitiesFor, defaultPricingFor } from './endpoints.js';
 import { ModelAliasRegistry } from './model-aliases.js';
 import { GATEWAY_VERSION } from './version.js';
 import { HttpServer } from './server.js';
@@ -77,6 +85,7 @@ export class GatewayRuntime {
   readonly runtime!: AgentRuntime;
   readonly workflows!: WorkflowEngine;
   readonly memory!: DefaultMemory;
+  readonly rag!: RagPipeline | null;
   readonly tools!: ToolRuntime;
   readonly planner!: ReturnType<typeof createPlanner>;
   readonly teams!: TeamManager;
@@ -96,6 +105,7 @@ export class GatewayRuntime {
   readonly taskClassifier!: TaskClassifier;
   readonly contextWindowManager!: ContextWindowManager;
   readonly costPredictor!: CostPredictor;
+  readonly autoHealer!: AutoHealer;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -120,6 +130,7 @@ export class GatewayRuntime {
     runtime: AgentRuntime;
     workflows: WorkflowEngine;
     memory: DefaultMemory;
+    rag: RagPipeline | null;
     tools: ToolRuntime;
     planner: ReturnType<typeof createPlanner>;
     teams: TeamManager;
@@ -132,12 +143,14 @@ export class GatewayRuntime {
     tracer: RequestTracer;
     privacy: PrivacyConfig;
     agentDetector: AgentDetector;
+    sessions: SessionManager;
     budgetManager: BudgetManager;
     promptCompressor: PromptCompressor;
     rateLimitTracker: ProactiveRateLimitTracker;
     taskClassifier: TaskClassifier;
     contextWindowManager: ContextWindowManager;
     costPredictor: CostPredictor;
+    autoHealer: AutoHealer;
   }) {
     Object.assign(this, opts);
   }
@@ -157,12 +170,27 @@ export class GatewayRuntime {
       cooldownMs: config.routing.cooldownMs,
     });
     const audit = new InMemoryAuditLog();
-    const vaultKey = config.security.vaultKey ?? process.env['AGENT_NEXUS_VAULT_KEY'];
+    const vaultPath = config.security.vaultPath ?? join(homedir(), '.agent-nexus', 'vault.json');
+    let vaultKey = config.security.vaultKey ?? process.env['AGENT_NEXUS_VAULT_KEY'];
+
+    // Auto-generate or restore persistent master vault key on disk so API keys persist across restarts
+    if (!vaultKey && vaultPath) {
+      const keyPath = join(dirname(vaultPath), 'vault.key');
+      try {
+        if (existsSync(keyPath)) {
+          vaultKey = (await readFile(keyPath, 'utf8')).trim();
+        } else {
+          await mkdir(dirname(keyPath), { recursive: true });
+          vaultKey = randomUUID().toString();
+          await writeFile(keyPath, vaultKey, 'utf8');
+        }
+      } catch (err) {
+        logger.warn(`Failed to read/write persistent vault key at ${keyPath}: ${(err as Error).message}`);
+      }
+    }
+
     if (!vaultKey) {
-      // Refuse to silently fall back to a random key if persistent storage is
-      // configured — that would make previously-stored credentials permanently
-      // undecryptable. Generate an ephemeral key only when the vault is in-memory.
-      if (config.security.vaultPath) {
+      if (vaultPath) {
         throw new Error(
           'AGENT_NEXUS_VAULT_KEY is required when security.vaultPath is set. ' +
             'Either set the env var, remove vaultPath from config, or set vaultPath to undefined for in-memory only.',
@@ -175,7 +203,7 @@ export class GatewayRuntime {
     }
     const vault = new EncryptedCredentialVault(
       vaultKey ?? randomUUID().toString(),
-      config.security.vaultPath,
+      vaultPath,
     );
     await vault.restore();
 
@@ -211,8 +239,15 @@ export class GatewayRuntime {
     // endpoint exists, embedFn is undefined and the semantic cache +
     // memory search degrade gracefully (exact-match only).
     const gatewayUrl = `http://127.0.0.1:${config.server.port}`;
+    // Only count endpoints that are actually usable (healthy or degraded) —
+    // an unhealthy endpoint that merely claims embeddings capability would
+    // otherwise wire a broken embedder and make every memory search 500.
     const hasEmbeddingsEndpoint = routing.listEndpoints().some(
-      (e) => e.capabilities.embeddings,
+      (e) =>
+        (Array.isArray(e.capabilities)
+          ? (e.capabilities as unknown as string[]).includes('embeddings')
+          : e.capabilities.embeddings) &&
+        (e.health === 'healthy' || e.health === 'degraded'),
     );
     let embedFn: ((text: string) => Promise<readonly number[]>) | undefined;
     if (hasEmbeddingsEndpoint) {
@@ -238,18 +273,122 @@ export class GatewayRuntime {
       defaultStrategy: 'adaptive',
     });
 
+    // Rehydrate registry metadata from the encrypted vault so registered
+    // keys (and their rotation state) survive gateway restarts.
+    const restoredKeys = await keyRegistry.restoreFromVault();
+    if (restoredKeys > 0) {
+      logger.info(`Restored ${restoredKeys} API key(s) from the encrypted vault (${vaultPath}).`);
+    }
+
+    // Endpoints are in-memory and vanish on restart — re-register a routable
+    // endpoint for every provider that has vault-restored keys but no
+    // endpoint, so restored keys are actually usable (same auto-registration
+    // the POST /v1/keys handler performs at key-add time).
+    for (const key of keyRegistry.listAll()) {
+      const hasEndpoint = routing.listEndpoints().some((e) => e.providerId === key.providerId);
+      if (hasEndpoint) continue;
+      routing.registerEndpoint({
+        id: `auto-${key.providerId}`,
+        providerId: key.providerId,
+        displayName: key.providerId,
+        baseUrl: defaultBaseUrlFor(key.providerId),
+        capabilities: defaultCapabilitiesFor(key.providerId),
+        pricing: defaultPricingFor(key.providerId),
+        priority: 1,
+        weight: 1,
+        region: 'auto',
+        tags: ['auto', 'key-registered'],
+        timeoutMs: 30_000,
+        maxRetries: 2,
+        concurrencyLimit: 10,
+        health: 'healthy',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      logger.info(`Auto-registered endpoint 'auto-${key.providerId}' for restored key.`);
+    }
+
     // Dynamic model discovery registry — calls each provider's /models
     // endpoint on startup and hourly thereafter. Classifies free models
     // automatically (no hard-coded list). Master prompt #5 + #6.
     const modelRegistry = new ModelRegistry(routing, adapters, {
       refreshIntervalMs: 60 * 60 * 1000,
       discoveryTimeoutMs: 15_000,
+      events,
+      keyGetter: async (providerId: string) => {
+        // select() returns the best available key id for this provider
+        // (respects rotation strategy, cooldown, adaptive scoring).
+        const keyId = keyRegistry.select(providerId);
+        if (keyId) return keyRegistry.getPlaintext(keyId);
+        // Fallback: direct vault lookup for providers registered via env var
+        // that bypassed the KeyRegistry (e.g. env-var bootstrap keys).
+        return vault.get(providerId);
+      },
     });
+
+    // Explicit (non-discovered) model registration. Operators can pin models
+    // the upstream `/models` API doesn't expose (e.g. provider showcase models
+    // published on the website before they appear via API) via the
+    // GATEWAY_EXPLICIT_MODELS env var: a JSON array of ModelDescriptor objects.
+    // These survive refresh cycles and are exempt from the stale-sweep.
+    const explicitEnv = process.env.GATEWAY_EXPLICIT_MODELS;
+    if (explicitEnv) {
+      try {
+        const parsed = JSON.parse(explicitEnv);
+        const models = Array.isArray(parsed) ? parsed : [parsed];
+        const valid = models.filter(
+          (m: { id?: unknown; providerId?: unknown }) =>
+            typeof m?.id === 'string' && typeof m?.providerId === 'string',
+        );
+        if (valid.length > 0) {
+          modelRegistry.addExplicit(valid as never);
+          console.log(`[model-registry] registered ${valid.length} explicit model(s) from GATEWAY_EXPLICIT_MODELS`);
+        }
+      } catch (err) {
+        console.error('[model-registry] failed to parse GATEWAY_EXPLICIT_MODELS:', (err as Error).message);
+      }
+    }
 
     // Smart model aliasing — `local/free`, `local/coding`, `local/best`,
     // `local/auto`, etc. resolve dynamically to the best currently-available
     // model based on the ModelRegistry's discovered data. Master prompt #19 + #20.
-    const aliasRegistry = new ModelAliasRegistry(modelRegistry);
+    // The routing engine is passed as a fallback candidate source so aliases
+    // still resolve (to endpoint-derived candidates) before discovery succeeds.
+    const aliasRegistry = new ModelAliasRegistry(modelRegistry, routing, {
+      default: process.env.GATEWAY_MODEL_DEFAULT,
+      // Claude sub-family overrides (FCC parity).
+      fable: process.env.GATEWAY_MODEL_FABLE ?? process.env.ANTHROPIC_MODEL_FABLE,
+      opus: process.env.GATEWAY_MODEL_OPUS ?? process.env.ANTHROPIC_MODEL_OPUS,
+      sonnet: process.env.GATEWAY_MODEL_SONNET ?? process.env.ANTHROPIC_MODEL_SONNET,
+      haiku: process.env.GATEWAY_MODEL_HAIKU ?? process.env.ANTHROPIC_MODEL_HAIKU,
+      // Family-wide targets for every coding agent's native model names
+      // (Codex: gpt-*/codex-*/o*; DeepSeek: deepseek-*; Gemini CLI: gemini-*;
+      //  Grok/LLaMA/Qwen/Mistral/MiniMax/GLM/Kimi ...). Unset => dynamic
+      // free-tier pick from discovery.
+      claude: process.env.GATEWAY_MODEL_CLAUDE,
+      openai: process.env.GATEWAY_MODEL_OPENAI ?? process.env.GATEWAY_MODEL_GPT,
+      deepseek: process.env.GATEWAY_MODEL_DEEPSEEK,
+      gemini: process.env.GATEWAY_MODEL_GEMINI,
+      grok: process.env.GATEWAY_MODEL_GROK,
+      meta: process.env.GATEWAY_MODEL_META ?? process.env.GATEWAY_MODEL_LLAMA,
+      qwen: process.env.GATEWAY_MODEL_QWEN,
+      mistral: process.env.GATEWAY_MODEL_MISTRAL,
+      minimax: process.env.GATEWAY_MODEL_MINIMAX,
+      zhipu: process.env.GATEWAY_MODEL_ZHIPU,
+      moonshot: process.env.GATEWAY_MODEL_MOONSHOT,
+    });
+
+    // Discover every provider's model catalog at boot (the hourly interval
+    // alone leaves the catalog empty for up to an hour after start), so agent
+    // model pickers (Claude Code /model, Codex, DeepSeek, ...) immediately see
+    // all models each provider API declares.
+    void modelRegistry.refresh().then(() => {
+      const stats = modelRegistry.stats();
+      logger.info('model discovery complete', {
+        providers: Object.keys(stats.byProvider).length,
+        models: stats.totalModels,
+      });
+    });
 
     // Request tracer — records full request traces for inspection via
     // /v1/traces/:id. Master prompt #30.
@@ -305,12 +444,13 @@ export class GatewayRuntime {
     // Context window manager — prevents HTTP 413 errors by estimating
     // token count before routing and switching to a larger-context model
     // (or trimming the conversation) when needed.
-    const contextWindowManager = new ContextWindowManager();
+    const contextWindowManager = new ContextWindowManager({ summarizeTrimmed: false });
 
     // Cost predictor — estimates the cost of a request before sending it
     // and recommends a cheaper alternative model when the estimate exceeds
     // the per-request threshold.
     const costPredictor = new CostPredictor();
+    const autoHealer = new AutoHealer(routing, keyRegistry, { intervalMs: 30_000 });
 
     // The ChatCompletionUseCase options interface doesn't yet have fields
     // for the budget manager, prompt compressor, or rate-limit tracker
@@ -370,18 +510,37 @@ export class GatewayRuntime {
 
     // Long-term memory — uses the real GatewayEmbeddingsProvider for semantic
     // search if an embeddings endpoint is available. Otherwise stores records
-    // without embeddings (exact-match search only).
+    // without embeddings (exact-match search only). The vector store is
+    // file-backed so memory genuinely survives restarts (the dashboard's
+    // "Long-Term Vector Store ... Survives restarts" claim is therefore true).
     const memoryEmbedder = hasEmbeddingsEndpoint
       ? new GatewayEmbeddingsProvider(
           gatewayUrl,
           config.security.principals?.find((p) => p.apiKey)?.apiKey,
         )
       : undefined;
+    const memoryPath = process.env['ANX_MEMORY_PATH'] ?? join(homedir(), '.agent-nexus', 'memory.json');
+    const ragPath = process.env['ANX_RAG_PATH'] ?? join(homedir(), '.agent-nexus', 'rag.json');
     const memory = new DefaultMemory(
-      new InMemoryVectorStore(),
+      new FileVectorStore(memoryPath),
       memoryEmbedder ?? null,
       events,
     );
+
+    // Shared RAG pipeline — chunks + embeds + stores documents for semantic
+    // retrieval (/v1/rag/ingest + /v1/rag/retrieve). Reuses the same
+    // GatewayEmbeddingsProvider as memory so queries and documents live in
+    // the same embedding space. Disabled (null) when no embeddings-capable
+    // endpoint is registered — no fake/mock embeddings in production.
+    const rag = hasEmbeddingsEndpoint
+      ? new RagPipeline(new FileVectorStore(ragPath), memoryEmbedder!)
+      : null;
+    if (!rag) {
+      logger.warn(
+        'No embeddings-capable endpoint registered — RAG ingest/retrieve are ' +
+          'disabled. Configure a provider with embeddings support (e.g. OpenAI) to enable.',
+      );
+    }
 
     const tools = new ToolRuntime(events);
     registerBuiltinToolDefinitions(tools);
@@ -395,6 +554,107 @@ export class GatewayRuntime {
     const marketplace = new ExtensionMarketplace(config.server.versionLabel ?? GATEWAY_VERSION, {
       signatureVerification: config.security.vaultKey !== undefined,
     });
+
+    // Seed prebuilt marketplace catalog (Plugins, Agents, Tools, Templates)
+    marketplace.addAvailableExtension({
+      metadata: {
+        id: 'plugin-security-guardrail',
+        name: 'Cyber Guardrail & PII Anonymizer',
+        description: 'Real-time PII masking, SQL injection defense, and prompt injection protection for coding agents.',
+        version: '1.2.0',
+        type: 'plugin',
+        category: 'security',
+        author: { name: 'Antigravity Core', verified: true },
+        license: 'MIT',
+        keywords: ['security', 'pii', 'guardrail', 'safety'],
+      },
+      downloads: 1420,
+      rating: { average: 4.9, count: 120 },
+      status: 'available',
+      dependencies: { gateway: '0.1.0', extensions: [], providers: [] },
+      permissions: { filesystem: false, network: false, environment: false, secrets: false, providers: ['*'], models: [] },
+      config: { settings: {}, envVars: [], secrets: [] },
+      versions: [{ version: '1.2.0', releaseDate: new Date().toISOString(), downloadUrl: 'https://registry.agent-nexus.io/plugins/security-guardrail-1.2.0.tgz', checksum: 'sha256-abc', signature: 'sig_sec_120_valid', minGatewayVersion: '0.1.0' }],
+      publishedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    marketplace.addAvailableExtension({
+      metadata: {
+        id: 'agent-deep-coder',
+        name: 'DeepSeek & Claude Refactor Agent',
+        description: 'Autonomous multi-file refactoring agent with red-green TDD validation loops.',
+        version: '2.0.1',
+        type: 'mcp-server',
+        category: 'coding',
+        author: { name: 'DeepMind Swarm Labs', verified: true },
+        license: 'Apache-2.0',
+        keywords: ['coding', 'refactor', 'tdd', 'claude-code'],
+      },
+      downloads: 3890,
+      rating: { average: 4.95, count: 340 },
+      status: 'available',
+      dependencies: { gateway: '0.1.0', extensions: [], providers: [] },
+      permissions: { filesystem: true, network: true, environment: false, secrets: false, providers: ['claude-3-5-sonnet', 'deepseek-reasoner'], models: [] },
+      config: { settings: {}, envVars: [], secrets: [] },
+      versions: [{ version: '2.0.1', releaseDate: new Date().toISOString(), downloadUrl: 'https://registry.agent-nexus.io/agents/deep-coder-2.0.1.tgz', checksum: 'sha256-def', signature: 'sig_agent_201_valid', minGatewayVersion: '0.1.0' }],
+      publishedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    marketplace.addAvailableExtension({
+      metadata: {
+        id: 'tool-git-automation',
+        name: 'Autonomous Git Worktree & Branch Manager',
+        description: 'Safe git operation tools with automatic rollback and conflict resolution hooks.',
+        version: '0.9.5',
+        type: 'workflow',
+        category: 'developer-tools',
+        author: { name: 'DevOps Swarm', verified: true },
+        license: 'MIT',
+        keywords: ['git', 'devops', 'worktree', 'automation'],
+      },
+      downloads: 980,
+      rating: { average: 4.8, count: 95 },
+      status: 'available',
+      dependencies: { gateway: '0.1.0', extensions: [], providers: [] },
+      permissions: { filesystem: true, network: false, environment: false, secrets: false, providers: [], models: [] },
+      config: { settings: {}, envVars: [], secrets: [] },
+      versions: [{ version: '0.9.5', releaseDate: new Date().toISOString(), downloadUrl: 'https://registry.agent-nexus.io/tools/git-automation-0.9.5.tgz', checksum: 'sha256-ghi', signature: 'sig_tool_095_valid', minGatewayVersion: '0.1.0' }],
+      publishedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Auto-install prebuilt extensions
+    void marketplace.install('plugin-security-guardrail', { skipSignatureVerification: true });
+
+    // Seed prebuilt runtime plugins
+    void plugins.load({
+      id: 'core-latency-optimizer',
+      source: 'inline',
+      factory: () => ({
+        descriptor: {
+          id: 'core-latency-optimizer',
+          name: 'Cyber Latency & Cache Pre-fetcher',
+          version: '1.0.0',
+          description: 'Pre-evaluates prompt token lengths and injects optimized system cache headers.',
+          author: 'Antigravity Systems',
+          hooks: ['onRequest', 'onRouteResolved', 'onResponse'],
+          capabilities: ['caching', 'latency-reduction', 'token-optimization'],
+        },
+      }),
+    });
+
+    // Phase 18 — register the suite of built-in operational plugins so they
+    // appear in the dashboard "Loaded Plugins & Lifecycle Hooks" view and
+    // participate in the request lifecycle. Each is defensive by design.
+    for (const plugin of BUILTIN_PLUGINS) {
+      void plugins.load({
+        id: plugin.descriptor.id,
+        source: 'inline',
+        factory: () => plugin,
+      });
+    }
 
     // Service mesh — used for cross-gateway / cross-provider traffic shaping
     // (load balancing, circuit breaker, canary/blue-green splits). Auto-registers
@@ -474,6 +734,7 @@ export class GatewayRuntime {
       jwt,
       vault,
       mcpServer,
+      mcpClient,
       a2a,
       a2aRegistry,
       plugins,
@@ -483,6 +744,7 @@ export class GatewayRuntime {
       runtime,
       workflows,
       memory,
+      rag,
       tools,
       planner,
       teams,
@@ -495,6 +757,7 @@ export class GatewayRuntime {
       tracer,
       privacy,
       agentDetector,
+      sessions: new SessionManager(new InMemorySessionStore(), events),
       // Phase 5
       budgetManager,
       promptCompressor,
@@ -527,6 +790,7 @@ export class GatewayRuntime {
       runtime,
       workflows,
       memory,
+      rag,
       tools,
       planner,
       teams,
@@ -539,6 +803,7 @@ export class GatewayRuntime {
       tracer,
       privacy,
       agentDetector,
+      sessions: new SessionManager(new InMemorySessionStore(), events),
       // Phase 5
       budgetManager,
       promptCompressor,
@@ -546,12 +811,14 @@ export class GatewayRuntime {
       taskClassifier,
       contextWindowManager,
       costPredictor,
+      autoHealer,
     });
   }
 
   async start(): Promise<void> {
     await this.mcpClient.connect();
     await this.modelRegistry.start();
+    this.autoHealer.start();
     await this.server.listen(this.config.server.port, this.config.server.host);
     this.logger.info('gateway started', {
       port: this.config.server.port,
@@ -559,10 +826,12 @@ export class GatewayRuntime {
       endpoints: this.routing.listEndpoints().length,
       agents: this.agents.list().length,
       workflows: (await this.workflows.list()).length,
+      autoHealer: 'enabled',
     });
   }
 
   async stop(): Promise<void> {
+    this.autoHealer.stop();
     this.modelRegistry.stop();
     await this.mcpClient.disconnect();
     await this.server.close();

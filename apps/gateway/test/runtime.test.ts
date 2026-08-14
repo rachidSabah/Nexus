@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { rmSync } from 'fs';
 
 import { GatewayRuntime } from '../src/runtime.js';
 
@@ -6,7 +9,18 @@ describe('GatewayRuntime integration', () => {
   let runtime: GatewayRuntime;
 
   beforeAll(async () => {
+    // Isolate this suite from the real vault: never read/write the user's
+    // live credentials (a stray persist() there wipes their API keys).
+    process.env['ANX_VAULT_PATH'] = join(tmpdir(), 'anx-test-vault.json');
+    process.env['AGENT_NEXUS_VAULT_KEY'] = 'anx-test-key-0123456789abcdef';
     process.env['ANX_CONFIG'] = '';
+        // Isolated port: never collide with a live gateway (8787) and never
+        // answer real agent traffic from a test instance.
+        process.env['PORT'] = '18787';
+        // Fresh temp vault every run: a stale file from a previous run carries
+        // entries encrypted with a different per-run salt, which breaks decrypt.
+        rmSync(join(tmpdir(), 'anx-test-vault.json'), { force: true });
+        rmSync(join(tmpdir(), 'anx-test-vault.key'), { force: true });
     runtime = await GatewayRuntime.create(undefined);
     await runtime.start();
   });
@@ -16,7 +30,7 @@ describe('GatewayRuntime integration', () => {
   });
 
   it('exposes /health endpoint', async () => {
-    const r = await fetch('http://localhost:8787/health');
+    const r = await fetch('http://localhost:18787/health');
     expect(r.ok).toBe(true);
     const body = await r.json();
     expect(body['version']).toBe('0.1.0');
@@ -24,7 +38,7 @@ describe('GatewayRuntime integration', () => {
   });
 
   it('exposes /v1/models endpoint', async () => {
-    const r = await fetch('http://localhost:8787/v1/models');
+    const r = await fetch('http://localhost:18787/v1/models');
     expect(r.ok).toBe(true);
     const body = await r.json();
     expect(body['object']).toBe('list');
@@ -32,27 +46,27 @@ describe('GatewayRuntime integration', () => {
   });
 
   it('exposes /v1/providers endpoint', async () => {
-    const r = await fetch('http://localhost:8787/v1/providers');
+    const r = await fetch('http://localhost:18787/v1/providers');
     expect(r.ok).toBe(true);
     const body = (await r.json()) as Array<{ id: string }>;
     expect(Array.isArray(body)).toBe(true);
   });
 
   it('exposes /metrics endpoint in Prometheus format', async () => {
-    const r = await fetch('http://localhost:8787/metrics');
+    const r = await fetch('http://localhost:18787/metrics');
     expect(r.ok).toBe(true);
     expect(r.headers.get('content-type')).toContain('text/plain');
   });
 
   it('exposes / (root info) endpoint', async () => {
-    const r = await fetch('http://localhost:8787/');
+    const r = await fetch('http://localhost:18787/');
     expect(r.ok).toBe(true);
     const body = await r.json();
     expect(body['name']).toBe('Agent Nexus Gateway');
   });
 
   it('returns 400 for malformed /v1/chat/completions request', async () => {
-    const r = await fetch('http://localhost:8787/v1/chat/completions', {
+    const r = await fetch('http://localhost:18787/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -61,7 +75,7 @@ describe('GatewayRuntime integration', () => {
   });
 
   it('returns 503 for chat with no eligible provider', async () => {
-    const r = await fetch('http://localhost:8787/v1/chat/completions', {
+    const r = await fetch('http://localhost:18787/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -74,7 +88,7 @@ describe('GatewayRuntime integration', () => {
   });
 
   it('handles MCP initialize request', async () => {
-    const r = await fetch('http://localhost:8787/v1/mcp', {
+    const r = await fetch('http://localhost:18787/v1/mcp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -89,7 +103,7 @@ describe('GatewayRuntime integration', () => {
   });
 
   it('handles MCP tools/list request', async () => {
-    const r = await fetch('http://localhost:8787/v1/mcp', {
+    const r = await fetch('http://localhost:18787/v1/mcp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

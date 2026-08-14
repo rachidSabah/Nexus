@@ -17,6 +17,9 @@ export {
   LmStudioAdapter,
   LitellmAdapter,
   AzureOpenAIAdapter,
+  OpenCodeZenAdapter,
+  OpenCodeGoAdapter,
+  NvidiaNimAdapter,
 } from './adapters/openai-compatible.js';
 
 import type { ProviderAdapter } from '@anx/core';
@@ -39,6 +42,9 @@ import {
   LmStudioAdapter,
   LitellmAdapter,
   AzureOpenAIAdapter,
+  OpenCodeZenAdapter,
+  OpenCodeGoAdapter,
+  NvidiaNimAdapter,
 } from './adapters/openai-compatible.js';
 import { OpenAIAdapter } from './adapters/openai.js';
 
@@ -65,6 +71,9 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
     new LmStudioAdapter(),
     new LitellmAdapter(),
     new AzureOpenAIAdapter(),
+    new OpenCodeZenAdapter(),
+    new OpenCodeGoAdapter(),
+    new NvidiaNimAdapter(),
     new BedrockAdapter(),
   ];
   const map = new Map<string, ProviderAdapter>();
@@ -90,6 +99,9 @@ export const SUPPORTED_PROVIDERS = [
   'lmstudio',
   'litellm',
   'azure-openai',
+  'opencode-zen',
+  'opencode-go',
+  'nvidia-nim',
   // Stubs for adapters to be implemented in a future release:
   'aws-bedrock',
   'vertex-ai',

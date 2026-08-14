@@ -106,7 +106,7 @@ export class CompatibilityCertifier {
       }
 
       // Also check the integration's local status (is the tool installed on this machine?).
-      const integration = BUILTIN_INTEGRATIONS.find((i) =>
+      const integration = BUILTIN_INTEGRATIONS.find((i: { displayName: string; description: string }) =>
         i.displayName === tool.name || i.description.includes(tool.name),
       );
       let installedNote: string | undefined;
@@ -219,7 +219,7 @@ export class CompatibilityCertifier {
    * `compatible: true` that lied about the result.
    */
   private async verifyEditor(editor: EditorConfig): Promise<{ compatible: boolean; partial: boolean }> {
-    const matching = BUILTIN_INTEGRATIONS.filter((i) =>
+    const matching = BUILTIN_INTEGRATIONS.filter((i: { category: string }) =>
       i.category === 'editor' || i.category === 'ide',
     );
     let editorDetected = false;

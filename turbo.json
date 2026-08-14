@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "concurrency": "25",
   "ui": "stream",
   "globalDependencies": ["tsconfig.base.json"],
   "globalEnv": ["NODE_ENV", "CI"],
@@ -10,6 +11,7 @@
       "inputs": ["src/**", "package.json", "tsconfig.json", "tsup.config.ts"]
     },
     "dev": {
+      "dependsOn": ["^build"],
       "cache": false,
       "persistent": true
     },

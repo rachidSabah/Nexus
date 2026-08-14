@@ -87,8 +87,10 @@ export class ContextWindowManager {
       };
     }
 
-    // Even trimmed doesn't fit — recommend switching to a model with a larger window.
-    // Recommend 2x the current estimate, rounded up to the nearest common size.
+    // Even trimmed doesn't fit under the conservative headroom — but still
+    // return the trimmed request so a fixed-model caller (e.g. the gateway,
+    // where the model is chosen by the user) can forward the smallest
+    // possible payload instead of the original oversized history.
     const recommendedMin = Math.max(
       estimatedTokens * 2,
       32768, // minimum reasonable context window
@@ -99,6 +101,7 @@ export class ContextWindowManager {
       modelContextWindow,
       fits: false,
       action: 'switch_model',
+      trimmedRequest,
       recommendedMinContextWindow: recommendedMin,
     };
   }

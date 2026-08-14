@@ -26,6 +26,34 @@ export interface ProviderPricing {
   currency: 'USD' | 'EUR';
 }
 
+// ── Model Fabric: canonical pricing (single representation) ────────────────
+export type PricingSource = 'live' | 'provider_metadata' | 'adapter_fallback' | 'explicit' | 'unknown';
+
+export type FreeTier =
+  | 'FREE'
+  | 'FREE_TIER'
+  | 'ZERO_INPUT_PAID_OUTPUT'
+  | 'PAID'
+  | 'UNKNOWN';
+
+export interface GatewayPricing {
+  inputPer1M?: number;
+  outputPer1M?: number;
+  /** Cached-input (prompt cache read) price per 1M tokens, if published. */
+  cachedInputPer1M?: number;
+  /** Cached-output price per 1M tokens, if published. */
+  cachedOutputPer1M?: number;
+  /** True if the provider explicitly marks this as a free-tier model. */
+  isFree?: boolean;
+  currency?: string;
+  /** Source hierarchy: live > provider_metadata > adapter_fallback > unknown. */
+  source?: PricingSource;
+  /** When this pricing was observed (epoch ms). */
+  updatedAt?: number;
+  /** Derived classification (see classifyPricing in application/pricing.ts). */
+  freeTier?: FreeTier;
+}
+
 /**
  * Health status of a provider endpoint at a point in time.
  */
@@ -128,6 +156,14 @@ export interface ChatMessage {
   readonly name?: string;
   readonly toolCallId?: string;
   readonly toolCalls?: readonly ToolCall[];
+  /**
+   * Reasoning text (thinking tokens) from reasoning-capable upstreams.
+   * Serially: adapters capture `reasoning_content`/`reasoning` here so
+   * multi-turn conversations can replay it (DeepSeek-style APIs reject
+   * history that drops the thinking content), and the Anthropic bridge
+   * emits it as a `thinking` block.
+   */
+  readonly reasoningContent?: string;
 }
 
 export type ChatMessageContentPart =
@@ -184,6 +220,7 @@ export interface ChatCompletionChunk {
       readonly role?: string;
       readonly content?: string;
       readonly tool_calls?: readonly ToolCall[];
+      readonly reasoning?: string;
     };
     readonly finish_reason: string | null;
   }[];
@@ -258,14 +295,8 @@ export interface ModelDescriptor {
   readonly contextWindow?: number;
   /** Max output tokens, if known. */
   readonly maxOutputTokens?: number;
-  /** Pricing per 1M tokens (NOT per 1K — most providers publish per-1M now). */
-  readonly pricing?: {
-    inputPer1M?: number;
-    outputPer1M?: number;
-    /** True if the provider explicitly marks this as a free-tier model. */
-    isFree?: boolean;
-    currency?: string;
-  };
+  /** Pricing per 1M tokens — canonical GatewayPricing (see pricing.ts). */
+    readonly pricing?: GatewayPricing;
   /** Capability flags (inferred from provider metadata or model name heuristics). */
   readonly capabilities?: {
     streaming?: boolean;
@@ -281,4 +312,86 @@ export interface ModelDescriptor {
   readonly discoveredAt: number;
   /** True if the model disappeared on the last refresh (kept for one cycle so dashboard can show "recently removed"). */
   readonly stale?: boolean;
+  /** Why the model is stale: 'disappeared' (provider stopped listing) or 'unhealthy' (runtime upstream error like 401/404). 'unhealthy' models are NOT auto-reinstated just because the provider still lists them — they must clear the failure first. */
+  readonly staleReason?: 'disappeared' | 'unhealthy';
+  /** Last error seen when probing/using this model (e.g. upstream 401/404/429). Surfaced in debug endpoints + dashboard. */
+  readonly lastError?: string;
 }
+
+// ── Network Egress Fabric Domain Model ────────────────────────────────────
+
+export type ProxyProtocol = 'http' | 'https' | 'socks4' | 'socks5';
+
+export type ProxyStatus =
+  | 'DISCOVERED'
+  | 'TESTING'
+  | 'HEALTHY'
+  | 'DEGRADED'
+  | 'DEAD'
+  | 'QUARANTINED'
+  | 'DISABLED';
+
+export type EgressMode = 'DIRECT' | 'PROXY_PREFERRED' | 'PROXY_ONLY' | 'AUTO';
+
+export type ProxyFailureReason =
+  | 'TCP_TIMEOUT'
+  | 'TCP_REFUSED'
+  | 'TLS_FAILURE'
+  | 'HTTP_TIMEOUT'
+  | 'HTTP_403'
+  | 'HTTP_407'
+  | 'HTTP_429'
+  | 'HTTP_5XX'
+  | 'CONNECTION_RESET'
+  | 'DNS_FAILURE'
+  | 'INVALID_PROXY'
+  | 'AUTH_FAILURE'
+  | 'TARGET_UNREACHABLE'
+  | 'SSRF_BLOCKED'
+  | 'UNKNOWN';
+
+export interface LatencyBreakdown {
+  tcpLatencyMs: number | null;
+  tlsLatencyMs: number | null;
+  httpLatencyMs: number | null;
+  totalLatencyMs: number | null;
+}
+
+export interface ProxyEndpoint {
+  id: string;
+  url: string;
+  protocol: ProxyProtocol;
+  host: string;
+  port: number;
+  username?: string;
+  // Note: Password MUST NEVER be returned in API/logs/diagnostics.
+  source: string;
+  discoveredAt: number;
+  lastCheckedAt: number | null;
+  lastSuccessfulAt: number | null;
+  lastFailureAt: number | null;
+  consecutiveFailures: number;
+  consecutiveSuccesses: number;
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  latencyMs: number | null;
+  tcpLatencyMs: number | null;
+  tlsLatencyMs: number | null;
+  httpLatencyMs: number | null;
+  status: ProxyStatus;
+  healthScore: number; // 0.0 -> unusable, 1.0 -> pristine
+  anonymityLevel?: 'transparent' | 'anonymous' | 'elite' | 'unknown';
+  country?: string;
+  asn?: string;
+  supportsHttp: boolean;
+  supportsHttps: boolean;
+  supportsConnect: boolean;
+  supportsIPv4: boolean;
+  supportsIPv6: boolean;
+  quarantineUntil: number | null;
+  cooldownUntil: number | null;
+  failureReason?: ProxyFailureReason;
+  lastUsedAt?: number;
+}
+

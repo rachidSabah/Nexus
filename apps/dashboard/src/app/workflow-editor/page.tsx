@@ -1,6 +1,6 @@
 'use client';
 
-import { Workflow, Plus, Trash2, GripVertical, ArrowRight, Save } from 'lucide-react';
+import { Workflow, Plus, Trash2, GripVertical, ArrowRight, Save, Sparkles, Cpu } from 'lucide-react';
 import { useState } from 'react';
 import useSWR from 'swr';
 
@@ -62,7 +62,7 @@ export default function WorkflowEditorPage() {
 
   async function saveWorkflow() {
     if (!workflowName || steps.length === 0) {
-      setSaveMsg('Name and at least one step are required');
+      setSaveMsg('Workflow title and at least 1 step are required');
       return;
     }
     const body = {
@@ -79,9 +79,9 @@ export default function WorkflowEditorPage() {
       body: JSON.stringify(body),
     });
     if (r.ok) {
-      setSaveMsg(`Saved: ${body.id}`);
+      setSaveMsg(`Successfully saved workflow [${body.id}]`);
     } else {
-      const errBody = await r.json().catch(() => ({ error: { message: 'Failed' } }));
+      const errBody = await r.json().catch(() => ({ error: { message: 'Failed to save' } }));
       setSaveMsg(`Error: ${errBody?.error?.message ?? r.statusText}`);
     }
   }
@@ -95,27 +95,37 @@ export default function WorkflowEditorPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <Workflow className="h-6 w-6 text-nexus-400" />
-          Workflow Editor
-        </h1>
-        <p className="text-sm text-white/50">
-          Create and edit multi-step agent workflows. Drag steps to reorder. Save to register with the workflow engine.
-        </p>
+    <div className="space-y-8 relative pb-12 w-full max-w-full overflow-x-hidden">
+      {/* Background Cyber Accents */}
+      <div className="pointer-events-none absolute -top-10 -right-10 h-96 w-96 rounded-full bg-nexus-600/10 blur-[120px]" />
+      <div className="pointer-events-none absolute top-1/2 -left-20 h-80 w-80 rounded-full bg-cyan-600/10 blur-[100px]" />
+
+      {/* Cyber Header */}
+      <div className="relative flex flex-col justify-between gap-4 md:flex-row md:items-center border-b border-white/10 pb-6">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-nexus-500/30 bg-nexus-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-nexus-400 backdrop-blur-md mb-2">
+            <Sparkles className="h-3.5 w-3.5 animate-pulse text-nexus-300" /> Interactive Workflow Canvas
+          </div>
+          <h1 className="flex items-center gap-3 text-2xl sm:text-3xl font-extrabold tracking-tight text-white drop-shadow-sm">
+            <Workflow className="h-8 w-8 text-nexus-400" />
+            Visual Workflow Builder & Editor
+          </h1>
+          <p className="mt-1 text-xs sm:text-sm text-white/60 max-w-2xl">
+            Construct multi-agent workflows by ordering tasks, assigning subagents, setting conditions, and compiling to gateway execution engine.
+          </p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Workflow list */}
-        <div className="card lg:col-span-1">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-white/80">Workflows</h2>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Workflow Selection Panel */}
+        <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/40 p-5 sm:p-6 backdrop-blur-xl lg:col-span-1">
+          <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-white/70">Workflows Library</h2>
             <button
               onClick={newWorkflow}
-              className="rounded-md bg-nexus-600/80 px-2 py-1 text-xs text-white hover:bg-nexus-500"
+              className="flex items-center gap-1 rounded-xl bg-nexus-600 px-3 py-1.5 text-xs font-semibold text-white shadow-md transition hover:bg-nexus-500"
             >
-              <Plus className="h-3 w-3" /> New
+              <Plus className="h-3.5 w-3.5" /> Create New
             </button>
           </div>
           <div className="space-y-2">
@@ -123,65 +133,72 @@ export default function WorkflowEditorPage() {
               <button
                 key={w.id}
                 onClick={() => loadWorkflow(w)}
-                className={`w-full rounded-lg p-3 text-left transition ${selectedId === w.id ? 'bg-white/10' : 'bg-white/[0.02] hover:bg-white/5'}`}
+                className={`w-full rounded-xl p-3.5 text-left border transition ${
+                  selectedId === w.id
+                    ? 'border-nexus-500/50 bg-nexus-500/10 shadow-md'
+                    : 'border-white/5 bg-white/[0.02] hover:bg-white/[0.05]'
+                }`}
               >
-                <div className="text-sm font-medium">{w.name}</div>
-                <div className="mt-0.5 text-xs text-white/40">
-                  v{w.version} · {w.steps.length} steps
+                <div className="text-sm font-bold text-white">{w.name}</div>
+                <div className="mt-1 text-xs text-white/40 font-mono">
+                  v{w.version} · {w.steps.length} step{w.steps.length !== 1 ? 's' : ''}
                 </div>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Editor */}
-        <div className="card lg:col-span-2">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-medium text-white/80">
-              {selectedId ? `Editing: ${selected?.name ?? selectedId}` : 'New Workflow'}
+        {/* Editor Form */}
+        <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/40 p-5 sm:p-6 backdrop-blur-xl lg:col-span-2 space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+            <h2 className="text-sm font-bold text-white flex items-center gap-2">
+              <Cpu className="h-4 w-4 text-emerald-400" /> {selectedId ? `Editing: ${selected?.name ?? selectedId}` : 'Design New Workflow'}
             </h2>
-            <div className="flex gap-2">
-              <button
-                onClick={saveWorkflow}
-                className="rounded-md bg-nexus-600 px-3 py-1 text-xs font-medium text-white hover:bg-nexus-500"
-              >
-                <Save className="mr-1 inline h-3 w-3" /> Save
-              </button>
-            </div>
+            <button
+              onClick={saveWorkflow}
+              className="rounded-xl bg-gradient-to-r from-nexus-600 to-cyan-600 px-4 py-2 text-xs font-semibold text-white shadow-lg transition hover:scale-[1.02] active:scale-95 flex items-center gap-1.5"
+            >
+              <Save className="h-3.5 w-3.5" /> Save & Deploy Pipeline
+            </button>
           </div>
 
-          {saveMsg && <div className="mb-3 text-xs text-white/60">{saveMsg}</div>}
+          {saveMsg && (
+            <div className="rounded-xl border border-nexus-500/30 bg-nexus-500/10 p-3 text-xs text-nexus-300 font-mono">
+              {saveMsg}
+            </div>
+          )}
 
           {/* Name + description */}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 mb-4">
-            <label className="text-xs text-white/50">
-              Name
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-white/70 mb-1">Workflow Title</label>
               <input
                 type="text"
                 value={workflowName}
                 onChange={(e) => setWorkflowName(e.target.value)}
-                placeholder="My Workflow"
-                className="mt-1 h-8 w-full rounded-md border border-white/5 bg-white/[0.02] px-2 text-sm text-white"
+                placeholder="Autonomous Code Audit Pipeline"
+                className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 text-xs text-white placeholder:text-white/30 focus:border-nexus-500 focus:outline-none"
               />
-            </label>
-            <label className="text-xs text-white/50">
-              Description
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-white/70 mb-1">Description</label>
               <input
                 type="text"
                 value={workflowDesc}
                 onChange={(e) => setWorkflowDesc(e.target.value)}
-                placeholder="What this workflow does"
-                className="mt-1 h-8 w-full rounded-md border border-white/5 bg-white/[0.02] px-2 text-sm text-white"
+                placeholder="Multi-stage security and refactoring pipeline"
+                className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 text-xs text-white placeholder:text-white/30 focus:border-nexus-500 focus:outline-none"
               />
-            </label>
+            </div>
           </div>
 
           {/* Steps */}
-          <div className="space-y-2">
+          <div className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-white/70">Workflow Steps ({steps.length})</h3>
             {steps.map((step, i) => (
               <div
                 key={i}
-                className="rounded-lg border border-white/5 bg-white/[0.02] p-3"
+                className="rounded-xl border border-white/10 bg-black/40 p-4 transition hover:border-nexus-500/30"
                 draggable
                 onDragStart={() => setDraggedIndex(i)}
                 onDragOver={(e) => e.preventDefault()}
@@ -192,57 +209,61 @@ export default function WorkflowEditorPage() {
                   }
                 }}
               >
-                <div className="flex items-center gap-2">
-                  <GripVertical className="h-4 w-4 cursor-grab text-white/30" />
-                  <span className="text-xs font-medium text-nexus-300">Step {i + 1}</span>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <GripVertical className="h-4 w-4 cursor-grab text-white/40 hover:text-white" />
+                    <span className="text-xs font-bold text-nexus-300">Step {i + 1}</span>
+                  </div>
                   <button
                     onClick={() => removeStep(i)}
-                    className="ml-auto rounded p-1 text-white/30 hover:text-rose-400"
+                    className="rounded-lg p-1.5 text-white/40 transition hover:bg-rose-500/10 hover:text-rose-400"
                   >
-                    <Trash2 className="h-3 w-3" />
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
-                  <label className="text-[10px] text-white/40">
-                    Name
+
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="block text-[10px] text-white/50 mb-1">Step Name</label>
                     <input
                       type="text"
                       value={step.name}
                       onChange={(e) => updateStep(i, 'name', e.target.value)}
-                      className="mt-0.5 h-7 w-full rounded border border-white/5 bg-white/[0.02] px-2 text-xs text-white"
+                      className="h-8 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2.5 text-xs text-white"
                     />
-                  </label>
-                  <label className="text-[10px] text-white/40">
-                    Agent (optional)
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-white/50 mb-1">Target Agent ID (Optional)</label>
                     <input
                       type="text"
                       value={step.agent ?? ''}
                       onChange={(e) => updateStep(i, 'agent', e.target.value)}
                       placeholder="auto"
-                      className="mt-0.5 h-7 w-full rounded border border-white/5 bg-white/[0.02] px-2 text-xs text-white"
+                      className="h-8 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2.5 text-xs text-white placeholder:text-white/30 font-mono"
                     />
-                  </label>
-                  <label className="text-[10px] text-white/40">
-                    Condition (optional)
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-white/50 mb-1">Condition Expression (Optional)</label>
                     <input
                       type="text"
                       value={step.condition ?? ''}
                       onChange={(e) => updateStep(i, 'condition', e.target.value)}
                       placeholder="inputs.x > 0"
-                      className="mt-0.5 h-7 w-full rounded border border-white/5 bg-white/[0.02] px-2 text-xs text-white"
+                      className="h-8 w-full rounded-lg border border-white/10 bg-white/[0.03] px-2.5 text-xs text-white placeholder:text-white/30 font-mono"
                     />
-                  </label>
+                  </div>
                 </div>
-                <label className="mt-2 block text-[10px] text-white/40">
-                  Task / Prompt
+
+                <div className="mt-3">
+                  <label className="block text-[10px] text-white/50 mb-1">Task Prompt / Instruction</label>
                   <textarea
                     value={step.task}
                     onChange={(e) => updateStep(i, 'task', e.target.value)}
-                    placeholder="Describe what this step should do..."
+                    placeholder="Describe step instruction..."
                     rows={2}
-                    className="mt-0.5 w-full rounded border border-white/5 bg-white/[0.02] p-2 text-xs text-white"
+                    className="w-full rounded-lg border border-white/10 bg-white/[0.03] p-2.5 text-xs text-white placeholder:text-white/30"
                   />
-                </label>
+                </div>
               </div>
             ))}
           </div>
@@ -250,24 +271,24 @@ export default function WorkflowEditorPage() {
           {/* Add step button */}
           <button
             onClick={addStep}
-            className="mt-3 w-full rounded-lg border border-dashed border-white/10 p-3 text-sm text-white/40 transition hover:border-nexus-500/30 hover:text-white/60"
+            className="w-full rounded-xl border border-dashed border-white/20 p-3.5 text-xs font-semibold text-white/60 transition hover:border-nexus-500/50 hover:bg-nexus-500/10 hover:text-nexus-300"
           >
-            <Plus className="mr-1 inline h-4 w-4" /> Add Step
+            <Plus className="mr-1.5 inline h-4 w-4" /> Add Next Workflow Step
           </button>
 
           {/* Visual flow preview */}
           {steps.length > 0 && (
-            <div className="mt-6">
-              <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-white/40">Flow Preview</h3>
+            <div className="mt-6 border-t border-white/5 pt-4">
+              <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-white/70">Canvas Flow Preview</h3>
               <div className="flex items-center gap-2 overflow-x-auto pb-2">
                 {steps.map((step, i) => (
                   <div key={i} className="flex items-center">
-                    <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 text-center min-w-[120px]">
-                      <div className="text-xs font-medium text-nexus-300">{step.name}</div>
-                      <div className="mt-1 text-[10px] text-white/40">{step.agent ?? 'auto'}</div>
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-center min-w-[130px]">
+                      <div className="text-xs font-bold text-nexus-300">{step.name}</div>
+                      <div className="mt-1 text-[10px] text-white/40 font-mono">Agent: {step.agent ?? 'auto'}</div>
                     </div>
                     {i < steps.length - 1 && (
-                      <ArrowRight className="mx-1 h-3 w-3 text-white/20" />
+                      <ArrowRight className="mx-2 h-4 w-4 text-white/30" />
                     )}
                   </div>
                 ))}
@@ -279,3 +300,4 @@ export default function WorkflowEditorPage() {
     </div>
   );
 }
+

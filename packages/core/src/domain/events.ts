@@ -312,6 +312,187 @@ export interface TeamVoteEvent extends DomainEvent {
   };
 }
 
+// ── Model Fabric events (§22) ───────────────────────────────────────────────
+export interface ModelDiscoveredEvent extends DomainEvent {
+  readonly type: 'model.discovered';
+  readonly payload: {
+    readonly providerId: string;
+    readonly modelId: string;
+    readonly isFree: boolean;
+    readonly freeTier?: string;
+  };
+}
+
+export interface ModelUpdatedEvent extends DomainEvent {
+  readonly type: 'model.updated';
+  readonly payload: {
+    readonly providerId: string;
+    readonly modelId: string;
+    readonly isFree: boolean;
+    readonly freeTier?: string;
+  };
+}
+
+export interface ModelRemovedEvent extends DomainEvent {
+  readonly type: 'model.removed';
+  readonly payload: {
+    readonly providerId: string;
+    readonly modelId: string;
+    /** Why it left: 'stale' (provider stopped returning it) or 'provider_disabled'. */
+    readonly reason: 'stale' | 'provider_disabled';
+  };
+}
+
+export interface ModelPricingChangedEvent extends DomainEvent {
+  readonly type: 'model.pricing.changed';
+  readonly payload: {
+    readonly providerId: string;
+    readonly modelId: string;
+    readonly wasFree: boolean;
+    readonly isFree: boolean;
+    readonly freeTier?: string;
+    readonly source?: string;
+  };
+}
+
+export interface ProviderPrefetchCompletedEvent extends DomainEvent {
+  readonly type: 'provider.prefetch.completed';
+  readonly payload: {
+    readonly providerId: string;
+    readonly discovered: number;
+    readonly total: number;
+    readonly free: number;
+  };
+}
+
+// ── Phase 11: Application Build & AGY Execution Events ──────────────────────
+
+export interface ApplicationBuildStartedEvent extends DomainEvent {
+  readonly type: 'application.build.started';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly buildSessionId: string;
+    readonly objective: string;
+    readonly riskLevel: string;
+    readonly requiresApproval: boolean;
+  };
+}
+
+export interface ApplicationBuildCompletedEvent extends DomainEvent {
+  readonly type: 'application.build.completed';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly buildSessionId: string;
+    readonly durationMs: number;
+    readonly repairAttempts: number;
+    readonly artifacts: readonly string[];
+  };
+}
+
+export interface ApplicationBuildFailedEvent extends DomainEvent {
+  readonly type: 'application.build.failed';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly buildSessionId: string;
+    readonly error: string;
+    readonly stage: string;
+    readonly repairAttempts: number;
+  };
+}
+
+export interface AgyExecutionStartedEvent extends DomainEvent {
+  readonly type: 'agy.execution.started';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly buildSessionId: string;
+    readonly taskId: string;
+    readonly nodeId?: string;
+    readonly kind: string;
+    readonly model: string;
+    readonly policy: string;
+  };
+}
+
+export interface AgyExecutionCompletedEvent extends DomainEvent {
+  readonly type: 'agy.execution.completed';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly buildSessionId: string;
+    readonly taskId: string;
+    readonly nodeId?: string;
+    readonly kind: string;
+    readonly durationMs: number;
+    readonly exitCode: number;
+    readonly artifacts: readonly string[];
+  };
+}
+
+export interface AgyExecutionFailedEvent extends DomainEvent {
+  readonly type: 'agy.execution.failed';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly buildSessionId: string;
+    readonly taskId: string;
+    readonly nodeId?: string;
+    readonly kind: string;
+    readonly error: string;
+    readonly exitCode: number;
+  };
+}
+
+export interface AgyTestStartedEvent extends DomainEvent {
+  readonly type: 'agy.test.started';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly taskId: string;
+    readonly repairAttempt: number;
+  };
+}
+
+export interface AgyTestCompletedEvent extends DomainEvent {
+  readonly type: 'agy.test.completed';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly taskId: string;
+    readonly success: boolean;
+    readonly testsRan: number;
+    readonly testsPassed: number;
+    readonly testsFailed: number;
+    readonly durationMs: number;
+  };
+}
+
+export interface AgyRepairStartedEvent extends DomainEvent {
+  readonly type: 'agy.repair.started';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly taskId: string;
+    readonly attempt: number;
+    readonly maxAttempts: number;
+  };
+}
+
+export interface AgyRepairCompletedEvent extends DomainEvent {
+  readonly type: 'agy.repair.completed';
+  readonly payload: {
+    readonly applicationId: string;
+    readonly workspaceId: string;
+    readonly taskId: string;
+    readonly attempt: number;
+    readonly success: boolean;
+    readonly durationMs: number;
+  };
+}
+
 export type AllDomainEvents =
   | RequestReceivedEvent
   | RouteResolvedEvent
@@ -342,7 +523,105 @@ export type AllDomainEvents =
   | MemoryRetrievedEvent
   | ToolExecutedEvent
   | TeamFormedEvent
-  | TeamVoteEvent;
+  | TeamVoteEvent
+  // Model Fabric
+  | ModelDiscoveredEvent
+  | ModelUpdatedEvent
+  | ModelRemovedEvent
+  | ModelPricingChangedEvent
+  | ProviderPrefetchCompletedEvent
+  // Task Orchestration
+  | TaskCreatedEvent
+  | TaskAgentSelectedEvent
+  | TaskModelSelectedEvent
+  | TaskExecutionStartedEvent
+  | TaskExecutionCompletedEvent
+  | TaskExecutionFailedEvent
+  | TaskCancelledEvent
+  // Phase 11: Application Build & AGY
+  | ApplicationBuildStartedEvent
+  | ApplicationBuildCompletedEvent
+  | ApplicationBuildFailedEvent
+  | AgyExecutionStartedEvent
+  | AgyExecutionCompletedEvent
+  | AgyExecutionFailedEvent
+  | AgyTestStartedEvent
+  | AgyTestCompletedEvent
+  | AgyRepairStartedEvent
+  | AgyRepairCompletedEvent;
+
+// Model Fabric (kept for backward compat location)
+export interface TaskCreatedEvent extends DomainEvent {
+  readonly type: 'task.created';
+  readonly payload: {
+    readonly taskId: string;
+    readonly prompt: string;
+    readonly category: string;
+    readonly priority: string;
+    readonly timestamp: number;
+  };
+}
+
+export interface TaskAgentSelectedEvent extends DomainEvent {
+  readonly type: 'task.agent.selected';
+  readonly payload: {
+    readonly taskId: string;
+    readonly agentId: string;
+    readonly score: number;
+    readonly reasons: readonly string[];
+  };
+}
+
+export interface TaskModelSelectedEvent extends DomainEvent {
+  readonly type: 'task.model.selected';
+  readonly payload: {
+    readonly taskId: string;
+    readonly modelId: string;
+    readonly providerId: string;
+    readonly policy: string;
+  };
+}
+
+export interface TaskExecutionStartedEvent extends DomainEvent {
+  readonly type: 'task.execution.started';
+  readonly payload: {
+    readonly taskId: string;
+    readonly runId: string;
+    readonly agentId: string;
+    readonly modelId: string;
+    readonly attempt: number;
+  };
+}
+
+export interface TaskExecutionCompletedEvent extends DomainEvent {
+  readonly type: 'task.execution.completed';
+  readonly payload: {
+    readonly taskId: string;
+    readonly runId: string;
+    readonly agentId: string;
+    readonly modelId: string;
+    readonly durationMs: number;
+  };
+}
+
+export interface TaskExecutionFailedEvent extends DomainEvent {
+  readonly type: 'task.execution.failed';
+  readonly payload: {
+    readonly taskId: string;
+    readonly runId: string;
+    readonly agentId: string;
+    readonly error: string;
+    readonly willRetry: boolean;
+  };
+}
+
+export interface TaskCancelledEvent extends DomainEvent {
+  readonly type: 'task.cancelled';
+  readonly payload: {
+    readonly taskId: string;
+    readonly timestamp: number;
+  };
+}
 
 /**
  * Internal helper: build a typed event.

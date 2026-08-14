@@ -116,7 +116,10 @@ export function fail(message: string, errors: readonly string[] = [], actions: r
   return { ok: false, message, actions, errors };
 }
 
-/**
- * All registered integrations, keyed by id. Populated by `./registry.ts`.
- */
-export type IntegrationRegistry = Map<string, IntegrationAdapter>;
+export function normalizeGatewayUrl(url: string): string {
+  let u = url.trim().replace(/\/+$/, '');
+  if (u.endsWith('/v1')) {
+    u = u.slice(0, -3);
+  }
+  return u;
+}

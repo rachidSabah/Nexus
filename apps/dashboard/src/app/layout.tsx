@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import './globals.css';
+import { ConsoleCleanup } from '@/components/ConsoleCleanup';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
 
@@ -17,6 +18,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="font-sans antialiased">
+        <ConsoleCleanup />
         <div className="flex h-screen">
           <Sidebar />
           <div className="flex flex-1 flex-col overflow-hidden">

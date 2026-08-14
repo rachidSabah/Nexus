@@ -1,12 +1,12 @@
 import { defineConfig } from 'tsup';
 
-export default defineConfig({
+export default defineConfig((options) => ({
   entry: ['src/index.ts'],
   format: ['esm'],
-  dts: true,
+  dts: !options.watch,
   sourcemap: true,
-  clean: true,
+  clean: false,
   treeshake: true,
   target: 'es2022',
   platform: 'node',
-});
+}));

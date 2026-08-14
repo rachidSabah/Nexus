@@ -124,6 +124,25 @@ export class RoutingEngine implements RoutingEnginePort {
     this.cooldowns.delete(endpointId);
   }
 
+  /**
+   * Live-updates mutable fields of an endpoint (e.g. `baseUrl` corrected from
+   * the dashboard, or a manual health override). Re-keys the endpoint in place
+   * so in-flight routing decisions pick up the change immediately. Use this
+   * for operator-driven corrections (wrong base URL, broken region) without a
+   * gateway restart.
+   */
+  updateEndpoint(endpointId: string, patch: Partial<Pick<ProviderEndpoint, 'baseUrl' | 'displayName' | 'health' | 'region' | 'tags' | 'priority' | 'weight'>>): void {
+    const existing = this.endpoints.get(endpointId);
+    if (!existing) return;
+    // ProviderEndpoint marks most fields readonly; construct a fresh object so
+    // operator-driven corrections (e.g. a fixed baseUrl) take effect live.
+    const next = {
+      ...existing,
+      ...patch,
+    } as ProviderEndpoint;
+    this.endpoints.set(endpointId, next);
+  }
+
   listEndpoints(): readonly ProviderEndpoint[] {
     return Array.from(this.endpoints.values());
   }

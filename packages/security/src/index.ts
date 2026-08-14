@@ -13,6 +13,7 @@ import type { CredentialVaultPort } from '@anx/core';
 export class EncryptedCredentialVault implements CredentialVaultPort {
   private readonly store = new Map<string, string>(); // providerId -> base64 ciphertext
   private readonly key: Buffer;
+  private restored = false; // on-disk state was loaded (store is authoritative)
 
   constructor(masterKey?: string, private readonly persistencePath?: string) {
     this.key = scryptSync(masterKey ?? randomBytes(32).toString('hex'), 'anx-vault-salt-v1', 32);
@@ -21,7 +22,14 @@ export class EncryptedCredentialVault implements CredentialVaultPort {
   async get(providerId: string): Promise<string | undefined> {
     const encrypted = this.store.get(providerId);
     if (!encrypted) return undefined;
-    return this.decrypt(encrypted);
+    try {
+      return this.decrypt(encrypted);
+    } catch {
+      // Corrupt or foreign-keyed entry (partial write, key rotation,
+      // vault wiped by a concurrent boot). A single bad entry must never
+      // crash the gateway boot — treat as absent and keep serving.
+      return undefined;
+    }
   }
 
   async set(providerId: string, secret: string): Promise<void> {
@@ -60,6 +68,23 @@ export class EncryptedCredentialVault implements CredentialVaultPort {
 
   private async persist(): Promise<void> {
     if (!this.persistencePath) return;
+    // Safety net: an instance that never restored the on-disk vault (e.g. a
+    // boot that raced a concurrent writer and failed to parse) must NOT
+    // clobber previously persisted secrets with its partial in-memory store.
+    // Merge the on-disk entries we don't know about before writing so a
+    // vault can never silently lose keys. After a successful restore() the
+    // in-memory store IS the source of truth (deletes work normally).
+    if (!this.restored) {
+      try {
+        const existing = await readFile(this.persistencePath, 'utf8');
+        const entries = JSON.parse(existing) as [string, string][];
+        for (const [k, v] of entries) {
+          if (!this.store.has(k)) this.store.set(k, v);
+        }
+      } catch {
+        // No readable vault yet — first write, nothing to merge.
+      }
+    }
     const data = JSON.stringify(Array.from(this.store.entries()));
     await mkdir(dirname(this.persistencePath), { recursive: true });
     await writeFile(this.persistencePath, data, 'utf8');
@@ -71,8 +96,10 @@ export class EncryptedCredentialVault implements CredentialVaultPort {
       const data = await readFile(this.persistencePath, 'utf8');
       const entries = JSON.parse(data) as [string, string][];
       for (const [k, v] of entries) this.store.set(k, v);
+      this.restored = true;
     } catch {
-      // File doesn't exist yet — that's fine.
+      // File doesn't exist yet (or is unreadable) — that's fine; the store
+      // stays non-authoritative so persist() will merge rather than clobber.
     }
   }
 }

@@ -38,8 +38,33 @@ export interface HealthResponse {
   uptime: number;
 }
 
+export interface RoutingEndpoint {
+  id: string;
+  providerId: string;
+  displayName: string;
+  baseUrl: string;
+  health: 'healthy' | 'degraded' | 'unhealthy' | 'circuit_open' | 'unknown';
+  priority: number;
+  weight: number;
+  region?: string;
+  tags: string[];
+  timeoutMs?: number;
+  maxRetries?: number;
+  concurrencyLimit?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface EndpointsResponse {
+  endpoints: RoutingEndpoint[];
+}
+
 export function useProviders() {
   return useSWR<Provider[]>('/api/v1/providers', fetcher, { refreshInterval: 5000 });
+}
+
+export function useEndpoints() {
+  return useSWR<EndpointsResponse>('/api/v1/endpoints', fetcher, { refreshInterval: 8000 });
 }
 
 export function useHealth() {
@@ -49,12 +74,38 @@ export function useHealth() {
 export function useLiveEvents(): any[] {
   const [events, setEvents] = useState<any[]>([]);
   useEffect(() => {
-    const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/api/ws`);
-    ws.onmessage = (e) => {
-      const event = JSON.parse(e.data);
-      setEvents((prev) => [event, ...prev].slice(0, 100));
+    let disposed = false;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(`${proto}://${window.location.host}/api/ws`);
+      ws.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data);
+          setEvents((prev) => [event, ...prev].slice(0, 100));
+        } catch {
+          /* ignore malformed frames */
+        }
+      };
+      // Swallow transport errors: the live feed is best-effort and SSE/REST
+      // are used elsewhere, so a dropped socket must never surface as a
+      // console error.
+      ws.onerror = () => {};
+      // Only close once the socket is actually open. If the effect is cleaned
+      // up while the socket is still CONNECTING (e.g. React StrictMode's
+      // mount→unmount→remount in dev), closing it mid-handshake logs
+      // "WebSocket is closed before the connection is established". Deferring
+      // the close until OPEN avoids that spurious error.
+      ws.onopen = () => {
+        if (disposed) ws?.close();
+      };
+    } catch {
+      /* WebSocket unsupported — degrade silently */
+    }
+    return () => {
+      disposed = true;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
     };
-    return () => ws.close();
   }, []);
   return events;
 }

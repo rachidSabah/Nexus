@@ -24,6 +24,7 @@
     "@anx/integrations": "workspace:*",
     "@anx/networking": "workspace:*",
     "@anx/security": "workspace:*",
+    "@anx/token-efficiency": "workspace:*",
     "@anx/observability": "workspace:*",
     "@anx/mcp-server": "workspace:*",
     "@anx/mcp-client": "workspace:*",

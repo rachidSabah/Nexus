@@ -148,6 +148,7 @@ export class KeyRegistry {
   }
 
   /** Removes a key from the registry and the vault. */
+  /** Removes a key from the registry and the vault. */
   async unregister(keyId: string): Promise<boolean> {
     const desc = this.keys.get(keyId);
     if (!desc) return false;
@@ -158,6 +159,43 @@ export class KeyRegistry {
     if (list.length === 0) this.byProvider.delete(desc.providerId);
     await this.vault.delete(keyId);
     return true;
+  }
+
+  /**
+   * Rehydrates registry metadata from the encrypted vault after a restart.
+   * The vault persists plaintexts (keyed by key id); descriptors are rebuilt
+   * from those entries so multi-key rotation survives gateway restarts.
+   *
+   * Key ids are expected to follow the `{providerId}-key-{suffix}` shape
+   * (see server.ts POST /v1/keys). Plaintexts are stored in the vault only —
+   * never persisted here.
+   */
+  async restoreFromVault(): Promise<number> {
+    const ids = await this.vault.list();
+    let restored = 0;
+    for (const id of ids) {
+      if (this.keys.has(id)) continue;
+      const plaintext = await this.vault.get(id);
+      if (!plaintext) continue;
+      const providerId = this.parseProviderId(id);
+      if (!providerId) continue;
+      await this.register({
+        id,
+        providerId,
+        plaintext,
+        label: undefined,
+      });
+      restored += 1;
+    }
+    return restored;
+  }
+
+  private parseProviderId(keyId: string): string | undefined {
+    // `{providerId}-key-{suffix}` — provider ids may contain dashes, so split
+    // on the LAST `-key-` occurrence.
+    const idx = keyId.lastIndexOf('-key-');
+    if (idx <= 0) return undefined;
+    return keyId.slice(0, idx);
   }
 
   /** Returns the descriptor for a key, or undefined. */
@@ -233,7 +271,7 @@ export class KeyRegistry {
     const k = this.keys.get(keyId);
     if (!k) return;
     k.requests++;
-    k.tokens += tokens;
+    k.tokens += Number.isFinite(tokens) ? tokens : 0;
     k.lastSuccessAt = Date.now();
     if (k.latencyMs === 0) {
       k.latencyMs = latencyMs;

@@ -2,8 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Semantic design tokens (Phase: Universal Perf §8).
+ * Light is the default; .dark overrides. Components should prefer these tokens
+ * over raw `white/X`/`black/X` utilities so the theme stays coherent.
+ */
 :root {
-  color-scheme: dark light;
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --border: rgba(15, 23, 42, 0.08);
+  --text-primary: #0f172a;
+  --text-secondary: rgba(15, 23, 42, 0.72);
+  --text-muted: rgba(15, 23, 42, 0.45);
+  --scrollbar: rgba(15, 23, 42, 0.18);
+  --scrollbar-hover: rgba(15, 23, 42, 0.3);
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #0a0a0f;
+  --surface: rgba(255, 255, 255, 0.02);
+  --surface-elevated: rgba(255, 255, 255, 0.04);
+  --border: rgba(255, 255, 255, 0.06);
+  --text-primary: #e6e6e8;
+  --text-secondary: rgba(255, 255, 255, 0.72);
+  --text-muted: rgba(255, 255, 255, 0.45);
+  --scrollbar: rgba(255, 255, 255, 0.12);
+  --scrollbar-hover: rgba(255, 255, 255, 0.22);
 }
 
 html,
@@ -16,19 +43,23 @@ body {
 }
 
 body {
-  background: #0a0a0f;
-  color: #e6e6e8;
+  background: var(--bg);
+  color: var(--text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 @layer components {
   .card {
-    @apply rounded-xl border border-white/5 bg-white/[0.02] p-5 backdrop-blur-sm;
+    @apply rounded-xl border p-5 backdrop-blur-sm;
+    background: var(--surface);
+    border-color: var(--border);
   }
   .stat-value {
     @apply font-mono text-3xl font-semibold tracking-tight;
   }
   .stat-label {
-    @apply text-xs uppercase tracking-widest text-white/40;
+    @apply text-xs uppercase tracking-widest;
+    color: var(--text-muted);
   }
   .pill {
     @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium;
@@ -46,10 +77,16 @@ body {
     @apply bg-fuchsia-500/10 text-fuchsia-400 ring-1 ring-fuchsia-500/30;
   }
   .nav-link {
-    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-white/60 transition hover:bg-white/5 hover:text-white;
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition;
+    color: var(--text-secondary);
+  }
+  .nav-link:hover {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    color: var(--text-primary);
   }
   .nav-link-active {
-    @apply bg-white/5 text-white;
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    color: var(--text-primary);
   }
 }
 
@@ -62,9 +99,9 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--scrollbar);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--scrollbar-hover);
 }

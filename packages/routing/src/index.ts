@@ -44,6 +44,9 @@ export class CompositeRoutingEngine implements RoutingEnginePort {
   unregisterEndpoint(endpointId: string): void {
     for (const e of this.engines) e.unregisterEndpoint(endpointId);
   }
+  updateEndpoint(endpointId: string, patch: Partial<Pick<ProviderEndpoint, 'baseUrl' | 'displayName' | 'health' | 'region' | 'tags' | 'priority' | 'weight'>>): void {
+    for (const e of this.engines) e.updateEndpoint(endpointId, patch);
+  }
   listEndpoints(): readonly ProviderEndpoint[] {
     return this.engines[0]?.listEndpoints() ?? [];
   }
@@ -96,9 +99,12 @@ export class AffinityRouter implements RoutingEnginePort {
   }
   unregisterEndpoint(endpointId: string): void {
     this.inner.unregisterEndpoint(endpointId);
-    for (const [k, v] of this.affinity) {
+    for (const [k, v] of Array.from(this.affinity)) {
       if (v === endpointId) this.affinity.delete(k);
     }
+  }
+  updateEndpoint(endpointId: string, patch: Partial<Pick<ProviderEndpoint, 'baseUrl' | 'displayName' | 'health' | 'region' | 'tags' | 'priority' | 'weight'>>): void {
+    this.inner.updateEndpoint(endpointId, patch);
   }
   listEndpoints(): readonly ProviderEndpoint[] {
     return this.inner.listEndpoints();

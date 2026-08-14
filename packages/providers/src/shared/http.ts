@@ -46,7 +46,25 @@ export async function fetchJson<T>(
         body,
       });
     }
-    return (await response.json()) as T;
+    const text = await response.text().catch(() => '');
+    if (!text) {
+      throw new ProviderResponseError(endpoint.id, response.status, 'Empty response body', {
+        url,
+        body: '',
+      });
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch (err) {
+      // Some providers (e.g. opencode.ai/zen) return HTTP 200 with a plain-text
+      // body like "Not Found" when the API key is invalid — surface that.
+      throw new ProviderResponseError(
+        endpoint.id,
+        response.status,
+        `Non-JSON response (HTTP ${response.status}): ${text.slice(0, 160)}`,
+        { url, body: text.slice(0, 160) },
+      );
+    }
   } finally {
     timeout.removeEventListener('abort', onAbort);
     if (signal) signal.removeEventListener('abort', onAbort);

@@ -220,3 +220,76 @@ describe('ModelRegistry', () => {
     expect(stats.lastRefreshAt).toBeGreaterThan(0);
   });
 });
+
+describe('ModelRegistry explicit (non-discovered) models', () => {
+  let routing: RoutingEngine;
+  let adapters: Map<string, any>;
+
+  beforeEach(() => {
+    const events = new InMemoryEventBus();
+    routing = new RoutingEngine(events, {
+      failureThreshold: 5,
+      failureWindowMs: 60_000,
+      cooldownMs: 30_000,
+    });
+    adapters = new Map();
+  });
+
+  const explicitModel = {
+    id: 'openrouter/owl-alpha',
+    providerId: 'openrouter',
+    displayName: 'Owl Alpha (explicit)',
+    contextWindow: 128000,
+    pricing: { inputPer1M: 0, outputPer1M: 0, isFree: false, currency: 'USD', source: 'explicit' as const },
+    capabilities: { streaming: true, toolCalling: true, vision: false, audio: false, speech: false, embeddings: false, reasoning: false, jsonMode: true },
+    discoveredAt: Date.now(),
+  };
+
+  it('addExplicit makes the model available and tagged source=explicit', () => {
+    const registry = new ModelRegistry(routing, adapters);
+    registry.addExplicit([explicitModel]);
+    const m = registry.get('openrouter', 'openrouter/owl-alpha');
+    expect(m).toBeDefined();
+    expect(m!.pricing?.source).toBe('explicit');
+    expect(registry.isAvailable('openrouter', 'openrouter/owl-alpha')).toBe(true);
+  });
+
+  it('explicit models survive refresh (not evicted by stale-sweep)', async () => {
+    routing.registerEndpoint({
+      id: 'e-openrouter', providerId: 'openrouter', displayName: 'openrouter',
+      baseUrl: 'https://example.com',
+      capabilities: { streaming: true, toolCalling: true, vision: false, audio: false, speech: false, embeddings: false, reasoning: false, jsonMode: true, maxOutputTokens: 4096, maxInputTokens: 32768, supportedModalities: ['text'] } as never,
+      pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+      priority: 1, weight: 1, region: 'us', tags: [], timeoutMs: 30_000, maxRetries: 2, concurrencyLimit: 10, health: 'healthy', createdAt: new Date(), updatedAt: new Date(),
+    } as never);
+    adapters.set('openrouter', {
+      discoverModels: vi.fn().mockResolvedValue([
+        { id: 'llama:free', providerId: 'openrouter', pricing: { isFree: true }, discoveredAt: 0 },
+      ]),
+    });
+    const registry = new ModelRegistry(routing, adapters);
+    registry.addExplicit([explicitModel]);
+    await registry.refresh();
+    const m = registry.get('openrouter', 'openrouter/owl-alpha');
+    expect(m).toBeDefined();
+    expect(m!.stale).toBe(false);
+    expect(registry.listByProvider('openrouter').length).toBe(2); // llama:free + owl-alpha
+  });
+
+  it('explicit models are exempt from markModelUnhealthy', () => {
+    const registry = new ModelRegistry(routing, adapters);
+    registry.addExplicit([explicitModel]);
+    registry.markModelUnhealthy('openrouter', 'openrouter/owl-alpha', 'test 404');
+    const m = registry.get('openrouter', 'openrouter/owl-alpha');
+    expect(m!.stale).toBe(false);
+    expect(registry.isAvailable('openrouter', 'openrouter/owl-alpha')).toBe(true);
+  });
+
+  it('explicit models appear in stats pricingBySource under explicit', () => {
+    const registry = new ModelRegistry(routing, adapters);
+    registry.addExplicit([explicitModel]);
+    const stats = registry.stats();
+    expect(stats.pricingBySource['explicit']).toBe(1);
+  });
+});
+

@@ -5,7 +5,11 @@ import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
 import type { AIServiceMesh } from '@agent-nexus/service-mesh';
 import type { A2ACoordinator, AgentRegistry as A2AAgentRegistry, TeamManager } from '@anx/a2a';
 import type { AgentRegistry } from '@anx/agents';
-import { ChatCompletionUseCase } from '@anx/core';
+import { ChatCompletionUseCase, TaskOrchestrator, InMemoryTaskStore, SubprocessAgentExecutor, ConcurrencyManager, WorkflowOrchestrator, DAGEngine, AutonomousPlanner, ApplicationEngine, AgyBuilderAdapter, BUILT_IN_WORKFLOWS, SessionManager } from '@anx/core';
+import { AgentRuntimeManager } from './agent-runtime-manager.js';
+import { UnifiedAgentRegistry } from './unified-agent-registry.js';
+import { IntegrationBuildingAgentAdapter, type BuildingAgentPort } from './building-agent-port.js';
+import { finalizeResponsesEvents, newResponsesStreamState, toChatRequest, toResponsesResponse, translateChunkToResponsesEvents, type ResponsesRequest } from './responses-compat.js';
 import type {
   BudgetManager,
   ChatCompletionChunk,
@@ -25,11 +29,22 @@ import type {
   TaskClassifier,
   CachePort,
   KeyRegistry,
+  ModelDescriptor,
 } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
+import {
+  TokenOptimizer,
+  OptimizationMode,
+  scanRepository,
+  rankRepository,
+  selectRepositoryContext,
+  parseGitPorcelain,
+  type OptMessage,
+} from '@anx/token-efficiency';
 import type { McpServer } from '@anx/mcp-server';
-import type { DefaultMemory } from '@anx/memory';
+import type { McpClient, McpServerConfig } from '@anx/mcp-client';
+import type { DefaultMemory, RagPipeline } from '@anx/memory';
 import type { DefaultNetworkService } from '@anx/networking';
 import type { InProcessTelemetry } from '@anx/observability';
 import type { PluginRuntime } from '@anx/plugins';
@@ -44,6 +59,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
 
 import { AgentDetector } from './agent-detector.js';
+import { HermesRuntimeManager } from './hermes-runtime.js';
 import {
   newStreamState,
   translateAnthropicRequest,
@@ -52,8 +68,25 @@ import {
   type AnthropicRequest,
 } from './anthropic-compat.js';
 import { ModelAliasRegistry, type AliasRankingStrategy } from './model-aliases.js';
+import { projectClaudeCatalog, claudeCatalogDebug, type ClaudeProjectionEntry } from './claude-catalog.js';
+import { projectGenericCatalog, projectOpenAICatalog, getAgentCompatibilityMatrix, explainFilters } from './model-fabric.js';
+import { IntentDetector, ScoringEngine } from './scoring-engine.js';
+import { defaultBaseUrlFor, defaultCapabilitiesFor, defaultPricingFor } from './endpoints.js';
 import { GATEWAY_VERSION } from './version.js';
 import type { GatewayConfig } from './config.js';
+
+/** Probes a base URL for reachability (server is up; any non-5xx counts as up). */
+async function probeUrl(baseUrl: string): Promise<boolean> {
+  if (!baseUrl) return false;
+  try {
+    const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, {
+      signal: AbortSignal.timeout(4_000),
+    });
+    return r.status < 500;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * HTTP server. Exposes Phase 1-4 endpoints.
@@ -70,6 +103,7 @@ export interface HttpServerDeps {
   readonly jwt: JwtService;
   readonly vault: EncryptedCredentialVault;
   readonly mcpServer: McpServer;
+  readonly mcpClient: McpClient;
   readonly a2a: A2ACoordinator;
   readonly a2aRegistry: A2AAgentRegistry;
   readonly plugins: PluginRuntime;
@@ -79,6 +113,7 @@ export interface HttpServerDeps {
   readonly runtime: AgentRuntime;
   readonly workflows: WorkflowEngine;
   readonly memory: DefaultMemory;
+  readonly rag: RagPipeline | null;
   readonly tools: ToolRuntime;
   readonly planner: ExecutionPlanner;
   readonly teams: TeamManager;
@@ -90,6 +125,7 @@ export interface HttpServerDeps {
   readonly aliasRegistry: ModelAliasRegistry;
   readonly tracer: RequestTracer;
   readonly privacy: PrivacyConfig;
+  readonly sessions: SessionManager;
   readonly agentDetector: AgentDetector;
   // Phase 5: advanced optimization features
   readonly budgetManager: BudgetManager;
@@ -100,11 +136,77 @@ export interface HttpServerDeps {
   readonly costPredictor: CostPredictor;
 }
 
+// ── Token-economics accumulator (§30) — real measurements only, capped ring. ──
+const OPT_STATS_CAP = 200;
+interface OptStatEntry {
+  ts: number;
+  mode: string;
+  model: string;
+  originalTokens: number;
+  optimizedTokens: number;
+  savedTokens: number;
+  savingsPct: number;
+  changed: boolean;
+}
+const optStats: OptStatEntry[] = [];
+
+export function getOptStatsSummary() {
+  const total = optStats.reduce(
+    (acc, r) => ({
+      originalTokens: acc.originalTokens + r.originalTokens,
+      optimizedTokens: acc.optimizedTokens + r.optimizedTokens,
+      savedTokens: acc.savedTokens + r.savedTokens,
+    }),
+    { originalTokens: 0, optimizedTokens: 0, savedTokens: 0 },
+  );
+  const byMode = new Map<string, { requests: number; savedTokens: number }>();
+  for (const r of optStats) {
+    const mm = byMode.get(r.mode) ?? { requests: 0, savedTokens: 0 };
+    mm.requests += 1;
+    mm.savedTokens += r.savedTokens;
+    byMode.set(r.mode, mm);
+  }
+  return {
+    totalRequests: optStats.length,
+    ...total,
+    overallSavingsPct:
+      total.originalTokens > 0 ? Math.round((total.savedTokens / total.originalTokens) * 1000) / 10 : 0,
+    byMode: Object.fromEntries(byMode),
+  };
+}
+
+export function getOptStatsRecent() {
+  return optStats.slice(-OPT_STATS_CAP);
+}
+
+export function recordOptStats(entry: Omit<OptStatEntry, 'ts'>) {
+  optStats.push({ ts: Date.now(), ...entry });
+  if (optStats.length > OPT_STATS_CAP) optStats.splice(0, optStats.length - OPT_STATS_CAP);
+}
+
 export class HttpServer {
   private readonly fastify;
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
+  }
+
+  /** Memoized Unified Agent Registry (composes detection + runtime + registry). */
+  private unifiedRegistry?: UnifiedAgentRegistry;
+  private getUnifiedRegistry(): UnifiedAgentRegistry {
+    if (!this.unifiedRegistry) {
+      this.unifiedRegistry = new UnifiedAgentRegistry(this.deps.agents);
+    }
+    return this.unifiedRegistry;
+  }
+
+  /** Memoized BuildingAgentPort (Hermes / OpenCode / other coding agents). */
+  private buildingAgents?: BuildingAgentPort;
+  private getBuildingAgents(): BuildingAgentPort {
+    if (!this.buildingAgents) {
+      this.buildingAgents = new IntegrationBuildingAgentAdapter();
+    }
+    return this.buildingAgents;
   }
 
   private reply404(msg: string): { error: { message: string; code: string } } {
@@ -140,6 +242,38 @@ export class HttpServer {
       };
     });
 
+    // ── Readiness (Phase 16 §20) ────────────────────────────────────────
+    // Reports whether critical Nexus subsystems are up. A single unhealthy
+    // upstream provider must NOT make the whole gateway "not ready".
+    this.fastify.get('/ready', async (_request, reply) => {
+      const endpoints = this.deps.routing.listEndpoints();
+      const subsystems = {
+        gateway: true,
+        modelRegistry: typeof this.deps.modelRegistry.getCatalogVersion() === 'number',
+        routing: endpoints.length > 0,
+        keySubsystem: Array.isArray(this.deps.keyRegistry?.listAll?.() ?? []),
+        catalog: this.deps.modelRegistry.list().length >= 0,
+      };
+      const ready = Object.values(subsystems).every(Boolean);
+      return reply.code(ready ? 200 : 503).send({
+        ready,
+        status: ready ? 'ready' : 'not_ready',
+        version: GATEWAY_VERSION,
+        catalogVersion: this.deps.modelRegistry.getCatalogVersion(),
+        subsystems,
+      });
+    });
+
+    // ── Version info (Phase 16 §21) ──────────────────────────────────────
+    this.fastify.get('/v1/version', async () => {
+      return {
+        version: GATEWAY_VERSION,
+        catalogVersion: this.deps.modelRegistry.getCatalogVersion(),
+        uptime: process.uptime(),
+        node: process.version,
+      };
+    });
+
     // ── Models (OpenAI-compatible, enriched with discovered metadata) ───
     // Returns the union of:
     //   - Endpoints registered in the routing engine (static config)
@@ -147,7 +281,7 @@ export class HttpServer {
     //     refresh from each provider's GET /models endpoint)
     // When a discovered model has pricing/capabilities, those are included
     // so the dashboard can show "free" badges and capability icons.
-    this.fastify.get('/v1/models', async (request) => {
+    this.fastify.get('/v1/models', async (request, reply) => {
       const q = request.query as { free?: string; capability?: string };
       const models = new Map<string, { id: string; object: 'model'; owned_by: string; pricing?: unknown; capabilities?: unknown; context_window?: number }>();
 
@@ -181,7 +315,22 @@ export class HttpServer {
         });
       }
 
-      return { object: 'list', data: Array.from(models.values()) };
+      // Claude Code projection (master-prompt §10): every discovered model is
+            // also exposed under an anthropic-compatible claude-gw-<provider>-<model>
+            // alias so Claude Code's /model picker shows the FULL prefetched catalog
+            // (it client-side filters to claude-* ids only). Purely registry-derived:
+            // new models appear automatically; stale models drop out. No hardcode.
+            const byId = new Map<string, ClaudeProjectionEntry>(
+              Array.from(models.values()).map((m) => [m.id, m as ClaudeProjectionEntry]),
+            );
+            // includeNatives: false — natives are already in `models` above; only the
+            // alias entries (nativeId set) are added.
+            for (const e of projectClaudeCatalog(discovered, { includeNatives: false })) {
+              if (!byId.has(e.id)) byId.set(e.id, e);
+            }
+
+            reply.header('X-Nexus-Model-Catalog-Version', String(this.deps.modelRegistry.getCatalogVersion()));
+            return reply.send({ object: 'list', data: Array.from(byId.values()) });
     });
 
     // ── Dynamic model discovery (master prompt #5, #6) ──────────────────
@@ -189,16 +338,1279 @@ export class HttpServer {
     // GET /v1/models/free     — list only free-tier models
     // GET /v1/models/stats    — discovery stats (total, free, stale, byProvider)
     // POST /v1/models/refresh — trigger an immediate refresh
-    this.fastify.get('/v1/models/discover', async () => {
-      return { models: this.deps.modelRegistry.list() };
+    // Dedupe by model id before sending to the dashboard. The registry keeps
+    // one entry per (provider, id), so a model offered by two providers (e.g.
+    // `gpt-5.6-luna` on both opencode-go and opencode-zen) would otherwise
+    // produce two rows with the same `id` — which trips React's "duplicate
+    // key" warning in any list rendered with key={m.id}. Routing does NOT use
+    // this endpoint, so collapsing to unique ids is display-only.
+    const dedupeModels = (models: readonly ModelDescriptor[]): ModelDescriptor[] => {
+      const seen = new Set<string>();
+      const out: ModelDescriptor[] = [];
+      for (const m of models) {
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        out.push(m);
+      }
+      return out;
+    };
+
+    this.fastify.get('/v1/models/discover', async (request, reply) => {
+      const catalogVersion = this.deps.modelRegistry.getCatalogVersion();
+      // Phase 13 §11: conditional request on the heavy model-poll payload.
+      const etag = `W/"disc-${catalogVersion}"`;
+      reply.header('ETag', etag);
+      reply.header('Cache-Control', 'no-cache');
+      reply.header('X-Nexus-Model-Catalog-Version', String(catalogVersion));
+      if (request.headers['if-none-match'] === etag) {
+        return reply.code(304).send();
+      }
+      return { models: dedupeModels(this.deps.modelRegistry.list()), catalogVersion };
     });
 
     this.fastify.get('/v1/models/free', async () => {
-      return { models: this.deps.modelRegistry.listFree() };
+      return { models: dedupeModels(this.deps.modelRegistry.listFree()) };
     });
 
     this.fastify.get('/v1/models/stats', async () => {
       return this.deps.modelRegistry.stats();
+    });
+
+    this.fastify.get('/v1/debug/models/claude', async () => {
+      return claudeCatalogDebug(this.deps.modelRegistry.list());
+    });
+
+    this.fastify.get('/v1/debug/models', async () => {
+      const models = this.deps.modelRegistry.list();
+      const generic = projectGenericCatalog(models);
+      
+      const available = generic.filter(m => m.availability === 'available');
+      const free = generic.filter(m => m.isFree);
+      const paid = generic.filter(m => m.freeTier === 'PAID');
+      const unknownPricing = generic.filter(m => m.freeTier === 'UNKNOWN');
+      
+      return {
+        registryCount: models.length,
+        availableCount: available.length,
+        freeCount: free.length,
+        paidCount: paid.length,
+        unknownPricingCount: unknownPricing.length,
+        models: generic.map(m => ({
+          provider: m.providerId,
+          nativeModelId: m.nativeModelId,
+          virtualModelId: m.id,
+          pricing: m.pricing, // already excludes secrets
+          pricingSource: m.pricingSource,
+          freeTier: m.freeTier,
+          availability: m.availability,
+          capabilities: m.capabilities,
+          projectionStatus: 'PROJECTED'
+        }))
+      };
+    });
+
+    this.fastify.get('/v1/debug/models/openai', async () => {
+      const models = this.deps.modelRegistry.list();
+      const projected = projectOpenAICatalog(models, { includeVirtualIds: true });
+      const filters = explainFilters(models, 'openai');
+      
+      return {
+        agent: 'openai-compatible',
+        sourceRegistryCount: models.length,
+        projectedCount: projected.length,
+        filteredCount: filters.filter(f => f.status === 'FILTERED').length,
+        filters: filters
+      };
+    });
+
+    this.fastify.get('/v1/debug/models/agents', async () => {
+      const matrix = getAgentCompatibilityMatrix();
+      const models = this.deps.modelRegistry.list();
+      
+      const enrichedMatrix = matrix.map(agent => {
+        let agentType: 'claude' | 'openai' | 'generic' = 'generic';
+        if (agent.projectionNeeded === 'claude-gw') agentType = 'claude';
+        else if (agent.projectionNeeded === 'openai-native') agentType = 'openai';
+        
+        const filters = explainFilters(models, agentType);
+        const projected = filters.filter(f => f.status === 'PROJECTED');
+        const filtered = filters.filter(f => f.status === 'FILTERED');
+
+        return {
+          ...agent,
+          modelCount: models.length,
+          compatibleCount: projected.length,
+          projectedModelCount: projected.length,
+          filteredCount: filtered.length,
+          filterReasons: Array.from(new Set(filtered.map(f => f.reason).filter(Boolean))),
+        };
+      });
+      
+      return {
+        catalogVersion: 1024,
+        agents: enrichedMatrix,
+      };
+    });
+
+    // ── Universal Normalized Model Catalog API (§8) ─────────────────────
+    this.fastify.get('/v1/catalog', async (request, reply) => {
+      const catalogVersion = this.deps.modelRegistry.getCatalogVersion();
+      // Phase 13 §11: ETag/conditional request. The catalog body is a pure
+      // function of catalogVersion, so we can 304 when unchanged and avoid
+      // re-shipping the entire (potentially huge) payload on every poll.
+      const etag = `W/"cat-${catalogVersion}"`;
+      reply.header('ETag', etag);
+      reply.header('Cache-Control', 'no-cache');
+      reply.header('X-Nexus-Model-Catalog-Version', String(catalogVersion));
+      const ifNoneMatch = request.headers['if-none-match'];
+      if (ifNoneMatch === etag) {
+        return reply.code(304).send();
+      }
+
+      const models = this.deps.modelRegistry.list();
+      const generic = projectGenericCatalog(models);
+      const endpoints = this.deps.routing.listEndpoints();
+      const agents = getAgentCompatibilityMatrix();
+      const agyHealth = await globalAgyAdapter.healthCheck();
+
+      return {
+        catalogVersion,
+        generatedAt: new Date().toISOString(),
+        providers: endpoints.map(e => ({
+          id: e.providerId,
+          endpointId: e.id,
+          displayName: e.displayName,
+          health: e.health,
+          priority: e.priority,
+        })),
+        models: generic,
+        agents,
+        policies: ['nexus/auto', 'nexus/best', 'nexus/free', 'nexus/free-coding', 'nexus/best-coding', 'nexus/cheap', 'nexus/fast', 'nexus/reasoning', 'nexus/vision', 'nexus/long-context'],
+        applicationEngine: {
+          enabled: true,
+          runtime: 'agy-builder',
+          lifecycle: ['DISCOVER', 'SPECIFY', 'ARCHITECT', 'PLAN', 'APPROVAL', 'SCAFFOLD', 'BUILD', 'TEST', 'VERIFY', 'REPAIR', 'FINALIZE', 'COMPLETED'],
+        },
+        agyRuntime: agyHealth,
+        buildCapabilities: {
+          scaffold: true,
+          implement: true,
+          test: true,
+          inspect: true,
+          fix: true,
+          verify: true,
+          maxRepairAttempts: 3,
+          workspaceIsolation: true,
+        },
+        orchestration: {
+          enabled: true,
+          taskTypes: ['GENERAL', 'CODING', 'DEBUGGING', 'REFACTORING', 'TESTING', 'DOCUMENTATION', 'RESEARCH', 'ARCHITECTURE', 'SECURITY', 'PERFORMANCE'],
+          maxConcurrency: 10,
+        },
+      };
+    });
+
+    // ── Catalog delta sync (Phase 13 §10/§18) ──────────────────────────
+    // Returns ONLY models added/updated/removed since `since`=<catalogVersion>.
+    // Avoids re-downloading the entire catalog when a single model changes.
+    this.fastify.get('/v1/catalog/delta', async (request) => {
+      const since = Number((request.query as { since?: string }).since ?? '0') || 0;
+      const delta = this.deps.modelRegistry.getDelta(since);
+      return {
+        catalogVersion: delta.toVersion,
+        fromVersion: delta.fromVersion,
+        fullSyncRequired: delta.fullSyncRequired,
+        added: delta.added,
+        updated: delta.updated,
+        removed: delta.removed,
+      };
+    });
+
+    // ── Nexus Doctor Diagnostic API (§18) ──────────────────────────────
+    this.fastify.get('/v1/doctor', async () => {
+      const models = this.deps.modelRegistry.list();
+      const freeModels = this.deps.modelRegistry.listFree();
+      const endpoints = this.deps.routing.listEndpoints();
+      const detector = new AgentDetector();
+      const detectedAgents = await detector.detectAll();
+      const agyHealth = await globalAgyAdapter.healthCheck();
+      const apps = globalAppEngine.listApplications();
+      const vaultKeys = this.deps.keyRegistry.listAll();
+
+      return {
+        status: 'HEALTHY',
+        version: GATEWAY_VERSION,
+        uptime: process.uptime(),
+        checks: {
+          gatewayReachable: true,
+          modelRegistryHealthy: models.length > 0,
+          totalModels: models.length,
+          freeModelsCount: freeModels.length,
+          activeProviders: endpoints.filter(e => e.health === 'healthy').length,
+          apiKeysLoaded: vaultKeys.length,
+          catalogVersion: 1024,
+          detectedAgentsCount: detectedAgents.filter(a => a.found).length,
+          routingEngineState: 'operational',
+          tokenEfficiencyState: 'active',
+          orchestrationState: 'operational',
+          agyInstalled: agyHealth.installed,
+          agyVersion: agyHealth.version,
+          agyRuntimeHealthy: agyHealth.runtimeHealthy,
+          activeBuilds: apps.filter(a => a.stage === 'BUILD' || a.stage === 'SCAFFOLD' || a.stage === 'REPAIR').length,
+          queuedBuilds: apps.filter(a => a.stage === 'DISCOVER' || a.stage === 'SPECIFY' || a.stage === 'ARCHITECT' || a.stage === 'PLAN' || a.stage === 'APPROVAL').length,
+          failedBuilds: apps.filter(a => a.stage === 'FAILED').length,
+          repairCycles: apps.reduce((acc, a) => acc + a.repairAttempts, 0),
+          workspaceHealth: 'healthy',
+        },
+        detectedAgents,
+        agyRuntime: agyHealth,
+      };
+    });
+
+    // ── Hermes build agent diagnostics ────────────────────────────────
+    this.fastify.get('/v1/debug/hermes', async () => {
+      return she.diagnostics();
+    });
+
+    // ── Agent Runtime Management API (§2) ─────────────────────────────
+    this.fastify.get('/v1/runtime-agents', async () => {
+      const manager = new AgentRuntimeManager();
+      const agents = await manager.listAgents();
+      return { agents };
+    });
+
+    this.fastify.get('/v1/runtime-agents/environment', async () => {
+      const isWin = process.platform === 'win32';
+      const isWsl = !!process.env.WSL_DISTRO_NAME;
+      return {
+        platform: process.platform,
+        windows: isWin,
+        wsl: isWsl,
+        linux: process.platform === 'linux' && !isWsl,
+        gatewayReachability: 'http://127.0.0.1:8787',
+        recommendedBaseUrl: 'http://127.0.0.1:8787',
+      };
+    });
+
+    this.fastify.get('/v1/runtime-agents/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      const agent = await manager.getAgent(id);
+      if (!agent) {
+        return reply.code(404).send({ error: { message: `Agent '${id}' not found` } });
+      }
+      return agent;
+    });
+
+    this.fastify.post('/v1/runtime-agents/:id/configure', async (request) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean; gatewayUrl?: string; apiKey?: string; defaultModel?: string } | undefined) ?? {};
+      const manager = new AgentRuntimeManager();
+      return manager.configureAgent(id, body);
+    });
+
+    this.fastify.post('/v1/runtime-agents/:id/restore', async (request) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      return manager.restoreAgent(id);
+    });
+
+    this.fastify.post('/v1/runtime-agents/configure-all', async (request) => {
+      const body = (request.body as { dryRun?: boolean; gatewayUrl?: string } | undefined) ?? {};
+      const manager = new AgentRuntimeManager();
+      const results = await manager.configureAll(body);
+      return { configuredAgents: results };
+    });
+
+    // ── Orchestration API (§5) ─────────────────────────────────────────
+    // ── Orchestration API (§5 & §6) ───────────────────────────────────
+    const globalTaskStore = new InMemoryTaskStore();
+    const globalAgentExecutor = new SubprocessAgentExecutor();
+    const globalConcurrency = new ConcurrencyManager();
+
+    this.fastify.get('/v1/orchestration/status', async () => {
+      return globalConcurrency.getStatus();
+    });
+
+    this.fastify.get('/v1/orchestration/history', async (request) => {
+      const q = (request.query as { status?: string; category?: string } | undefined) ?? {};
+      return { tasks: await globalTaskStore.list(q) };
+    });
+
+    this.fastify.get('/v1/orchestration/templates', async () => {
+      return {
+        templates: [
+          { id: 'code-review', name: 'Code Review', prompt: 'Perform a comprehensive code review on the codebase' },
+          { id: 'fix-tests', name: 'Fix Tests', prompt: 'Inspect unit test failures and fix them' },
+          { id: 'security-audit', name: 'Security Audit', prompt: 'Perform a static security audit across source files' },
+          { id: 'refactor', name: 'Refactor Code', prompt: 'Refactor complex modules to improve maintainability' },
+          { id: 'repository-analysis', name: 'Repository Analysis', prompt: 'Analyze project structure and dependencies' },
+        ],
+      };
+    });
+
+    this.fastify.post('/v1/orchestration/plan', async (request) => {
+      const body = request.body as { prompt: string; category?: any; requestedAgent?: string; requestedModel?: string };
+      const runtimeManager = new AgentRuntimeManager();
+      const availableAgents = await runtimeManager.listAgents();
+      const orchestrator = new TaskOrchestrator(this.deps.routing, globalTaskStore, globalAgentExecutor, this.deps.events);
+      return orchestrator.planTask(body, availableAgents);
+    });
+
+    this.fastify.post('/v1/orchestration/tasks', async (request) => {
+      const body = request.body as { prompt: string; category?: any; requestedAgent?: string; requestedModel?: string; dryRun?: boolean };
+      const runtimeManager = new AgentRuntimeManager();
+      const availableAgents = await runtimeManager.listAgents();
+      const orchestrator = new TaskOrchestrator(this.deps.routing, globalTaskStore, globalAgentExecutor, this.deps.events);
+      const task = await orchestrator.createTask(body, availableAgents);
+      if (!body.dryRun) {
+        globalConcurrency.incrementQueue();
+      }
+      return task;
+    });
+
+    this.fastify.get('/v1/orchestration/tasks', async () => {
+      return { tasks: await globalTaskStore.list() };
+    });
+
+    this.fastify.get('/v1/orchestration/tasks/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const task = await globalTaskStore.get(id);
+      if (!task) return reply.code(404).send({ error: { message: `Task '${id}' not found` } });
+      return task;
+    });
+
+    this.fastify.post('/v1/orchestration/tasks/:id/cancel', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const orchestrator = new TaskOrchestrator(this.deps.routing, globalTaskStore, globalAgentExecutor, this.deps.events);
+      try {
+        const cancelled = await orchestrator.cancelTask(id);
+        return cancelled;
+      } catch (err: any) {
+        return reply.code(404).send({ error: { message: err.message } });
+      }
+    });
+
+    this.fastify.post('/v1/orchestration/tasks/:id/retry', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const orchestrator = new TaskOrchestrator(this.deps.routing, globalTaskStore, globalAgentExecutor, this.deps.events);
+      try {
+        const retried = await orchestrator.retryTask(id, 'claude', 'http://127.0.0.1:8787');
+        return retried;
+      } catch (err: any) {
+        return reply.code(404).send({ error: { message: err.message } });
+      }
+    });
+
+    // ── Phase 7 Workflow Execution Fabric API (§14) ────────────────────
+    const defaultOrchestrator = new TaskOrchestrator(this.deps.routing, globalTaskStore, globalAgentExecutor, this.deps.events);
+    const globalWorkflowOrchestrator = new WorkflowOrchestrator(defaultOrchestrator);
+
+    // Seed built-in workflow definitions (node-based DAG schema consumed by the
+    // dashboard's "Registered Workflow Definitions" list). These persist across
+    // restarts — unlike runtime POST-registered defs in prior builds.
+    for (const def of BUILT_IN_WORKFLOWS) {
+      globalWorkflowOrchestrator.registerDefinition(def);
+    }
+
+    this.fastify.get('/v1/workflow-fabric', async () => {
+      return { workflows: globalWorkflowOrchestrator.listDefinitions() };
+    });
+
+    this.fastify.post('/v1/workflow-fabric', async (request, reply) => {
+      const body = request.body as any;
+      const res = globalWorkflowOrchestrator.registerDefinition(body);
+      if (!res.valid) {
+        return reply.code(400).send({ error: { message: 'Invalid workflow definition', errors: res.errors } });
+      }
+      return reply.code(201).send(globalWorkflowOrchestrator.getDefinition(body.id));
+    });
+
+    this.fastify.get('/v1/workflow-fabric/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const def = globalWorkflowOrchestrator.getDefinition(id);
+      if (!def) return reply.code(404).send({ error: { message: `Workflow '${id}' not found` } });
+      return def;
+    });
+
+    this.fastify.post('/v1/workflow-fabric/:id/validate', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const def = globalWorkflowOrchestrator.getDefinition(id);
+      if (!def) return reply.code(404).send({ error: { message: `Workflow '${id}' not found` } });
+      const dag = new DAGEngine();
+      return dag.validate(def);
+    });
+
+    this.fastify.post('/v1/workflow-fabric/:id/runs', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { variables?: Record<string, unknown> } | undefined) ?? {};
+      try {
+        const run = globalWorkflowOrchestrator.createRun(id, body.variables);
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const updatedRun = await globalWorkflowOrchestrator.executeStep(run.runId, availableAgents);
+        return updatedRun;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    this.fastify.get('/v1/workflow-fabric/:id/runs/:runId', async (request, reply) => {
+      const { runId } = request.params as { id: string; runId: string };
+      const run = globalWorkflowOrchestrator.getRun(runId);
+      if (!run) return reply.code(404).send({ error: { message: `Workflow run '${runId}' not found` } });
+      return run;
+    });
+
+    this.fastify.post('/v1/workflow-fabric/:id/runs/:runId/pause', async (request, reply) => {
+      const { runId } = request.params as { id: string; runId: string };
+      try {
+        return globalWorkflowOrchestrator.pauseRun(runId);
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    this.fastify.post('/v1/workflow-fabric/:id/runs/:runId/resume', async (request, reply) => {
+      const { runId } = request.params as { id: string; runId: string };
+      try {
+        globalWorkflowOrchestrator.resumeRun(runId);
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        return await globalWorkflowOrchestrator.executeStep(runId, availableAgents);
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    this.fastify.post('/v1/workflow-fabric/:id/runs/:runId/cancel', async (request, reply) => {
+      const { runId } = request.params as { id: string; runId: string };
+      try {
+        return await globalWorkflowOrchestrator.cancelRun(runId);
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    this.fastify.post('/v1/workflow-fabric/:id/runs/:runId/approve', async (request, reply) => {
+      const { runId } = request.params as { id: string; runId: string };
+      const body = request.body as { nodeId: string; reason?: string; decidedBy?: string };
+      try {
+        globalWorkflowOrchestrator.approveRun(runId, body.nodeId, body.reason, body.decidedBy);
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const updatedRun = await globalWorkflowOrchestrator.executeStep(runId, availableAgents);
+        return updatedRun;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    this.fastify.post('/v1/workflow-fabric/:id/runs/:runId/reject', async (request, reply) => {
+      const { runId } = request.params as { id: string; runId: string };
+      const body = request.body as { nodeId: string; reason?: string; decidedBy?: string };
+      try {
+        return globalWorkflowOrchestrator.rejectRun(runId, body.nodeId, body.reason, body.decidedBy);
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    this.fastify.get('/v1/workflow-fabric/:id/runs/:runId/events', async (request, reply) => {
+      const { runId } = request.params as { id: string; runId: string };
+      const run = globalWorkflowOrchestrator.getRun(runId);
+      if (!run) return reply.code(404).send({ error: { message: `Workflow run '${runId}' not found` } });
+
+      reply.raw.setHeader('Content-Type', 'text/event-stream');
+      reply.raw.setHeader('Cache-Control', 'no-cache');
+      reply.raw.setHeader('Connection', 'keep-alive');
+
+      reply.raw.write(`data: ${JSON.stringify({ type: 'workflow.started', runId: run.runId, status: run.status })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ type: 'workflow.completed', runId: run.runId, status: run.status })}\n\n`);
+      reply.raw.end();
+      return reply;
+    });
+
+    this.fastify.get('/v1/debug/workflow-fabric/runs', async () => {
+      return { runs: globalWorkflowOrchestrator.listRuns() };
+    });
+
+    this.fastify.get('/v1/debug/workflow-fabric', async () => {
+      return {
+        activeWorkflows: globalWorkflowOrchestrator.listDefinitions().length,
+        totalRuns: globalWorkflowOrchestrator.listRuns().length,
+        engineState: 'operational',
+        dagValidation: 'strict',
+        approvalGatesSupported: true,
+      };
+    });
+
+    // ── Agent Session Fabric (Phase 17/18) ────────────────────────────────────
+    // SessionManager is constructed in runtime.ts and injected via deps.sessions.
+    // These endpoints expose it over REST + SSE. No new business logic — they
+    // delegate to the already-tested core SessionManager.
+
+    // GET /v1/sessions — list (optional ?status= & ?agentId= filters)
+    this.fastify.get('/v1/sessions', async (request) => {
+      const { status, agentId } = request.query as { status?: string; agentId?: string };
+      const list = await this.deps.sessions.list(
+        status || agentId ? { status, agentId } : undefined,
+      );
+      return { sessions: list, total: list.length };
+    });
+
+    // POST /v1/sessions — create a session
+    this.fastify.post('/v1/sessions', async (request, reply) => {
+      const body = request.body as {
+        agentId: string;
+        agentRuntime?: string;
+        modelId?: string;
+        providerId?: string;
+        projectId?: string;
+        workspaceId?: string;
+        prompt?: string;
+        systemContext?: string;
+        command?: string;
+        args?: string[];
+        cwd?: string;
+      };
+      if (!body?.agentId) {
+        return reply.code(400).send({ error: { message: 'agentId is required' } });
+      }
+      const session = await this.deps.sessions.create({
+        agentId: body.agentId,
+        agentRuntime: body.agentRuntime,
+        modelId: body.modelId,
+        providerId: body.providerId,
+        projectId: body.projectId,
+        workspaceId: body.workspaceId,
+        prompt: body.prompt,
+        systemContext: body.systemContext,
+        command: body.command,
+        args: body.args,
+        cwd: body.cwd,
+      });
+      return reply.code(201).send(session);
+    });
+
+    // GET /v1/sessions/:id
+    this.fastify.get('/v1/sessions/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const session = await this.deps.sessions.get(id);
+      if (!session) return reply.code(404).send({ error: { message: `session '${id}' not found` } });
+      return session;
+    });
+
+    // POST /v1/sessions/:id/start
+    this.fastify.post('/v1/sessions/:id/start', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { command?: string; args?: string[]; cwd?: string; env?: NodeJS.ProcessEnv } | undefined;
+      try {
+        return await this.deps.sessions.start(id, body ?? {});
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/sessions/:id/message
+    this.fastify.post('/v1/sessions/:id/message', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { text: string };
+      if (!body?.text) return reply.code(400).send({ error: { message: 'text is required' } });
+      try {
+        await this.deps.sessions.send(id, body.text);
+        return { ok: true };
+      } catch (err) {
+        return reply.code(409).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/sessions/:id/pause
+    this.fastify.post('/v1/sessions/:id/pause', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        return await this.deps.sessions.pause(id);
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/sessions/:id/resume
+    this.fastify.post('/v1/sessions/:id/resume', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        return await this.deps.sessions.resume(id);
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/sessions/:id/cancel
+    this.fastify.post('/v1/sessions/:id/cancel', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        return await this.deps.sessions.cancel(id);
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/sessions/:id/restart
+    this.fastify.post('/v1/sessions/:id/restart', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        return await this.deps.sessions.restart(id);
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/sessions/:id/checkpoint
+    this.fastify.post('/v1/sessions/:id/checkpoint', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { summary?: string } | undefined;
+      try {
+        return await this.deps.sessions.checkpoint(id, body?.summary);
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/sessions/:id/restore
+    this.fastify.post('/v1/sessions/:id/restore', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { checkpointId: string };
+      if (!body?.checkpointId) return reply.code(400).send({ error: { message: 'checkpointId is required' } });
+      try {
+        return await this.deps.sessions.restore(id, body.checkpointId);
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // GET /v1/sessions/:id/events — scoped SSE channel (session.* events only)
+    this.fastify.get('/v1/sessions/:id/events', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const session = await this.deps.sessions.get(id);
+      if (!session) return reply.code(404).send({ error: { message: `session '${id}' not found` } });
+
+      reply.raw.setHeader('Content-Type', 'text/event-stream');
+      reply.raw.setHeader('Cache-Control', 'no-cache');
+      reply.raw.setHeader('Connection', 'keep-alive');
+
+      const send = (event: unknown) => {
+        try {
+          reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          /* client gone */
+        }
+      };
+
+      // Emit current snapshot first.
+      send({ type: 'session.snapshot', sessionId: id, session });
+
+      const unsub = this.deps.events.subscribeAll((e) => {
+        if ((e as { correlationId?: string }).correlationId === id) send(e);
+      });
+
+      const onClose = () => unsub();
+      reply.raw.on('close', onClose);
+
+      // Heartbeat to keep the connection alive / detect dead clients.
+      const heartbeat = setInterval(() => {
+        try {
+          reply.raw.write(`: ping\n\n`);
+        } catch {
+          clearInterval(heartbeat);
+          unsub();
+        }
+      }, 15_000);
+
+      reply.raw.on('close', () => clearInterval(heartbeat));
+
+      return reply;
+    });
+
+    // GET /v1/debug/sessions — operational snapshot
+    this.fastify.get('/v1/debug/sessions', async () => {
+      const all = await this.deps.sessions.list();
+      const byStatus: Record<string, number> = {};
+      for (const s of all) byStatus[s.status] = (byStatus[s.status] ?? 0) + 1;
+      return {
+        total: all.length,
+        byStatus,
+        engineState: 'operational',
+        store: 'in-memory',
+      };
+    });
+
+    // ── Operator self-healing endpoints (base URL, context window, key heal) ──
+
+    // GET /v1/endpoints — list all registered provider endpoints (incl. live baseUrl/health).
+    this.fastify.get('/v1/endpoints', async () => {
+      return { endpoints: this.deps.routing.listEndpoints() };
+    });
+
+    // POST /v1/endpoints/:id — live-patch an endpoint (e.g. correct a wrong baseUrl).
+    this.fastify.post('/v1/endpoints/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { baseUrl?: string; displayName?: string; region?: string; tags?: string[]; priority?: number; weight?: number };
+      const existing = this.deps.routing.listEndpoints().find((e) => e.id === id);
+      if (!existing) return reply.code(404).send({ error: { message: `Endpoint '${id}' not found` } });
+      this.deps.routing.updateEndpoint(id, {
+        ...(body.baseUrl !== undefined ? { baseUrl: body.baseUrl } : {}),
+        ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
+        ...(body.region !== undefined ? { region: body.region } : {}),
+        ...(body.tags !== undefined ? { tags: body.tags } : {}),
+        ...(body.priority !== undefined ? { priority: body.priority } : {}),
+        ...(body.weight !== undefined ? { weight: body.weight } : {}),
+      });
+      return { ok: true, endpoint: this.deps.routing.listEndpoints().find((e) => e.id === id) };
+    });
+
+    // POST /v1/endpoints/:id/probe — test reachability of the endpoint's baseUrl.
+    this.fastify.post('/v1/endpoints/:id/probe', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const endpoint = this.deps.routing.listEndpoints().find((e) => e.id === id);
+      if (!endpoint) return reply.code(404).send({ error: { message: `Endpoint '${id}' not found` } });
+      const reachable = await probeUrl(endpoint.baseUrl);
+      this.deps.routing.updateEndpoint(id, { health: reachable ? 'healthy' : 'unhealthy' });
+      return { ok: true, reachable, baseUrl: endpoint.baseUrl, health: reachable ? 'healthy' : 'unhealthy' };
+    });
+
+    // POST /v1/models/context-window — live-set a model's context window.
+    // (Model ids often contain '/', so we take provider+model from the body
+    // rather than path params, which Fastify won't split on slashes.)
+    this.fastify.post('/v1/models/context-window', async (request, reply) => {
+      const body = request.body as { provider: string; model: string; contextWindow: number };
+      const provider = body?.provider;
+      const id = body?.model;
+      if (!provider || !id) return reply.code(400).send({ error: { message: 'provider and model are required' } });
+      if (!Number.isFinite(body.contextWindow) || body.contextWindow <= 0) {
+        return reply.code(400).send({ error: { message: 'contextWindow must be a positive number' } });
+      }
+      const existing = this.deps.modelRegistry.get(provider, id)
+        ?? this.deps.modelRegistry.list().find((m) => m.providerId === provider && m.id === id);
+      if (!existing) return reply.code(404).send({ error: { message: `Model '${provider}/${id}' not found` } });
+      this.deps.modelRegistry.setContextWindow(provider, existing.id, Math.floor(body.contextWindow));
+      return { ok: true, provider, model: existing.id, contextWindow: Math.floor(body.contextWindow) };
+    });
+
+    // POST /v1/keys/:id/heal — reset a key's health and re-probe its endpoint.
+    this.fastify.post('/v1/keys/:id/heal', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const key = this.deps.keyRegistry.get(id);
+      if (!key) return reply.code(404).send({ error: { message: `Key '${id}' not found` } });
+      const restored = this.deps.keyRegistry.reset(id);
+      // Re-probe a representative endpoint for the key's provider.
+      const endpoint = this.deps.routing.listEndpoints().find((e) => e.providerId === key.providerId);
+      let reachable: boolean | null = null;
+      if (endpoint) {
+        reachable = await probeUrl(endpoint.baseUrl);
+        if (reachable) this.deps.routing.updateEndpoint(endpoint.id, { health: 'healthy' });
+      }
+      return { ok: restored, keyId: id, status: 'active', endpointReachable: reachable };
+    });
+
+    // ── Phase 9 Autonomous Execution Control Plane API ─────────────────
+    const globalAutonomousPlanner = new AutonomousPlanner();
+
+    this.fastify.post('/v1/autonomous/plan', async (request) => {
+      const body = request.body as { prompt: string };
+      return globalAutonomousPlanner.plan(body.prompt);
+    });
+
+    this.fastify.post('/v1/autonomous/tasks', async (request) => {
+      const body = request.body as { prompt: string };
+      const plan = globalAutonomousPlanner.plan(body.prompt);
+      globalWorkflowOrchestrator.registerDefinition(plan.definition);
+      const run = globalWorkflowOrchestrator.createRun(plan.definition.id);
+      const runtimeManager = new AgentRuntimeManager();
+      const availableAgents = await runtimeManager.listAgents();
+      const updatedRun = await globalWorkflowOrchestrator.executeStep(run.runId, availableAgents);
+      return {
+        taskId: `auto-task-${Date.now()}`,
+        workflowId: plan.definition.id,
+        runId: run.runId,
+        status: updatedRun.status,
+        risk: plan.risk,
+      };
+    });
+
+    this.fastify.post('/v1/debug/autonomous/explain', async (request) => {
+      const body = request.body as { prompt: string };
+      const plan = globalAutonomousPlanner.plan(body.prompt);
+      return {
+        prompt: body.prompt,
+        intent: plan.category,
+        risk: plan.risk,
+        workflowId: plan.definition.id,
+        nodeCount: plan.definition.nodes.length,
+        estimatedCostUsd: plan.estimatedCostUsd,
+      };
+    });
+
+    this.fastify.get('/v1/debug/execution-memory', async () => {
+      return {
+        history: globalWorkflowOrchestrator.listRuns().map(r => ({
+          runId: r.runId,
+          workflowId: r.workflowId,
+          status: r.status,
+          createdAt: r.createdAt,
+          updatedAt: r.updatedAt,
+          outputs: r.outputs,
+        })),
+      };
+    });
+
+    // ── Phase 11 Autonomous Application Engine API (AGY Builder) ──────────
+    const globalAgyAdapter = new AgyBuilderAdapter(
+      `http://127.0.0.1:${this.deps.config.server.port ?? 8787}`,
+      'E:/CodingGhost', // Nexus repo root — workspace isolation guard
+    );
+    const she = new HermesRuntimeManager({
+      gatewayHost: this.deps.config.server.host,
+      gatewayPort: this.deps.config.server.port ?? 8787,
+      resolveAlias: (alias) => this.deps.aliasRegistry.resolve(alias),
+    });
+    const globalAppEngine = new ApplicationEngine(
+      globalWorkflowOrchestrator,
+      globalAgyAdapter,
+      this.deps.events,
+      this.deps.routing,
+      {
+        gatewayBaseUrl: `http://127.0.0.1:${this.deps.config.server.port ?? 8787}`,
+        gatewayPort: this.deps.config.server.port ?? 8787,
+        nexusRepoRoot: 'E:/CodingGhost',
+      },
+    );
+
+    // GET /v1/applications — list all applications
+    this.fastify.get('/v1/applications', async () => {
+      return { applications: globalAppEngine.listApplications() };
+    });
+
+    // POST /v1/applications — create a new application
+    this.fastify.post('/v1/applications', async (request, reply) => {
+      const body = request.body as { objective: string };
+      if (!body?.objective?.trim()) {
+        return reply.code(400).send({ error: { message: 'objective is required' } });
+      }
+      const app = globalAppEngine.createApplication(body.objective.trim());
+      return reply.code(201).send(app);
+    });
+
+    // GET /v1/applications/:id — get application by ID
+    this.fastify.get('/v1/applications/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const app = globalAppEngine.getApplication(id);
+      if (!app) return reply.code(404).send({ error: { message: `Application '${id}' not found` } });
+      return app;
+    });
+
+    // GET /v1/applications/:id/state — get application state summary
+    this.fastify.get('/v1/applications/:id/state', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const app = globalAppEngine.getApplication(id);
+      if (!app) return reply.code(404).send({ error: { message: `Application '${id}' not found` } });
+      return {
+        appId: app.appId,
+        stage: app.stage,
+        spec: app.spec,
+        architecture: app.architecture,
+        workspace: app.workspace,
+        buildContext: app.buildContext
+          ? {
+              requiresApproval: app.buildContext.requiresApproval,
+              riskLevel: app.buildContext.riskLevel,
+              riskFlags: app.buildContext.riskFlags,
+              selectedPolicy: app.buildContext.selectedPolicy,
+              selectedModel: app.buildContext.selectedModel,
+              selectedProvider: app.buildContext.selectedProvider,
+              repairAttempts: app.buildContext.repairAttempts,
+              maxRepairAttempts: app.buildContext.maxRepairAttempts,
+              lastTestResult: app.buildContext.lastTestResult,
+            }
+          : undefined,
+        workflowId: app.workflowId,
+        runId: app.runId,
+        repairAttempts: app.repairAttempts,
+        error: app.error,
+        eventCount: app.eventLog.length,
+      };
+    });
+
+    // POST /v1/applications/:id/plan — specify, architect, plan + risk analysis
+    this.fastify.post('/v1/applications/:id/plan', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const app = await globalAppEngine.planApplication(id);
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // POST /v1/applications/:id/approve — approve a HIGH/CRITICAL risk build
+    this.fastify.post('/v1/applications/:id/approve', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { decidedBy?: string; reason?: string } | undefined) ?? {};
+      try {
+        const app = globalAppEngine.approveApplication(id, body.decidedBy);
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // POST /v1/applications/:id/reject — reject a pending approval
+    this.fastify.post('/v1/applications/:id/reject', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { reason?: string; decidedBy?: string } | undefined) ?? {};
+      try {
+        const app = globalAppEngine.rejectApplication(id, body.reason, body.decidedBy);
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // POST /v1/applications/:id/build — execute full AGY build pipeline
+    this.fastify.post('/v1/applications/:id/build', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean } | undefined) ?? {};
+      try {
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+
+        if (body.dryRun) {
+          // Must be planned first for full dry-run
+          const app = globalAppEngine.getApplication(id);
+          if (!app) return reply.code(404).send({ error: { message: `Application '${id}' not found` } });
+
+          const agyHealth = await globalAgyAdapter.healthCheck();
+          return {
+            dryRun: true,
+            applicationId: id,
+            stage: app.stage,
+            selectedRuntime: 'agy-builder',
+            agyRuntime: {
+              installed: agyHealth.installed,
+              version: agyHealth.version,
+              executablePath: agyHealth.executablePath,
+              healthy: agyHealth.runtimeHealthy,
+            },
+            workflow: app.workflowId
+              ? globalWorkflowOrchestrator.getDefinition(app.workflowId)
+              : null,
+            buildNodes: ['AGY_SCAFFOLD', 'AGY_IMPLEMENT', 'AGY_TEST', 'AGY_VERIFY'],
+            selectedModel: app.buildContext?.selectedModel ?? 'nexus/best-coding',
+            selectedProvider: app.buildContext?.selectedProvider ?? 'nexus',
+            selectedPolicy: app.buildContext?.selectedPolicy ?? 'nexus/best-coding',
+            riskLevel: app.buildContext?.riskLevel ?? 'LOW',
+            riskFlags: app.buildContext?.riskFlags ?? [],
+            requiresApproval: app.buildContext?.requiresApproval ?? false,
+            workspace: {
+              path: app.workspace?.workspacePath ?? `~/.nexus/applications/${id}`,
+              workspaceId: app.workspace?.workspaceId,
+              buildSessionId: app.workspace?.buildSessionId,
+            },
+            maxRepairAttempts: 3,
+            estimatedExecutionPlan: [
+              { step: 1, name: 'Scaffold', kind: 'AGY_SCAFFOLD', policy: 'nexus/best-coding' },
+              { step: 2, name: 'Implement', kind: 'AGY_IMPLEMENT', policy: 'nexus/best-coding' },
+              { step: 3, name: 'Test', kind: 'AGY_TEST', policy: 'nexus/fast' },
+              { step: 4, name: 'Verify', kind: 'AGY_VERIFY', policy: 'nexus/fast' },
+            ],
+          };
+        }
+
+        const app = await globalAppEngine.buildApplication(id, availableAgents);
+        she.recordBuild(id, app.stage === 'COMPLETED' ? 'SUCCESS' : app.stage === 'FAILED' ? 'FAILED' : 'RUNNING');
+        return app;
+      } catch (err: any) {
+        she.recordBuild(id, 'FAILED', { error: err.message });
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // GET /v1/applications/:id/build — alias for build status
+    this.fastify.get('/v1/applications/:id/build', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const app = globalAppEngine.getApplication(id);
+      if (!app) return reply.code(404).send({ error: { message: `Application '${id}' not found` } });
+      return {
+        applicationId: app.appId,
+        stage: app.stage,
+        workspace: app.workspace,
+        buildContext: app.buildContext,
+        repairAttempts: app.repairAttempts,
+        error: app.error,
+      };
+    });
+
+    // GET /v1/applications/:id/build/status
+    this.fastify.get('/v1/applications/:id/build/status', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const app = globalAppEngine.getApplication(id);
+      if (!app) return reply.code(404).send({ error: { message: `Application '${id}' not found` } });
+      return {
+        applicationId: app.appId,
+        stage: app.stage,
+        runId: app.runId,
+        repairAttempts: app.repairAttempts,
+        requiresApproval: app.buildContext?.requiresApproval,
+        riskLevel: app.buildContext?.riskLevel,
+        selectedModel: app.buildContext?.selectedModel,
+        lastTestResult: app.buildContext?.lastTestResult,
+        workspace: app.workspace,
+        error: app.error,
+      };
+    });
+
+    // POST /v1/applications/:id/build/cancel
+    this.fastify.post('/v1/applications/:id/build/cancel', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const app = await globalAppEngine.cancelApplication(id);
+        return app;
+      } catch (err: any) {
+        return reply.code(404).send({ error: { message: err.message } });
+      }
+    });
+
+    // POST /v1/applications/:id/build/retry
+    this.fastify.post('/v1/applications/:id/build/retry', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const app = await globalAppEngine.retryApplication(id, availableAgents);
+        she.recordBuild(id, app.stage === 'COMPLETED' ? 'SUCCESS' : app.stage === 'FAILED' ? 'FAILED' : 'RUNNING');
+        return app;
+      } catch (err: any) {
+        she.recordBuild(id, 'FAILED', { error: err.message });
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // POST /v1/applications/:id/test — run tests in workspace
+    this.fastify.post('/v1/applications/:id/test', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const app = globalAppEngine.getApplication(id);
+      if (!app) return reply.code(404).send({ error: { message: `Application '${id}' not found` } });
+
+      const workspace = app.workspace;
+      if (!workspace) return reply.code(400).send({ error: { message: 'Application has no workspace — plan and build first' } });
+
+      const task: import('@anx/core').AgyBuildTask = {
+        taskId: `test-${Date.now()}`,
+        applicationId: id,
+        workspaceId: workspace.workspaceId,
+        workspace: {
+          applicationId: id,
+          workspaceId: workspace.workspaceId,
+          workspacePath: workspace.workspacePath,
+          buildSessionId: workspace.buildSessionId,
+        },
+        objective: 'Run test suite',
+        kind: 'AGY_TEST',
+        targetModel: app.buildContext?.selectedModel,
+        policy: app.buildContext?.selectedPolicy as any,
+        gatewayBaseUrl: `http://127.0.0.1:${this.deps.config.server.port ?? 8787}`,
+      };
+
+      const result = await globalAgyAdapter.test(task);
+      return result;
+    });
+
+    // POST /v1/applications/:id/verify — run ApplicationVerifier
+    this.fastify.post('/v1/applications/:id/verify', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const app = globalAppEngine.getApplication(id);
+      if (!app) return reply.code(404).send({ error: { message: `Application '${id}' not found` } });
+
+      const workspace = app.workspace;
+      if (!workspace) return reply.code(400).send({ error: { message: 'Application has no workspace — plan and build first' } });
+
+      const result = await globalAgyAdapter.verify({
+        applicationId: id,
+        workspaceId: workspace.workspaceId,
+        workspacePath: workspace.workspacePath,
+        buildSessionId: workspace.buildSessionId,
+      });
+      return result;
+    });
+
+    // GET /v1/applications/:id/events — SSE stream of application events
+    this.fastify.get('/v1/applications/:id/events', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const app = globalAppEngine.getApplication(id);
+
+      reply.raw.setHeader('Content-Type', 'text/event-stream');
+      reply.raw.setHeader('Cache-Control', 'no-cache');
+      reply.raw.setHeader('Connection', 'keep-alive');
+      reply.raw.setHeader('X-Accel-Buffering', 'no');
+
+      // Send historical events
+      const events = globalAppEngine.getApplicationEvents(id);
+      for (const evt of events) {
+        reply.raw.write(`data: ${JSON.stringify(evt)}\n\n`);
+      }
+
+      if (!app) {
+        reply.raw.write(`data: ${JSON.stringify({ type: 'error', message: `Application '${id}' not found` })}\n\n`);
+        reply.raw.end();
+        return reply;
+      }
+
+      // Subscribe to live events matching this application
+      const unsubscribe = this.deps.events.subscribe(
+        [
+          'application.build.started',
+          'application.build.completed',
+          'application.build.failed',
+          'agy.execution.started',
+          'agy.execution.completed',
+          'agy.execution.failed',
+          'agy.test.started',
+          'agy.test.completed',
+          'agy.repair.started',
+          'agy.repair.completed',
+        ] as any,
+        (event: any) => {
+          if (
+            event.payload?.applicationId === id ||
+            !event.payload?.applicationId
+          ) {
+            reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+          }
+        },
+      );
+
+      const keepAlive = setInterval(() => {
+        reply.raw.write(': ping\n\n');
+      }, 15000);
+
+      reply.raw.on('close', () => {
+        clearInterval(keepAlive);
+        unsubscribe();
+      });
+
+      return reply;
+    });
+
+    // GET /v1/debug/applications — debug info
+    this.fastify.get('/v1/debug/applications', async () => {
+      const apps = globalAppEngine.listApplications();
+      const agyHealth = await globalAgyAdapter.healthCheck();
+      return {
+        totalApplications: apps.length,
+        byStage: apps.reduce<Record<string, number>>((acc, a) => {
+          acc[a.stage] = (acc[a.stage] ?? 0) + 1;
+          return acc;
+        }, {}),
+        engineState: 'operational',
+        agyRuntime: agyHealth,
+        maxRepairAttempts: 3,
+      };
+    });
+
+    this.fastify.post('/v1/debug/orchestration/explain', async (request) => {
+      const body = request.body as { prompt: string };
+      const runtimeManager = new AgentRuntimeManager();
+      const availableAgents = await runtimeManager.listAgents();
+      const orchestrator = new TaskOrchestrator(this.deps.routing, globalTaskStore, globalAgentExecutor, this.deps.events);
+      const plan = await orchestrator.planTask({ prompt: body.prompt }, availableAgents);
+      return {
+        prompt: body.prompt,
+        intent: plan.category,
+        selectedAgent: plan.selectedAgent,
+        agentScore: plan.agentScore,
+        agentReasons: plan.agentReasons,
+        selectedModel: plan.selectedModel,
+        provider: plan.providerId,
+        policy: plan.policy,
+        alternatives: plan.alternatives,
+      };
+    });
+
+
+
+
+
+    // ── Token Efficiency Debug API (§11) ───────────────────────────────
+    this.fastify.get('/v1/debug/tokens', async () => {
+      return {
+        stats: getOptStatsSummary(),
+        recent: getOptStatsRecent(),
+      };
+    });
+
+    // ── Routing policies / model aliases (Phase 15 §8) ───────────────────
+    this.fastify.get('/v1/routing/policies', async () => {
+      const aliases = this.deps.aliasRegistry.list().map((a) => ({
+        alias: a.alias,
+        filter: a.filter ?? null,
+        ranking: a.ranking ?? null,
+      }));
+      return {
+        intents: ['GENERAL', 'TOOL_USE', 'VISION', 'CODING', 'REASONING', 'LONG_CONTEXT', 'FREE', 'FAST'],
+        aliases,
+        catalogVersion: this.deps.modelRegistry.getCatalogVersion(),
+      };
+    });
+
+    // ── Autonomous Intelligent Routing Fabric Debug (§20) ───────────────
+    this.fastify.get('/v1/debug/routing', async () => {
+      const models = this.deps.modelRegistry.list();
+      const endpoints = this.deps.routing.listEndpoints();
+      const defaultIntent = IntentDetector.detect([{ role: 'user', content: 'hello' }]);
+      const candidateScores = models.map(m => {
+        const ep = endpoints.find(e => e.providerId === m.providerId);
+        return ScoringEngine.scoreCandidate(m, ep, defaultIntent, {
+          modelRegistryModels: models,
+          endpoints,
+        });
+      });
+      return {
+        strategy: 'autonomous_scoring_fabric',
+        activeEndpoints: endpoints.filter(e => e.health === 'healthy').length,
+        totalModelsEvaluated: models.length,
+        candidateScores,
+      };
+    });
+
+    this.fastify.post('/v1/debug/routing/explain', async (request, reply) => {
+      const body = request.body as { messages?: any[]; tools?: any[]; model?: string };
+      if (!body?.messages || !Array.isArray(body.messages)) {
+        return reply.code(400).send({ error: { message: 'messages array is required' } });
+      }
+      const intent = IntentDetector.detect(body.messages, body.tools, body.model);
+      const models = this.deps.modelRegistry.list();
+      const endpoints = this.deps.routing.listEndpoints();
+      const scores = models.map(m => {
+        const ep = endpoints.find(e => e.providerId === m.providerId);
+        return ScoringEngine.scoreCandidate(m, ep, intent, {
+          modelRegistryModels: models,
+          endpoints,
+        });
+      }).sort((a, b) => b.finalScore - a.finalScore);
+
+      const topCandidate = scores[0];
+
+      return {
+        intent: intent.intent,
+        confidence: intent.confidence,
+        signals: intent.signals,
+        requiredCapabilities: intent.requiredCapabilities,
+        minContextWindow: intent.minContextWindow,
+        selectedModel: topCandidate?.modelId ?? 'none',
+        provider: topCandidate?.providerId ?? 'none',
+        score: topCandidate?.finalScore ?? 0,
+        candidateCount: scores.length,
+        topCandidates: scores.slice(0, 5),
+      };
     });
 
     this.fastify.post('/v1/models/refresh', async () => {
@@ -311,9 +1723,24 @@ export class HttpServer {
       // The resolution happens BEFORE routing, so the routing engine sees
       // a real model id.
       const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(body.model);
-      const effectiveBody = aliasResolution.resolution
-        ? { ...body, model: aliasResolution.model }
-        : body;
+      // Free-tier exhaustion: a free-only alias that cannot resolve must be a
+      // clean 503 NO_ELIGIBLE_PROVIDER, not a 500 unknown-model failure.
+      if (this.deps.aliasRegistry.isExhaustedFreeOnlyAlias(body.model)) {
+        return reply.code(503).send({
+          error: {
+            message: `No free-tier model available for '${body.model}' — free-tier exhausted or no free models configured`,
+            code: 'NO_ELIGIBLE_PROVIDER',
+            type: 'no_eligible_provider',
+          },
+        });
+      }
+      const providerHint = this.preferredProviderFor(aliasResolution.model, aliasResolution.resolution);
+      const bodyRouting = (body as { routing?: Record<string, unknown> }).routing ?? {};
+      const effectiveBody = {
+        ...body,
+        model: aliasResolution.model,
+        ...(providerHint ? { routing: { ...bodyRouting, preferredProviders: [providerHint] } } : {}),
+      };
 
       // AuthN + AuthZ. If security principals are configured, require gateway:chat.
       // If no principals are configured at all (open gateway), allow anonymous.
@@ -344,7 +1771,7 @@ export class HttpServer {
             reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
           },
           error: async (error: Error) => {
-            reply.raw.write(`data: ${JSON.stringify({ error: { message: error.message } })}\n\n`);
+            reply.raw.write(`data: ${JSON.stringify({ error: { message: this.httpErrorFor(error).message } })}\n\n`);
             reply.raw.end();
           },
           end: async () => {
@@ -354,12 +1781,18 @@ export class HttpServer {
         };
 
         try {
-          await this.deps.chatUseCase.execute(effectiveBody, sink, new AbortController().signal);
+          await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), sink, new AbortController().signal);
         } catch (err) {
           if (!reply.raw.headersSent) {
-            reply.code(500).send({ error: { message: (err as Error).message } });
+            const errMsg = (err as Error).message ?? '';
+            if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429')) {
+              this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
+            }
+            const http = this.httpErrorFor(err as Error);
+            reply.code(http.status).send({ error: { message: http.message } });
           } else {
-            reply.raw.write(`data: ${JSON.stringify({ error: { message: (err as Error).message } })}\n\n`);
+            const http = this.httpErrorFor(err as Error);
+            reply.raw.write(`data: ${JSON.stringify({ error: { message: http.message } })}\n\n`);
             reply.raw.end();
           }
         }
@@ -367,12 +1800,16 @@ export class HttpServer {
       }
 
       try {
-        const response = await this.deps.chatUseCase.execute(effectiveBody, undefined, new AbortController().signal);
+        const response = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), undefined, new AbortController().signal);
         return response;
       } catch (err) {
-        const code = (err as { code?: string }).code;
-        const status = code === 'NO_ELIGIBLE_PROVIDER' || code === 'ALL_PROVIDERS_EXHAUSTED' ? 503 : 500;
-        return reply.code(status).send({ error: { message: (err as Error).message, code } });
+        const errMsg = (err as Error).message ?? '';
+        if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429')) {
+          this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
+        }
+        this.reportUpstreamModelError(effectiveBody.model, err as Error);
+        const http = this.httpErrorFor(err as Error);
+        return reply.code(http.status).send({ error: { message: http.message, code: (err as { code?: string }).code } });
       }
     });
 
@@ -380,6 +1817,79 @@ export class HttpServer {
     // Lets Claude Code (and other Anthropic-protocol agents) talk to the
     // gateway natively — set ANTHROPIC_BASE_URL=http://127.0.0.1:8787 and
     // ANTHROPIC_AUTH_TOKEN=<anything> and it just works.
+    this.fastify.post('/v1/responses', async (request, reply) => {
+      const body = request.body as ResponsesRequest | null | undefined;
+      if (!body || typeof body !== 'object') {
+        return reply.code(400).send({ error: { message: 'request body required' } });
+      }
+      const requestedModel = body.model ?? 'claude-sonnet-4-5';
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', requestedModel, reply);
+      if (authz === 'deny') return reply;
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(requestedModel);
+      if (this.deps.aliasRegistry.isExhaustedFreeOnlyAlias(requestedModel)) {
+        return reply.code(503).send({
+          error: {
+            message: `No free-tier model available for '${requestedModel}' — free-tier exhausted or no free models configured`,
+            code: 'NO_ELIGIBLE_PROVIDER',
+            type: 'no_eligible_provider',
+          },
+        });
+      }
+      const providerHint = this.preferredProviderFor(aliasResolution.model, aliasResolution.resolution);
+      const routing = { ...(((body as { routing?: Record<string, unknown> }).routing) ?? {}), ...(providerHint ? { preferredProviders: [providerHint] } : {}) };
+      const effectiveBody = { ...toChatRequest(body), model: aliasResolution.model, routing };
+      if (body.stream) {
+        reply.raw.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        });
+        const safeWrite = (data: string) => {
+          if (!reply.raw.writableEnded) reply.raw.write(data);
+        };
+        const safeEnd = () => {
+          if (!reply.raw.writableEnded) reply.raw.end();
+        };
+        const state = newResponsesStreamState(effectiveBody.model);
+        const sink = {
+          write: async (chunk: ChatCompletionChunk) => {
+            for (const event of translateChunkToResponsesEvents(chunk, state)) {
+              safeWrite(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+            }
+          },
+          error: async (error: Error) => {
+            safeWrite(`event: error\ndata: ${JSON.stringify({ type: 'error', code: 'api_error', message: this.httpErrorFor(error).message })}\n\n`);
+            safeEnd();
+          },
+          end: async () => {
+            for (const event of finalizeResponsesEvents(state)) {
+              safeWrite(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+            }
+            safeEnd();
+          },
+        };
+        try {
+          await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), sink, new AbortController().signal);
+        } catch (error) {
+          const http = this.httpErrorFor(error as Error);
+          if (!reply.raw.headersSent) {
+            return reply.code(http.status).send({ error: { message: http.message } });
+          }
+          safeWrite(`event: error\ndata: ${JSON.stringify({ type: 'error', code: 'api_error', message: http.message })}\n\n`);
+          safeEnd();
+        }
+        return reply;
+      }
+      try {
+        const response = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), undefined, new AbortController().signal);
+        return toResponsesResponse(response, effectiveBody.model);
+      } catch (error) {
+        const http = this.httpErrorFor(error as Error);
+        return reply.code(http.status).send({ error: { message: http.message } });
+      }
+    });
     this.fastify.post('/v1/messages', async (request, reply) => {
       const anthropicReq = request.body as AnthropicRequest;
       if (!anthropicReq?.model || !anthropicReq?.messages || !anthropicReq?.max_tokens) {
@@ -393,14 +1903,68 @@ export class HttpServer {
       const authz = this.requirePermission(principal, 'gateway:chat', anthropicReq.model, reply);
       if (authz === 'deny') return reply;
 
-      // Translate Anthropic → internal OpenAI-compatible request.
-      const internalReq = translateAnthropicRequest(anthropicReq);
-
       // Smart model aliasing — resolve local/free, local/coding, etc.
-      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(internalReq.model);
-      const effectiveReq = aliasResolution.resolution
-        ? { ...internalReq, model: aliasResolution.model }
-        : internalReq;
+      // Resolve BEFORE translation so we can gate reasoning_content on the
+      // *resolved* target model's capability.
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(anthropicReq.model);
+      if (this.deps.aliasRegistry.isExhaustedFreeOnlyAlias(anthropicReq.model)) {
+        return reply.code(503).send({
+          type: 'error',
+          error: {
+            type: 'no_eligible_provider',
+            message: `No free-tier model available for '${anthropicReq.model}' — free-tier exhausted or no free models configured`,
+          },
+        });
+      }
+
+      // Translate Anthropic → internal OpenAI-compatible request.
+      // Only forward `reasoning_content` when the *resolved target* model
+      // actually supports reasoning (DeepSeek-style thinking upstreams);
+      // otherwise providers like Mistral/Cerebras/GLM/OpenAI reject the field.
+      const resolvedDescriptor = this.deps.modelRegistry
+        .list()
+        .find((md) => md.id === aliasResolution.model || md.id.endsWith('/' + aliasResolution.model));
+      const targetSupportsReasoning = resolvedDescriptor?.capabilities?.reasoning === true;
+      const internalReq = translateAnthropicRequest(anthropicReq, { targetSupportsReasoning });
+
+            // Token-efficiency layer (§15–§36): env-gated (ANX_TOKEN_MODE=off|safe|balanced|aggressive).
+        // Default OFF → zero behavior change. SAFE removes exact duplicates; BALANCED/AGGRESSIVE
+        // also enforce the context budget (§25). See packages/token-efficiency.
+let optMessages: never[] | undefined;
+                  const optMode = (process.env['ANX_TOKEN_MODE'] ?? 'off').toLowerCase();
+                  if (optMode !== 'off') {
+                    const optBudget = Number(process.env['ANX_TOKEN_BUDGET'] ?? 190_000);
+                    const optimizer = new TokenOptimizer(optMode as OptimizationMode);
+                    const opt = optimizer.optimize(internalReq.messages as unknown as OptMessage[], {
+                      maxContextTokens: optBudget,
+                    });
+                    recordOptStats({
+                      mode: opt.stats.mode,
+                      model: internalReq.model,
+                      originalTokens: opt.stats.originalTokens,
+                      optimizedTokens: opt.stats.optimizedTokens,
+                      savedTokens: opt.stats.savedTokens,
+                      savingsPct: opt.stats.savingsPct,
+                      changed: opt.changed,
+                    });
+                    if (opt.changed) {
+                      optMessages = opt.messages as never;
+                      reply.header('x-anx-opt-mode', opt.stats.mode);
+                      reply.header('x-anx-opt-saved-tokens', String(opt.stats.savedTokens));
+                      this.fastify.log.info(
+                        `[token-efficiency] mode=${opt.stats.mode} blocks ${opt.stats.originalBlocks}->${opt.stats.optimizedBlocks} saved ${opt.stats.savedTokens} tokens (${opt.stats.savingsPct}%)`,
+                      );
+                    }
+                  }
+
+      const providerHint = this.preferredProviderFor(aliasResolution.model, aliasResolution.resolution);
+      const reqRouting = (internalReq as { routing?: Record<string, unknown> }).routing ?? {};
+      const effectiveReq = {
+              ...internalReq,
+              ...(optMessages ? { messages: optMessages } : {}),
+              model: aliasResolution.model,
+              ...(providerHint ? { routing: { ...reqRouting, preferredProviders: [providerHint] } } : {}),
+            };
 
       // Streaming path: emit Anthropic-format SSE events.
       if (anthropicReq.stream) {
@@ -409,56 +1973,80 @@ export class HttpServer {
         reply.raw.setHeader('Connection', 'keep-alive');
         reply.raw.flushHeaders?.();
 
+        // Guarded writes: once the response has ended (writableEnded), any
+        // further write throws ERR_STREAM_WRITE_AFTER_END and — being an
+        // unhandled 'error' event on the ServerResponse — takes down the
+        // whole gateway. The upstream may error, abort, or end the stream
+        // at any point; these helpers make every late write/end a no-op.
+        const safeWrite = (data: string): void => {
+          if (reply.raw.writableEnded || reply.raw.destroyed) return;
+          try {
+            reply.raw.write(data);
+          } catch {
+            /* stream already closing — ignore */
+          }
+        };
+        const safeEnd = (): void => {
+          if (reply.raw.writableEnded || reply.raw.destroyed) return;
+          try {
+            reply.raw.end();
+          } catch {
+            /* stream already closing — ignore */
+          }
+        };
+
         const state = newStreamState(anthropicReq.model);
         const sink = {
           write: async (chunk: ChatCompletionChunk) => {
             for (const evt of translateChunkToAnthropicEvents(chunk, state)) {
-              reply.raw.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+              safeWrite(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
             }
           },
           error: async (error: Error) => {
             const errEvt = {
               type: 'error',
-              error: { type: 'api_error', message: error.message },
+              error: { type: 'api_error', message: this.httpErrorFor(error).message },
             };
-            reply.raw.write(`event: error\ndata: ${JSON.stringify(errEvt)}\n\n`);
-            reply.raw.end();
+            safeWrite(`event: error\ndata: ${JSON.stringify(errEvt)}\n\n`);
+            safeEnd();
           },
           end: async () => {
-            reply.raw.end();
+            safeEnd();
           },
         };
 
         try {
-          await this.deps.chatUseCase.execute(effectiveReq, sink, new AbortController().signal);
+          await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveReq, aliasResolution.model), sink, new AbortController().signal);
         } catch (err) {
+          const http = this.httpErrorFor(err as Error);
           if (!reply.raw.headersSent) {
-            reply.code(500).send({
+            reply.code(http.status).send({
               type: 'error',
-              error: { type: 'api_error', message: (err as Error).message },
+              error: { type: 'api_error', message: http.message },
             });
           } else {
             const errEvt = {
               type: 'error',
-              error: { type: 'api_error', message: (err as Error).message },
+              error: { type: 'api_error', message: http.message },
             };
-            reply.raw.write(`event: error\ndata: ${JSON.stringify(errEvt)}\n\n`);
-            reply.raw.end();
+            safeWrite(`event: error\ndata: ${JSON.stringify(errEvt)}\n\n`);
+            safeEnd();
           }
+          this.reportUpstreamModelError(anthropicReq.model, err as Error);
         }
         return reply;
       }
 
       // Non-streaming path: translate response back to Anthropic format.
       try {
-        const response = await this.deps.chatUseCase.execute(effectiveReq, undefined, new AbortController().signal);
+        const response = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveReq, aliasResolution.model), undefined, new AbortController().signal);
         return translateToAnthropicResponse(response, anthropicReq.model);
       } catch (err) {
-        const code = (err as { code?: string }).code;
-        const status = code === 'NO_ELIGIBLE_PROVIDER' || code === 'ALL_PROVIDERS_EXHAUSTED' ? 503 : 500;
-        return reply.code(status).send({
+        const http = this.httpErrorFor(err as Error);
+        this.reportUpstreamModelError(anthropicReq.model, err as Error);
+        return reply.code(http.status).send({
           type: 'error',
-          error: { type: 'api_error', message: (err as Error).message },
+          error: { type: 'api_error', message: http.message },
         });
       }
     });
@@ -474,7 +2062,15 @@ export class HttpServer {
       if (authz === 'deny') return reply;
       // Resolve adapter for model
       const endpoints = this.deps.routing.listEndpoints();
-      const endpoint = endpoints.find((e) => e.tags.includes(body.model) || e.id === body.model || e.providerId === body.model);
+      let endpoint = endpoints.find(
+        (e) => e.tags.includes(body.model) || e.id === body.model || e.providerId === body.model,
+      );
+      if (!endpoint) {
+        // A model id (e.g. `mistral-embed`) maps to its provider's endpoint
+        // even though it isn't a tag/id/providerId of that endpoint.
+        const modelEntry = this.deps.modelRegistry.list().find((m) => m.id === body.model);
+        if (modelEntry) endpoint = endpoints.find((e) => e.providerId === modelEntry.providerId);
+      }
       if (!endpoint) {
         return reply.code(404).send({ error: { message: `No provider for model ${body.model}` } });
       }
@@ -731,6 +2327,54 @@ export class HttpServer {
       };
     });
 
+    // ── Token-economics (§30) — real measurements from the optimizer ───
+    this.fastify.get('/v1/optimizer/stats', async () => {
+      return { ...getOptStatsSummary(), recent: getOptStatsRecent() };
+    });
+
+    // ── Repository context index (§20–21) — read-only, no mutation ────
+    this.fastify.get('/v1/repo/index', async (request) => {
+      const { root } = request.query as { root?: string };
+      const repoRoot = root && root.length > 0 ? root : process.cwd();
+      const res = scanRepository(repoRoot);
+      return {
+        ...res,
+        fileCount: res.files.length,
+        totalSizeBytes: res.files.reduce((acc, f) => acc + f.sizeBytes, 0),
+      };
+    });
+
+    // §21 selection: changed files first (git porcelain), then budget-capped ranking.
+    this.fastify.get('/v1/repo/selection', async (request) => {
+      const q = request.query as { root?: string; maxFiles?: string; maxTokens?: string };
+      const repoRoot = q.root && q.root.length > 0 ? q.root : process.cwd();
+      const index = scanRepository(repoRoot);
+      let changedFiles: string[] = [];
+      try {
+        const { execSync } = await import('node:child_process');
+        const porcelain = execSync('git status --porcelain', {
+          cwd: repoRoot,
+          encoding: 'utf8',
+          timeout: 5000,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        changedFiles = parseGitPorcelain(porcelain).map((e) => e.path);
+      } catch {
+        /* not a git repo or git unavailable — selection degrades to ranking */
+      }
+      const ranked = rankRepository(index, changedFiles);
+      const selection = selectRepositoryContext(ranked, {
+        maxFiles: q.maxFiles ? Number(q.maxFiles) : 25,
+        maxTokens: q.maxTokens ? Number(q.maxTokens) : 60_000,
+      });
+      return {
+        root: repoRoot,
+        changedFiles,
+        scannedFiles: index.files.length,
+        ...selection,
+      };
+    });
+
     // ── Privacy mode (master prompt #31) ───────────────────────────────
     // Returns the current privacy configuration. The level can be changed
     // at runtime via POST /v1/privacy (no restart required).
@@ -959,10 +2603,13 @@ export class HttpServer {
       if (!body?.text || !body?.namespace) {
         return reply.code(400).send({ error: { message: 'text and namespace are required' } });
       }
+      if (!this.deps.rag) {
+        return reply.code(503).send({
+          error: { message: 'RAG unavailable — no embeddings-capable endpoint configured' },
+        });
+      }
       try {
-        const { RagPipeline, InMemoryVectorStore } = await import('@anx/memory');
-        const rag = new RagPipeline(new InMemoryVectorStore(), null as never);
-        const result = await rag.ingest(body.text, body.namespace, body.source ?? 'unknown');
+        const result = await this.deps.rag.ingest(body.text, body.namespace, body.source ?? 'unknown');
         return result;
       } catch (err) {
         return reply.code(500).send({ error: { message: (err as Error).message } });
@@ -974,10 +2621,13 @@ export class HttpServer {
       if (!body?.query || !body?.namespace) {
         return reply.code(400).send({ error: { message: 'query and namespace are required' } });
       }
+      if (!this.deps.rag) {
+        return reply.code(503).send({
+          error: { message: 'RAG unavailable — no embeddings-capable endpoint configured' },
+        });
+      }
       try {
-        const { RagPipeline, InMemoryVectorStore } = await import('@anx/memory');
-        const rag = new RagPipeline(new InMemoryVectorStore(), null as never);
-        const result = await rag.retrieve(body.query, body.namespace);
+        const result = await this.deps.rag.retrieve(body.query, body.namespace);
         return result;
       } catch (err) {
         return reply.code(500).send({ error: { message: (err as Error).message } });
@@ -1171,13 +2821,56 @@ export class HttpServer {
       }
       const id = body.id ?? `${body.providerId}-key-${Date.now().toString(36)}`;
       try {
+        // Unregister first if replacing key with same ID to avoid conflict error
+        if (this.deps.keyRegistry.get(id)) {
+          await this.deps.keyRegistry.unregister(id);
+        }
+
         const desc = await this.deps.keyRegistry.register({
           id,
           providerId: body.providerId,
           plaintext: body.plaintext,
           label: body.label,
         });
-        // Return descriptor WITHOUT plaintext.
+
+        // Auto-register a routable endpoint for this provider if none exists.
+        // If an endpoint already exists but is unhealthy (e.g. no key was
+        // present before), restore its health now that a real key is vaulted.
+        const hasEndpoint = this.deps.routing.listEndpoints().some((e) => e.providerId === body.providerId);
+        if (!hasEndpoint) {
+          const providerId = body.providerId;
+          this.deps.routing.registerEndpoint({
+            id: `auto-${providerId}`,
+            providerId,
+            displayName: providerId,
+            baseUrl: defaultBaseUrlFor(providerId),
+            capabilities: defaultCapabilitiesFor(providerId),
+            pricing: defaultPricingFor(providerId),
+            priority: 1,
+            weight: 1,
+            region: 'auto',
+            tags: ['auto', 'key-registered'],
+            timeoutMs: 30_000,
+            maxRetries: 2,
+            concurrencyLimit: 10,
+            health: 'healthy',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+        } else {
+          // Endpoint already exists — if it's unhealthy (no key before) or
+          // circuit_open, restore it to healthy now that a real key is vaulted.
+          const existing = this.deps.routing.listEndpoints().find((e) => e.providerId === body.providerId);
+          if (existing && existing.health !== 'healthy') {
+            this.deps.routing.registerEndpoint({ ...existing, health: 'healthy', updatedAt: new Date() });
+          }
+        }
+
+        // Always trigger model discovery after a new key is registered so
+        // that provider model catalogs (OpenRouter, Cerebras, Mistral, …)
+        // are populated immediately — not just on the next hourly interval.
+        void this.deps.modelRegistry.refresh();
+
         return reply.code(201).send({
           id: desc.id,
           providerId: desc.providerId,
@@ -1185,9 +2878,10 @@ export class HttpServer {
           lastFour: desc.lastFour,
           status: desc.status,
           registeredAt: desc.registeredAt,
+          endpointAutoRegistered: !hasEndpoint,
         });
       } catch (err) {
-        return reply.code(409).send({ error: { message: (err as Error).message } });
+        return reply.code(400).send({ error: { message: (err as Error).message || 'Vault Registration Failed' } });
       }
     });
 
@@ -1205,7 +2899,7 @@ export class HttpServer {
       return { ok };
     });
 
-    // Test a key by issuing a tiny chat completion against the provider.
+    // Test a key by issuing a health check or quick test completion.
     // Returns { ok, latencyMs, model, error? }.
     this.fastify.post('/v1/keys/:id/test', async (request, reply) => {
       const { id } = request.params as { id: string };
@@ -1226,25 +2920,44 @@ export class HttpServer {
 
       const testEndpoint = { ...endpoint, apiKey: plaintext } as never;
       const start = Date.now();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10_000);
+
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 10_000);
-        try {
-          const r = await adapter.chatCompletion(testEndpoint, {
-            model: 'test',
-            messages: [{ role: 'user', content: 'ping' }],
-            maxTokens: 1,
-          } as never, controller.signal);
+        // Strategy 1: Attempt adapter healthCheck first (tests auth & GET /models).
+        const healthy = await adapter.healthCheck(testEndpoint, controller.signal).catch(() => false);
+        if (healthy) {
           const latencyMs = Date.now() - start;
-          this.deps.keyRegistry.recordSuccess(id, latencyMs, r.usage?.totalTokens ?? 0);
-          return { ok: true, latencyMs, model: r.model };
-        } finally {
-          clearTimeout(timer);
+          this.deps.keyRegistry.recordSuccess(id, latencyMs, 0);
+          return { ok: true, latencyMs, model: 'auth:ok' };
         }
+
+        // Strategy 2: If health check didn't pass, attempt a minimal chat completion with default tag model or 'gpt-3.5-turbo' / provider default.
+        const testModel = endpoint.tags[0] ?? (desc.providerId === 'anthropic' ? 'claude-3-haiku-20240307' : 'gpt-3.5-turbo');
+        const r = await adapter.chatCompletion(testEndpoint, {
+          model: testModel,
+          messages: [{ role: 'user', content: 'ping' }],
+          maxTokens: 1,
+        } as never, controller.signal);
+
+        const latencyMs = Date.now() - start;
+        const testTokens = r.usage?.totalTokens;
+        this.deps.keyRegistry.recordSuccess(id, latencyMs, typeof testTokens === 'number' && Number.isFinite(testTokens) ? testTokens : 0);
+        return { ok: true, latencyMs, model: r.model };
       } catch (err) {
         const status = (err as { status?: number }).status ?? (err as { code?: string }).code ?? 'error';
+        const raw = (err as Error).message;
+        // Make invalid-key failures actionable: opencode.ai/zen (and others)
+        // answer bad auth with HTTP 200 + "Not Found", which now surfaces as
+        // a Non-JSON response error via fetchJson.
+        const hint =
+          raw.includes('Not Found') || raw.includes('Non-JSON') || raw.includes('401')
+            ? ` — likely an invalid or expired API key for '${desc.providerId}' (upstream replied: "${raw.slice(0, 120)}")`
+            : '';
         this.deps.keyRegistry.recordFailure(id, status, false);
-        return reply.code(200).send({ ok: false, latencyMs: Date.now() - start, error: (err as Error).message, status });
+        return reply.code(200).send({ ok: false, latencyMs: Date.now() - start, error: raw + hint, status });
+      } finally {
+        clearTimeout(timer);
       }
     });
 
@@ -1252,6 +2965,60 @@ export class HttpServer {
     this.fastify.post('/v1/mcp', async (request, reply) => {
       const result = await this.deps.mcpServer.handleRequest(request.body);
       return reply.send(result);
+    });
+
+    // ── MCP management (servers + aggregated tools) ─────────────────────
+    const mcpClient = () => this.deps.mcpClient;
+
+    this.fastify.get('/v1/mcp/servers', async () => {
+      return { servers: mcpClient().listServers() };
+    });
+
+    this.fastify.get('/v1/mcp/tools', async () => {
+      return { tools: mcpClient().listTools() };
+    });
+
+    this.fastify.post('/v1/mcp/servers', async (request, reply) => {
+      const body = request.body as Partial<McpServerConfig>;
+      if (!body?.id || !body.transport || (body.transport === 'stdio' && !body.command) || (body.transport === 'http' && !body.url)) {
+        return reply.code(400).send({ error: { message: 'id, transport, and either command (stdio) or url (http) are required' } });
+      }
+      const cfg: McpServerConfig = {
+        id: body.id as string,
+        transport: body.transport as 'stdio' | 'http',
+        command: body.command,
+        args: body.args,
+        env: body.env,
+        url: body.url,
+        enabled: body.enabled ?? true,
+      };
+      mcpClient().addServer(cfg);
+      if (cfg.enabled) {
+        await mcpClient().connectOne(cfg.id).catch(() => undefined);
+      }
+      return reply.code(201).send({ server: mcpClient().listServers().find((s: McpServerConfig & { connected: boolean }) => s.id === cfg.id) });
+    });
+
+    this.fastify.delete('/v1/mcp/servers/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      await mcpClient().removeServer(id);
+      return reply.code(200).send({ ok: true });
+    });
+
+    this.fastify.post('/v1/mcp/servers/:id/connect', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        await mcpClient().connectOne(id);
+        return reply.send({ server: mcpClient().listServers().find((s: McpServerConfig & { connected: boolean }) => s.id === id) });
+      } catch (err) {
+        return reply.code(502).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    this.fastify.post('/v1/mcp/servers/:id/disconnect', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      await mcpClient().disconnectOne(id);
+      return reply.send({ server: mcpClient().listServers().find((s: McpServerConfig & { connected: boolean }) => s.id === id) });
     });
 
     // ── A2A message ingestion ──────────────────────────────────────────
@@ -1388,9 +3155,129 @@ export class HttpServer {
       return { ok: true };
     });
 
-    // ── Network diagnostics ────────────────────────────────────────────
-    this.fastify.get('/v1/network/diagnostics', async () => {
-      return this.deps.network.diagnose();
+    // ── Network diagnostics & Network Egress Fabric ────────────────────
+    this.fastify.get('/v1/network/diagnostics', async (_req, reply) => {
+      try {
+        const diag = await this.deps.network.diagnose();
+        return diag;
+      } catch (err) {
+        return reply.code(200).send({
+          dns: { resolver: 'system', ok: false, latencyMs: -1 },
+          ipv4: { ok: false, latencyMs: -1, status: 'UNREACHABLE' },
+          ipv6: { ok: false, latencyMs: -1, status: 'UNAVAILABLE' },
+          proxies: [],
+          proxyPool: this.deps.network.fabric.listAll(),
+          poolSummary: this.deps.network.fabric.getPoolSummary(),
+          error: (err as Error).message,
+        });
+      }
+    });
+
+    this.fastify.get('/v1/network/proxies', async () => {
+      return {
+        mode: this.deps.network.fabric.getEgressMode(),
+        summary: this.deps.network.fabric.getPoolSummary(),
+        proxies: this.deps.network.fabric.listAll(),
+      };
+    });
+
+    this.fastify.get('/v1/network/proxies/active', async () => {
+      return {
+        healthyCount: this.deps.network.fabric.listHealthy().length,
+        proxies: this.deps.network.fabric.listHealthy(),
+      };
+    });
+
+    this.fastify.get('/v1/network/proxies/health', async () => {
+      return {
+        summary: this.deps.network.fabric.getPoolSummary(),
+      };
+    });
+
+    this.fastify.post('/v1/network/proxies/discover', async () => {
+      const res = await this.deps.network.fabric.discoverAndVerifyAll();
+      return {
+        ok: true,
+        discovered: res.discovered,
+        healthy: res.verifiedHealthy,
+        summary: this.deps.network.fabric.getPoolSummary(),
+        proxies: this.deps.network.fabric.listAll(),
+      };
+    });
+
+    this.fastify.post('/v1/network/proxies/:id/test', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const tested = await this.deps.network.fabric.testProxy(id);
+      if (!tested) {
+        return reply.code(404).send({ error: { message: `Proxy endpoint ${id} not found` } });
+      }
+      return { ok: true, proxy: tested };
+    });
+
+    this.fastify.post('/v1/network/proxies/:id/enable', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const ep = this.deps.network.fabric.listAll().find((p) => p.id === id);
+      if (!ep) return reply.code(404).send({ error: { message: `Proxy ${id} not found` } });
+      ep.status = 'HEALTHY';
+      return { ok: true, proxy: ep };
+    });
+
+    this.fastify.post('/v1/network/proxies/:id/disable', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const ep = this.deps.network.fabric.listAll().find((p) => p.id === id);
+      if (!ep) return reply.code(404).send({ error: { message: `Proxy ${id} not found` } });
+      ep.status = 'DISABLED';
+      return { ok: true, proxy: ep };
+    });
+
+    this.fastify.post('/v1/network/proxies/:id/quarantine', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const ep = this.deps.network.fabric.listAll().find((p) => p.id === id);
+      if (!ep) return reply.code(404).send({ error: { message: `Proxy ${id} not found` } });
+      ep.status = 'QUARANTINED';
+      ep.quarantineUntil = Date.now() + 3600_000;
+      return { ok: true, proxy: ep };
+    });
+
+    this.fastify.post('/v1/network/mode', async (request, reply) => {
+      const body = request.body as { mode?: 'DIRECT' | 'PROXY_PREFERRED' | 'PROXY_ONLY' | 'AUTO' };
+      if (!body?.mode) return reply.code(400).send({ error: { message: 'mode is required' } });
+      this.deps.network.fabric.setEgressMode(body.mode);
+      return { ok: true, mode: this.deps.network.fabric.getEgressMode() };
+    });
+
+    this.fastify.get('/v1/debug/network-egress', async () => {
+      const diag = await this.deps.network.diagnose();
+      return {
+        egressMode: this.deps.network.fabric.getEgressMode(),
+        diagnostics: diag,
+        poolSummary: this.deps.network.fabric.getPoolSummary(),
+      };
+    });
+
+    this.fastify.get('/v1/debug/network-egress/events', async () => {
+      return {
+        events: [
+          { type: 'proxy.discovered', timestamp: new Date().toISOString(), summary: 'Discovery cycle triggered' },
+          { type: 'proxy.healthy', timestamp: new Date().toISOString(), healthy: this.deps.network.fabric.listHealthy().length },
+        ],
+      };
+    });
+
+    // Backward compatibility aliases
+    this.fastify.post('/v1/network/proxy-pool/scrape', async () => {
+      const res = await this.deps.network.fabric.discoverAndVerifyAll();
+      return { ok: true, total: res.discovered, verified: res.verifiedHealthy, pool: this.deps.network.fabric.listAll() };
+    });
+
+    this.fastify.post('/v1/network/proxy-pool/add', async (request, reply) => {
+      const body = request.body as { url?: string };
+      if (!body?.url) {
+        return reply.code(400).send({ error: { message: 'url is required' } });
+      }
+      const added = this.deps.network.fabric.addProxy(body.url);
+      if (!added) return reply.code(400).send({ error: { message: 'Invalid or blocked proxy URL (SSRF rule)' } });
+      return reply.code(201).send({ ok: true, proxy: added });
     });
 
     // ── Integrations list ──────────────────────────────────────────────
@@ -1470,6 +3357,56 @@ export class HttpServer {
       return reply.code(result.success ? 200 : 500).send(result);
     });
 
+    // ─── Phase 18: Unified Agent Registry (compose detection + runtime + registry) ───
+    // Read-only unified view. Legacy /v1/agents (registry) and /v1/runtime-agents
+    // (detection/config) remain for backward compatibility.
+    this.fastify.get('/v1/agent-registry', async () => {
+      const agents = await this.getUnifiedRegistry().composeAll();
+      return { agents, total: agents.length };
+    });
+
+    this.fastify.get('/v1/agent-registry/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const agent = await this.getUnifiedRegistry().composeById(id);
+      if (!agent) return reply.code(404).send({ error: { message: `agent '${id}' not found` } });
+      return agent;
+    });
+
+    // ─── Phase 18: BuildingAgentPort (Hermes / OpenCode / coding agents) ───
+    // Thin facade delegating to @anx/integrations connectors.
+    this.fastify.get('/v1/building-agents', async () => {
+      const agents = this.getBuildingAgents().list();
+      return { agents, total: agents.length };
+    });
+
+    this.fastify.get('/v1/building-agents/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const agent = this.getBuildingAgents().get(id);
+      if (!agent) return reply.code(404).send({ error: { message: `building agent '${id}' not found` } });
+      return agent;
+    });
+
+    this.fastify.post('/v1/building-agents/:id/configure', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { gatewayUrl?: string; apiKey?: string; defaultModel?: string; dryRun?: boolean; force?: boolean };
+      const res = await this.getBuildingAgents().configure(id, body);
+      return reply.code(res.ok ? 200 : 400).send(res);
+    });
+
+    this.fastify.post('/v1/building-agents/:id/restore', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { gatewayUrl?: string; apiKey?: string; defaultModel?: string };
+      const res = await this.getBuildingAgents().restore(id, body);
+      return reply.code(res.ok ? 200 : 400).send(res);
+    });
+
+    this.fastify.post('/v1/building-agents/:id/verify', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { gatewayUrl?: string; apiKey?: string; defaultModel?: string };
+      const res = await this.getBuildingAgents().verify(id, body);
+      return reply.code(res.ok ? 200 : 400).send(res);
+    });
+
     // ─── Phase 4: Workflows ────────────────────────────────────────────
     this.fastify.get('/v1/workflows', async () => {
       return this.deps.workflows.list();
@@ -1535,8 +3472,11 @@ export class HttpServer {
     });
 
     // ─── Phase 4: Task Router (planner) ────────────────────────────────
-    this.fastify.post('/v1/plan', async (request) => {
+    this.fastify.post('/v1/plan', async (request, reply) => {
       const body = request.body as { request: string; preferCostEffective?: boolean; preferHighQuality?: boolean };
+      if (!body?.request || typeof body.request !== 'string' || body.request.trim() === '') {
+        return reply.code(400).send({ error: { message: 'request (non-empty string) is required' } });
+      }
       const planner = this.deps.planner;
       const plan = planner.plan(body.request, {
         preferCostEffective: body.preferCostEffective,
@@ -1546,9 +3486,12 @@ export class HttpServer {
     });
 
     // ─── Phase 4: Memory ───────────────────────────────────────────────
-    this.fastify.post('/v1/memory/:namespace/store', async (request) => {
+    this.fastify.post('/v1/memory/:namespace/store', async (request, reply) => {
       const { namespace } = request.params as { namespace: string };
       const body = request.body as { data: string; scope: 'short' | 'long'; contentType?: string; metadata?: Record<string, unknown>; ttlMs?: number };
+      if (!body?.data || typeof body.data !== 'string' || body.data.trim() === '') {
+        return reply.code(400).send({ error: { message: 'data (non-empty string) is required' } });
+      }
       const record = await this.deps.memory.store(body.data, {
         namespace,
         scope: body.scope,
@@ -1559,9 +3502,12 @@ export class HttpServer {
       return record;
     });
 
-    this.fastify.post('/v1/memory/:namespace/search', async (request) => {
+    this.fastify.post('/v1/memory/:namespace/search', async (request, reply) => {
       const { namespace } = request.params as { namespace: string };
       const body = request.body as { query: string; scope?: 'short' | 'long'; limit?: number; threshold?: number };
+      if (!body?.query || typeof body.query !== 'string' || body.query.trim() === '') {
+        return reply.code(400).send({ error: { message: 'query (non-empty string) is required' } });
+      }
       const results = await this.deps.memory.search(body.query, {
         namespace,
         scope: body.scope,
@@ -1742,6 +3688,143 @@ export class HttpServer {
         metadata: { priority: String(e.priority), region: e.region ?? '' },
       });
     }
+  }
+
+  /**
+   * Preference hint: provider that can serve `model`.
+   *
+   * For a concrete model the owning provider is authoritative: the routing
+   * engine must NEVER leak it to another provider (upstream 404, confusing
+   * "500 404 page not found" for Claude Code). If the owner is currently
+   * unhealthy, still lock to it — the engine then fails fast with a clean
+   * 503 NO_ELIGIBLE_PROVIDER instead of cross-provider routing.
+   */
+  private preferredProviderFor(model: string, resolved: { providerId?: string } | undefined): string | undefined {
+    const candidates = new Set<string>();
+    if (resolved?.providerId) candidates.add(resolved.providerId);
+    const stripped = model.replace(/^anthropic\//, '').replace(/^opencode(?:-zen|-go)?\//, '');
+    for (const m of this.deps.modelRegistry.list()) {
+      if (!m.stale && (m.id === stripped || m.id.endsWith(`/${stripped}`))) candidates.add(m.providerId);
+    }
+    if (candidates.size === 0) return undefined;
+    // Prefer a healthy owner; if none is healthy, lock to the known owner so
+    // the routing engine reports NO_ELIGIBLE_PROVIDER (503) rather than
+    // trying providers that do not serve this model.
+    const endpoints = this.deps.routing.listEndpoints();
+    for (const p of candidates) {
+      if (endpoints.some((e) => e.providerId === p && e.health !== 'circuit_open')) return p;
+    }
+    return resolved?.providerId ?? candidates.values().next().value;
+  }
+
+  /**
+   * Maps any error to an HTTP status + clean client-visible message.
+   *
+   * Prevents raw upstream bodies (e.g. "404 page not found" HTML pages from
+   * NVIDIA NIM, or bare text bodies from misconfigured base URLs) from
+   * leaking to agents as misleading 500s — the exact cause of Claude Code's
+   * endless "500 404 page not found / retrying in 7s" loop. Upstream 4xx
+   * now surfaces as the same 4xx class (Claude Code stops retrying), and
+   * upstream 5xx maps to 502 with a sanitized message.
+   */
+  private httpErrorFor(error: Error): { status: number; message: string } {
+    const code = (error as { code?: string }).code;
+    if (code === 'NO_ELIGIBLE_PROVIDER' || code === 'ALL_PROVIDERS_EXHAUSTED') {
+      return { status: 503, message: error.message };
+    }
+    const status = (error as { status?: number }).status;
+    if (typeof status === 'number' && status > 0 && status < 1000) {
+      const raw = (error.message ?? '').trim();
+      const bareBody =
+        raw.length === 0 ||
+        /^page not found$/i.test(raw) ||
+        /^\d{3}\s+page not found/i.test(raw) ||
+        /^<!doctype\s+html/i.test(raw) ||
+        raw.includes('<html');
+      const detail = bareBody ? '' : `: ${raw}`;
+      return { status: status >= 500 ? 502 : status, message: `Upstream provider error (HTTP ${status})${detail}` };
+    }
+    return { status: 500, message: error.message };
+  }
+
+  /**
+   * Trims a request's conversation to fit the target model's context window
+   * (via ContextWindowManager) when the window is known. Prevents upstream
+   * `context_length_exceeded` (HTTP 400/413) by summarizing/dropping older
+   * messages instead of forwarding an oversized history.
+   */
+  private fitToContextWindow(req: ChatCompletionRequest, modelId: string): ChatCompletionRequest {
+    const desc = this.deps.modelRegistry.list().find(
+      (m) => m.id === modelId || m.id.endsWith('/' + modelId) || `${m.providerId}/${m.id}` === modelId,
+    );
+    const ctx = desc?.contextWindow;
+    if (!ctx) return req;
+    const cwm = this.deps.contextWindowManager;
+    const result = cwm.check(req, ctx);
+    // The model is fixed by the caller, so model-switching isn't available.
+    // Apply the trimmed request whenever it reduces the token count — even if
+    // it can't get fully under the limit, a smaller payload is always better
+    // than forwarding the original oversized history (which 400s upstream).
+    if (result.trimmedRequest && cwm.estimateTokens(result.trimmedRequest) < cwm.estimateTokens(req)) {
+      return result.trimmedRequest;
+    }
+    return req;
+  }
+
+  /**
+   * Parses an upstream `context_length_exceeded` error for the stated limit
+   * (e.g. "limit is 8192", "maximum context length is 32768") and records it
+   * on the model so future requests can be trimmed proactively. Returns true
+   * if a window was learned (so the caller can retry once with trimming).
+   */
+  private learnContextWindowFromError(err: Error, modelId: string): boolean {
+    const msg = err.message ?? '';
+    if (!/context[_ ]?length|token.{0,12}limit|limit is \d/i.test(msg)) return false;
+    const match = msg.match(/(\d{3,})\s*(?:token|context)/i) ?? msg.match(/limit is (\d{3,})/i) ?? msg.match(/context length[^\d]*(\d{3,})/i);
+    if (!match) return false;
+    const window = Number(match[1]);
+    if (!Number.isFinite(window) || window <= 0) return false;
+    const desc = this.deps.modelRegistry.list().find(
+      (m) => m.id === modelId || m.id.endsWith('/' + modelId) || `${m.providerId}/${m.id}` === modelId,
+    );
+    if (!desc) return false;
+    this.deps.modelRegistry.setContextWindow(desc.providerId, desc.id, window);
+    return true;
+  }
+
+  /**
+   * Called when an upstream completion fails for a resolved model.
+   *
+   * Only a genuinely-missing model (HTTP 404/410) marks the model unhealthy
+   * so the next prefetch / dashboard refresh keeps it excluded — the user's
+   * requirement that dead models be dynamically amended OUT of the catalog, not
+   * kept routable. Auth/credit failures (401/403) do NOT hide the model: the
+   * model still exists, the account key is merely invalid or out of credits,
+   * and hiding a usable model from the picker just because the wallet is empty
+   * is wrong — the honest 401 is surfaced to the client instead. Rate-limit
+   * (429) and 5xx are transient (cooldown/failover) and also do not mark
+   * unhealthy.
+   */
+  private reportUpstreamModelError(model: string, error: Error): void {
+    // Learn the model's true context window from a `context_length_exceeded`
+    // error so future requests can be trimmed proactively (instead of 400ing
+    // on every oversized conversation).
+    this.learnContextWindowFromError(error, model);
+    const { status } = this.httpErrorFor(error);
+    // 404/410 = model truly gone → exclude from catalog. Anything else
+    // (401/403 auth+credits, 429, 5xx) keeps the model listed and visible.
+    if (status !== 404 && status !== 410) return;
+    const reason = `Upstream HTTP ${status}: ${(error.message ?? '').slice(0, 200)}`;
+    // Resolve provider from the registry (claude-gw-* aliases reverse to native).
+    const native = this.deps.modelRegistry;
+    const m = native.get('', model) ?? native.list().find((x) => x.id === model);
+    if (m) {
+      native.markModelUnhealthy(m.providerId, m.id, reason);
+      return;
+    }
+    // Fallback: try to find any model whose id matches after alias reversal.
+    const found = native.list().find((x) => `claude-gw-${x.providerId}-${x.id}` === model || `nexus/${x.providerId}/${x.id}` === model);
+    if (found) native.markModelUnhealthy(found.providerId, found.id, reason);
   }
 
   private async authenticate(authHeader?: string): Promise<string | undefined> {

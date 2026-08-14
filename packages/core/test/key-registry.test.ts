@@ -158,4 +158,31 @@ describe('KeyRegistry', () => {
     expect(registry.get('k1')!.status).toBe('active');
     expect(registry.get('k1')!.cooldownUntil).toBe(0);
   });
+
+  it('§18 concurrency: 10 concurrent selections with 3 active keys are distributed', async () => {
+    for (const id of ['k1', 'k2', 'k3']) {
+      await registry.register({ id, providerId: 'openai', plaintext: `sk-${id}` });
+    }
+    const picks = await Promise.all(
+      Array.from({ length: 10 }, async () => registry.select('openai', { strategy: 'round_robin' })),
+    );
+    const byKey = new Map<string, number>();
+    for (const p of picks) {
+      expect(p).toBeDefined();
+      byKey.set(p!, (byKey.get(p!) ?? 0) + 1);
+    }
+    expect(byKey.size).toBe(3);
+    for (const [, count] of byKey) expect(count).toBeGreaterThanOrEqual(1);
+  });
+
+  it('§18: concurrent picks never return a key in cooldown', async () => {
+    for (const id of ['k1', 'k2', 'k3']) {
+      await registry.register({ id, providerId: 'openai', plaintext: `sk-${id}` });
+    }
+    registry.recordFailure('k1', 429, true);
+    const picks = await Promise.all(
+      Array.from({ length: 10 }, async () => registry.select('openai', { strategy: 'round_robin' })),
+    );
+    expect(picks.every((p) => p !== 'k1')).toBe(true);
+  });
 });

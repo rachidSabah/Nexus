@@ -262,6 +262,24 @@ export class ChatCompletionUseCase {
     let attempt = 0;
     const attempted: string[] = [];
 
+    // TEST 10 guard: once any chunk has been written to the client's sink,
+    // a later stream failure must NOT failover/replay — replay would emit
+    // duplicated or contradictory output (and duplicate tool calls). The
+    // request fails cleanly (SSE error/termination) instead.
+    let streamBytesEmitted = false;
+    const guardedSink: ChunkSink | undefined = sink
+      ? {
+          write: async (chunk: ChatCompletionChunk) => {
+            if (chunk.choices[0]?.delta?.content || chunk.choices[0]?.delta?.reasoning) {
+              streamBytesEmitted = true;
+            }
+            await sink.write(chunk);
+          },
+          error: sink.error,
+          end: sink.end,
+        }
+      : undefined;
+
     while (attempt <= this.maxFailovers) {
       const endpoint = decision.endpoint;
       attempted.push(endpoint.id);
@@ -317,7 +335,7 @@ export class ChatCompletionUseCase {
         }
 
         const response = effectiveRequest.stream
-          ? await this.streamAndCollect(adapter, endpointWithKey, effectiveRequest, sink, effectiveSignal)
+          ? await this.streamAndCollect(adapter, endpointWithKey, effectiveRequest, guardedSink, effectiveSignal)
           : await adapter.chatCompletion(endpointWithKey, effectiveRequest, effectiveSignal);
 
         // ─── Plugin hook: onProviderEnd ───────────────────────────────────
@@ -332,7 +350,18 @@ export class ChatCompletionUseCase {
 
         // Record key success for rotation health.
         if (this.keyRegistry && selectedKeyId) {
-          const tokens = response.usage.totalTokens ?? (response.usage.promptTokens + response.usage.completionTokens);
+          // Token accounting must always be a finite number: upstream usage can be
+          // snake_case or omit fields, and NaN would serialize as JSON null and
+          // poison the KeyRegistry (crashing the dashboard Keys page render).
+          const usageRaw = (response.usage ?? {}) as unknown as {
+            totalTokens?: unknown; total_tokens?: unknown;
+            promptTokens?: unknown; prompt_tokens?: unknown;
+            completionTokens?: unknown; completion_tokens?: unknown;
+          };
+          const finiteNum = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+          const tokens = finiteNum(usageRaw.totalTokens ?? usageRaw.total_tokens)
+            || finiteNum(usageRaw.promptTokens ?? usageRaw.prompt_tokens)
+            + finiteNum(usageRaw.completionTokens ?? usageRaw.completion_tokens);
           this.keyRegistry.recordSuccess(selectedKeyId, latencyMs, tokens);
         }
 
@@ -384,9 +413,15 @@ export class ChatCompletionUseCase {
           const cacheKey = this.cacheKey(effectiveRequest);
           await this.cache!.set(cacheKey, finalResult, this.cacheTtlMs);
           // Semantic cache store (if embed fn is configured).
+          // Wrapped in try-catch: if the embeddings endpoint is unavailable,
+          // skip the semantic store rather than failing a successful request.
           if (this.embed && this.cache!.semanticStore) {
-            const embedding = await this.embed(this.requestToText(effectiveRequest));
-            await this.cache!.semanticStore!(embedding, cacheKey, finalResult, this.cacheTtlMs);
+            try {
+              const embedding = await this.embed(this.requestToText(effectiveRequest));
+              await this.cache!.semanticStore!(embedding, cacheKey, finalResult, this.cacheTtlMs);
+            } catch {
+              // Embeddings unavailable - exact-match cache still applies.
+            }
           }
         }
 
@@ -460,7 +495,7 @@ export class ChatCompletionUseCase {
           ),
         );
 
-        if (!retryable) throw error;
+        if (!retryable || streamBytesEmitted) throw error;
 
         const next = this.failover.next(decision, endpoint.id);
         if (!next) break;
@@ -503,6 +538,7 @@ export class ChatCompletionUseCase {
   ): Promise<ChatCompletionResponse> {
     const chunks: ChatCompletionChunk[] = [];
     let contentBuffer = '';
+    let reasoningBuffer = '';
     let lastUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let finishReason = 'stop';
     const id = randomUUID();
@@ -523,6 +559,9 @@ export class ChatCompletionUseCase {
         if (chunk.choices[0]?.delta?.content) {
           contentBuffer += chunk.choices[0].delta.content;
         }
+        if (chunk.choices[0]?.delta?.reasoning) {
+          reasoningBuffer += chunk.choices[0].delta.reasoning;
+        }
         if (chunk.usage) lastUsage = chunk.usage;
         if (chunk.choices[0]?.finish_reason) {
           finishReason = chunk.choices[0].finish_reason;
@@ -530,7 +569,10 @@ export class ChatCompletionUseCase {
         if (sink) await sink.write(chunk);
       }
     } catch (err) {
-      if (sink) await sink.error(err as Error);
+      // Sink notification happens in the use case's retry decision (and the
+      // HTTP handler's catch) — NOT here: a pre-byte failure that will be
+      // failed over must not emit a terminal error event prematurely, and a
+      // post-byte failure must not double-notify the client.
       throw err;
     }
 
@@ -544,7 +586,11 @@ export class ChatCompletionUseCase {
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content: contentBuffer },
+          message: {
+            role: 'assistant',
+            content: contentBuffer,
+            ...(reasoningBuffer ? { reasoningContent: reasoningBuffer } : {}),
+          },
           finish_reason: finishReason,
         },
       ],

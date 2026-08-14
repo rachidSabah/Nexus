@@ -1,6 +1,7 @@
-import type { ChatCompletionRequest, ChatCompletionResponse, ProviderEndpoint } from '@anx/core';
+import type { ChatCompletionRequest, ChatCompletionResponse, ModelDescriptor, ProviderEndpoint } from '@anx/core';
 
 import { OpenAIAdapter } from './openai.js';
+import { buildHeaders } from '../shared/http.js';
 
 /**
  * OpenRouter — OpenAI-compatible aggregator.
@@ -30,6 +31,9 @@ export class MistralAdapter extends OpenAIAdapter {
   readonly displayName = 'Mistral AI';
   protected apiBase = 'https://api.mistral.ai/v1';
   protected apiKeyEnv = 'MISTRAL_API_KEY';
+  // Mistral's schema uses `extra="forbid"`, so the OpenAI `user` field is
+  // rejected with HTTP 422 "extra_forbidden" — never forward it.
+  protected supportsUserField = false;
 }
 
 /**
@@ -80,6 +84,22 @@ export class CerebrasAdapter extends OpenAIAdapter {
   readonly displayName = 'Cerebras';
   protected apiBase = 'https://api.cerebras.ai/v1';
   protected apiKeyEnv = 'CEREBRAS_API_KEY';
+
+  // Cerebras's GET /models exposes no context window, so we seed known limits
+  // here. Any model not listed falls back to runtime learning from upstream
+  // context_length_exceeded errors (see gateway reportUpstreamModelError).
+  private static readonly KNOWN_CONTEXT_WINDOWS: Record<string, number> = {
+    'gpt-oss-120b': 128_000,
+    'zai-glm-4.7': 8192,
+  };
+
+  async discoverModels(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<ModelDescriptor[]> {
+    const models = await super.discoverModels(endpoint, signal);
+    return models.map((m) => ({
+      ...m,
+      contextWindow: m.contextWindow ?? CerebrasAdapter.KNOWN_CONTEXT_WINDOWS[m.id],
+    }));
+  }
 }
 
 /**
@@ -150,6 +170,86 @@ export class LitellmAdapter extends OpenAIAdapter {
 /**
  * Azure OpenAI — uses api-key header and a deployment-based URL scheme.
  */
+/**
+ * OpenCode Zen — OpenAI's official API for open-source models.
+ */
+export class OpenCodeZenAdapter extends OpenAIAdapter {
+  readonly providerId: string = 'opencode-zen';
+  readonly displayName: string = 'OpenCode Zen';
+  protected apiBase = 'https://opencode.ai/zen/v1';
+  protected apiKeyEnv = 'OPENCODE_ZEN_API_KEY';
+
+  /**
+   * OpenCode free-tier models accept keyless requests (same behaviour as
+   * the free-claude-code launcher). FCC-style placeholder keys
+   * (`opencode-zen-key-*`) mean "no key" — never send them upstream.
+   */
+  protected getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit && !/^opencode-zen-key-/i.test(explicit)) return explicit;
+    return process.env[this.apiKeyEnv] ?? '';
+  }
+
+  protected headers(endpoint: ProviderEndpoint, apiKey: string): Record<string, string> {
+    const h = buildHeaders(endpoint, '');
+    delete h['Authorization'];
+    if (apiKey) h['Authorization'] = `Bearer ${apiKey}`;
+    return h;
+  }
+
+  /**
+   * Upstream accepts bare model names only (e.g. `deepseek-v4-flash-free`).
+   * Strip routing prefixes like `anthropic/opencode/` or `opencode/`.
+   */
+  protected translateRequest(req: ChatCompletionRequest, streaming: boolean): Record<string, unknown> {
+    const model = req.model.replace(/^anthropic\//, '').replace(/^opencode(?:-zen|-go)?\//, '');
+    return super.translateRequest({ ...req, model }, streaming);
+  }
+}
+
+/**
+ * OpenCode Go — subscription tier of OpenCode's hosted gateway.
+ * Same OpenAI-compatible surface as OpenCode Zen but a different base URL.
+ */
+export class OpenCodeGoAdapter extends OpenCodeZenAdapter {
+  readonly providerId = 'opencode-go';
+  readonly displayName = 'OpenCode Go';
+  protected apiBase = 'https://opencode.ai/zen/go/v1';
+  protected apiKeyEnv = 'OPENCODE_GO_API_KEY';
+
+  /**
+   * OpenCode Go keys follow the same FCC-style placeholder convention;
+   * placeholder keys mean "no key" and must never be sent upstream.
+   */
+  protected getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit && !/^opencode-(?:go|zen)-key-/i.test(explicit)) return explicit;
+    return process.env[this.apiKeyEnv] ?? '';
+  }
+}
+
+/**
+ * NVIDIA NIM — OpenAI-compatible hosted inference.
+ */
+export class NvidiaNimAdapter extends OpenAIAdapter {
+  readonly providerId = 'nvidia-nim';
+  readonly displayName = 'NVIDIA NIM';
+  protected apiBase = 'https://integrate.api.nvidia.com/v1';
+  protected apiKeyEnv = 'NVIDIA_API_KEY';
+
+  /**
+   * NVIDIA's `/v1/models` catalog is public — model discovery must work
+   * without a key (vault keys are only attached to request-time leases,
+   * never to the endpoint objects the discovery loop iterates). Requests
+   * that actually need auth will still fail upstream with a clean error.
+   */
+  protected getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    return process.env[this.apiKeyEnv] ?? '';
+  }
+}
+
 export class AzureOpenAIAdapter extends OpenAIAdapter {
   readonly providerId = 'azure-openai';
   readonly displayName = 'Azure OpenAI';

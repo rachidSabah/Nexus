@@ -10,7 +10,6 @@ import {
   type ChatCompletionRequest,
   type ChatCompletionResponse,
   type EventBusPort,
-  ProviderResponseError,
 } from '@anx/core';
 import { retry, sleep } from '@anx/shared';
 
@@ -330,8 +329,9 @@ export class AgentRuntime {
   }
 
   private isRetryable(error: Error): boolean {
-    if (error instanceof ProviderResponseError) {
-      return error.status >= 500 || error.status === 408 || error.status === 429;
+    const status = (error as { status?: number }).status;
+    if (typeof status === 'number') {
+      return status >= 500 || status === 408 || status === 429;
     }
     const code = (error as { code?: string }).code;
     return (

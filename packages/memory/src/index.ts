@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import {
   buildEvent,
@@ -155,6 +158,121 @@ export class InMemoryVectorStore implements VectorStorePort {
   clear(): void {
     this.records.clear();
   }
+}
+
+/**
+ * File-backed persistent vector store.
+ *
+ * Serializes every record (including its embedding vector and Date fields)
+ * to a single JSON file so memory genuinely survives restarts — unlike
+ * InMemoryVectorStore, which is lost on process exit. Loads the file
+ * synchronously on construction; writes are flushed (best-effort) after
+ * each mutation. Falls back to an empty store if the file is missing or
+ * unreadable, and logs (without throwing) if a write fails.
+ */
+export class FileVectorStore implements VectorStorePort {
+  private readonly filePath: string;
+  private readonly records = new Map<string, MemoryRecord>();
+
+  constructor(path: string) {
+    this.filePath = path;
+    try {
+      const raw = readFileSync(path, 'utf8');
+      const arr = JSON.parse(raw) as Array<Record<string, unknown>>;
+      for (const r of arr) {
+        const rec = reviveRecord(r);
+        if (rec) this.records.set(rec.id, rec);
+      }
+    } catch {
+      // Missing/unreadable file — start empty.
+    }
+  }
+
+  async upsert(record: MemoryRecord): Promise<void> {
+    this.records.set(record.id, record);
+    await this.persist();
+  }
+
+  async search(
+    embedding: readonly number[],
+    opts: { namespace: string; limit: number; threshold: number },
+  ): Promise<readonly MemorySearchResult[]> {
+    const candidates = Array.from(this.records.values()).filter(
+      (r) => r.namespace === opts.namespace && r.embedding !== undefined,
+    );
+    const scored = candidates.map((record) => ({
+      record,
+      score: cosineSimilarity(embedding, record.embedding!),
+    }));
+    return scored
+      .filter((s) => s.score >= opts.threshold)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, opts.limit);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const had = this.records.delete(id);
+    if (had) await this.persist();
+    return had;
+  }
+
+  async get(id: string): Promise<MemoryRecord | undefined> {
+    return this.records.get(id);
+  }
+
+  async list(namespace: string, limit: number): Promise<readonly MemoryRecord[]> {
+    return Array.from(this.records.values())
+      .filter((r) => r.namespace === namespace)
+      .slice(-limit);
+  }
+
+  clear(): void {
+    this.records.clear();
+    void this.persist();
+  }
+
+  private async persist(): Promise<void> {
+    try {
+      await mkdir(dirname(this.filePath), { recursive: true });
+      const arr = Array.from(this.records.values()).map(serializeRecord);
+      await writeFile(this.filePath, JSON.stringify(arr), 'utf8');
+    } catch (err) {
+      console.error('[FileVectorStore] persist failed:', (err as Error).message);
+    }
+  }
+}
+
+/** Serialize a MemoryRecord for on-disk storage (Dates -> ISO strings). */
+function serializeRecord(r: MemoryRecord): Record<string, unknown> {
+  return {
+    id: r.id,
+    namespace: r.namespace,
+    scope: r.scope,
+    contentType: r.contentType,
+    content: r.content,
+    embedding: r.embedding,
+    metadata: r.metadata,
+    createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+    expiresAt: r.expiresAt instanceof Date ? r.expiresAt.toISOString() : r.expiresAt,
+    tokenCount: r.tokenCount,
+  };
+}
+
+/** Revive a stored record (ISO strings -> Dates). Returns undefined if malformed. */
+function reviveRecord(r: Record<string, unknown>): MemoryRecord | undefined {
+  if (typeof r['id'] !== 'string' || typeof r['namespace'] !== 'string') return undefined;
+  return {
+    id: r['id'],
+    namespace: r['namespace'],
+    scope: r['scope'] === 'long' ? 'long' : 'short',
+    contentType: typeof r['contentType'] === 'string' ? r['contentType'] : 'text',
+    content: typeof r['content'] === 'string' ? r['content'] : '',
+    embedding: Array.isArray(r['embedding']) ? (r['embedding'] as number[]) : undefined,
+    metadata: (r['metadata'] as Record<string, unknown>) ?? {},
+    createdAt: typeof r['createdAt'] === 'string' ? new Date(r['createdAt']) : new Date(),
+    expiresAt: typeof r['expiresAt'] === 'string' ? new Date(r['expiresAt']) : undefined,
+    tokenCount: typeof r['tokenCount'] === 'number' ? r['tokenCount'] : 0,
+  };
 }
 
 /**
@@ -580,7 +698,16 @@ export class QdrantVectorStore implements VectorStorePort {
  * Local embeddings provider — uses the gateway's own /v1/embeddings endpoint.
  */
 export class GatewayEmbeddingsProvider implements EmbeddingsProvider {
-  constructor(private readonly baseUrl: string, private readonly apiKey?: string, private readonly model = 'text-embedding-3-small') {}
+  private readonly baseUrl: string;
+  private readonly apiKey?: string;
+  private readonly defaultModel: string;
+  private resolvedModel?: string;
+
+  constructor(baseUrl: string, apiKey?: string, model = 'text-embedding-3-small') {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+    this.defaultModel = model;
+  }
 
   async embed(text: string): Promise<readonly number[]> {
     const [embedding] = await this.embedBatch([text]);
@@ -588,16 +715,48 @@ export class GatewayEmbeddingsProvider implements EmbeddingsProvider {
   }
 
   async embedBatch(texts: readonly string[]): Promise<readonly (readonly number[])[]> {
+    const model = await this.resolveModel();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
     const r = await fetch(`${this.baseUrl}/v1/embeddings`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model: this.model, input: texts }),
+      body: JSON.stringify({ model, input: texts }),
     });
     if (!r.ok) throw new Error(`Embeddings failed: ${r.status}`);
     const body = (await r.json()) as { data: Array<{ embedding: number[] }> };
     return body.data.map((d) => d.embedding);
+  }
+
+  /**
+   * Resolves the embeddings model id to use. If the configured default is the
+   * generic placeholder (`text-embedding-3-small`) and no explicit model was
+   * given, discover a real embeddings-capable model from the gateway's own
+   * catalog and cache it. This makes semantic memory/RAG work with whatever
+   * embeddings model the operator actually has configured (e.g. Mistral,
+   * NVIDIA NIM) instead of silently 404'ing on a model that isn't registered.
+   */
+  private async resolveModel(): Promise<string> {
+    if (this.resolvedModel) return this.resolvedModel;
+    if (this.defaultModel !== 'text-embedding-3-small') {
+      this.resolvedModel = this.defaultModel;
+      return this.resolvedModel;
+    }
+    try {
+      const r = await fetch(`${this.baseUrl}/v1/models/discover`);
+      if (r.ok) {
+        const j = (await r.json()) as { models?: Array<{ id: string; capabilities?: { embeddings?: boolean } }> };
+        const emb = (j.models ?? []).find((m) => m.capabilities?.embeddings);
+        if (emb) {
+          this.resolvedModel = emb.id;
+          return this.resolvedModel;
+        }
+      }
+    } catch {
+      // Fall through to the placeholder default.
+    }
+    this.resolvedModel = this.defaultModel;
+    return this.resolvedModel;
   }
 }
 

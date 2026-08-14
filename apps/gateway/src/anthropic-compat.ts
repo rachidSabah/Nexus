@@ -33,6 +33,7 @@ export interface AnthropicMessage {
     | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
     | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
     | { type: 'tool_result'; tool_use_id: string; content: string | Array<{ type: 'text'; text: string }> }
+    | { type: 'thinking'; thinking: string }
   >;
 }
 
@@ -65,6 +66,7 @@ export interface AnthropicResponse {
   content: Array<
     | { type: 'text'; text: string }
     | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+    | { type: 'thinking'; thinking: string }
   >;
   stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use' | null;
   stop_sequence: string | null;
@@ -82,7 +84,16 @@ export interface AnthropicStreamEvent {
 
 // ─── Request translation: Anthropic → internal ChatCompletionRequest ────────
 
-export function translateAnthropicRequest(req: AnthropicRequest): ChatCompletionRequest {
+export function translateAnthropicRequest(
+  req: AnthropicRequest,
+  opts: { targetSupportsReasoning?: boolean } = {},
+): ChatCompletionRequest {
+  // When the resolved target model/provider does NOT support reasoning,
+  // we must NOT emit a `reasoning_content` field — providers like Mistral,
+  // Cerebras, GLM and OpenAI reject it (HTTP 400/422). Reasoning-content is
+  // only forwarded to reasoning-capable upstreams (e.g. DeepSeek-style
+  // thinking mode) that require the prior thinking blocks to be replayed.
+  const forwardReasoning = opts.targetSupportsReasoning === true;
   // System message: Anthropic accepts string OR array of text blocks.
   const systemText = typeof req.system === 'string'
     ? req.system
@@ -109,6 +120,7 @@ export function translateAnthropicRequest(req: AnthropicRequest): ChatCompletion
     const textParts: string[] = [];
     const imageParts: Array<{ type: 'image_url'; image_url: { url: string } }> = [];
     const toolCalls: ToolCall[] = [];
+    const reasoningParts: string[] = [];
     let toolResultId: string | undefined;
     let toolResultContent: string | undefined;
 
@@ -119,6 +131,11 @@ export function translateAnthropicRequest(req: AnthropicRequest): ChatCompletion
         // Convert Anthropic's base64 source to OpenAI's data URL format.
         const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
         imageParts.push({ type: 'image_url', image_url: { url: dataUrl } });
+      } else if (block.type === 'thinking' && m.role === 'assistant') {
+        // Preserve reasoning text so DeepSeek-style thinking-mode upstreams
+        // can validate the conversation history (they REQUIRE the reasoning
+        // content to be passed back on every turn).
+        reasoningParts.push(block.thinking);
       } else if (block.type === 'tool_use' && m.role === 'assistant') {
         toolCalls.push({
           id: block.id,
@@ -154,6 +171,7 @@ export function translateAnthropicRequest(req: AnthropicRequest): ChatCompletion
         role: 'assistant',
         content: textParts.join('\n'),
         toolCalls,
+        ...(forwardReasoning && reasoningParts.length > 0 ? { reasoningContent: reasoningParts.join('\n') } : {}),
       });
       continue;
     }
@@ -171,6 +189,9 @@ export function translateAnthropicRequest(req: AnthropicRequest): ChatCompletion
     messages.push({
       role: m.role,
       content: textParts.join('\n'),
+      ...(forwardReasoning && m.role === 'assistant' && reasoningParts.length > 0
+        ? { reasoningContent: reasoningParts.join('\n') }
+        : {}),
     });
   }
 
@@ -218,6 +239,14 @@ export function translateToAnthropicResponse(
   const message = choice?.message;
 
   const content: AnthropicResponse['content'] = [];
+
+  // Add a thinking block first if the upstream surfaced reasoning text —
+  // Claude Code stores it and replays it in later turns, and the request
+  // bridge maps it back to `reasoning_content` so reasoning-mode upstreams
+  // never reject the conversation history.
+  if (message?.reasoningContent) {
+    content.push({ type: 'thinking', thinking: message.reasoningContent });
+  }
 
   // Add text content if present. The message content can be a string OR an
   // array of content parts; we extract just the text parts for Anthropic's
@@ -298,7 +327,7 @@ export function translateToAnthropicResponse(
  */
 export function* translateChunkToAnthropicEvents(
   chunk: ChatCompletionChunk,
-  state: { messageId: string; model: string; started: boolean; currentBlockType: 'text' | 'tool_use' | null; currentBlockIndex: number; toolCallIds: Map<number, string> },
+  state: { messageId: string; model: string; started: boolean; currentBlockType: 'text' | 'tool_use' | 'thinking' | null; currentBlockIndex: number; toolCallIds: Map<number, string> },
 ): Generator<AnthropicStreamEvent> {
   if (!state.started) {
     state.started = true;
@@ -320,11 +349,33 @@ export function* translateChunkToAnthropicEvents(
   const delta = chunk.choices[0]?.delta;
   const finishReason = chunk.choices[0]?.finish_reason;
 
+  // Reasoning delta → thinking content block (DeepSeek-style upstreams
+  // stream `reasoning_content` before the visible content).
+  if (delta?.reasoning) {
+    if (state.currentBlockType !== 'thinking') {
+      if (state.currentBlockType === 'tool_use') {
+        yield { type: 'content_block_stop', index: state.currentBlockIndex };
+        state.currentBlockIndex++;
+      }
+      state.currentBlockType = 'thinking';
+      yield {
+        type: 'content_block_start',
+        index: state.currentBlockIndex,
+        content_block: { type: 'thinking', thinking: '' },
+      };
+    }
+    yield {
+      type: 'content_block_delta',
+      index: state.currentBlockIndex,
+      delta: { type: 'thinking_delta', thinking: delta.reasoning },
+    };
+  }
+
   // Text delta.
   if (delta?.content) {
     if (state.currentBlockType !== 'text') {
-      // Close any open tool_use block.
-      if (state.currentBlockType === 'tool_use') {
+      // Close any open tool_use or thinking block.
+      if (state.currentBlockType === 'tool_use' || state.currentBlockType === 'thinking') {
         yield { type: 'content_block_stop', index: state.currentBlockIndex };
         state.currentBlockIndex++;
       }
@@ -354,8 +405,8 @@ export function* translateChunkToAnthropicEvents(
       const idx = tcWithIndex.index ?? 0;
       // If this is a new tool_call (has an id), start a new tool_use block.
       if (tc.id) {
-        // Close any open text block.
-        if (state.currentBlockType === 'text') {
+        // Close any open text or thinking block.
+        if (state.currentBlockType === 'text' || state.currentBlockType === 'thinking') {
           yield { type: 'content_block_stop', index: state.currentBlockIndex };
           state.currentBlockIndex++;
         }
@@ -413,7 +464,7 @@ export function newStreamState(model: string): {
   messageId: string;
   model: string;
   started: boolean;
-  currentBlockType: 'text' | 'tool_use' | null;
+  currentBlockType: 'text' | 'tool_use' | 'thinking' | null;
   currentBlockIndex: number;
   toolCallIds: Map<number, string>;
 } {

@@ -1,0 +1,38 @@
+# Gitleaks configuration for Agent Nexus Gateway.
+# CI fails if a real secret is committed. This file tunes the default rules so
+# that legitimate, non-secret references in the codebase (header NAMES like
+# "x-api-key", placeholder strings like "YOUR_API_KEY", and test fixtures) do
+# not produce false positives.
+
+title = "Agent Nexus Gateway"
+
+[extend]
+# Use the community-maintained default ruleset as the base.
+useDefault = true
+
+[allowlist]
+description = "Legitimate non-secret references that must not trip the scanner"
+paths = [
+  '''\.gitleaks\.toml''',
+  '''\.env\.example''',
+  '''SECURITY\.md''',
+  '''docs/''',
+  '''README\.md''',
+  '''NEXUS_.*\.md''',
+  '''\.(test|spec)\.(ts|tsx|js)$''',
+  '''test/''',
+]
+regexes = [
+  # Placeholder values used throughout docs/examples.
+  '''(?i)YOUR_API_KEY|YOUR_BASE_URL|YOUR_PROVIDER|YOUR_VAULT_KEY|YOUR_JWT_SECRET|YOUR_ADMIN_API_KEY''',
+  # The string "x-api-key" / "api-key" as a HEADER NAME (not a value).
+  '''(?i)(x-api-key|api-key|authHeaderName|authHeaderPrefix)''',
+  # Generic config-key assignments with empty values.
+  '''(?i)(API_KEY|VAULT_KEY|JWT_SECRET|ADMIN_API_KEY)=\s*$''',
+]
+
+[[rules]]
+id = "anx-placeholder-key"
+description = "Placeholder key assignment, not a real secret"
+regex = '''(?i)(sk-|AKIA|ghp_|xox[bp]-)[A-Za-z0-9]{4,}\b'''
+allowlist = { regexes = [ '''(?i)(sk-|AKIA|ghp_)-YOUR|YOUR-[A-Z]+|xxxx|example|dummy|placeholder''' ] }

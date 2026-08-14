@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { assertSsrfSafe } from '@anx/core';
 import type { McpServerConfig } from '@anx/mcp-client';
 import type { ProxyConfig, DohConfig } from '@anx/networking';
 
@@ -75,6 +77,11 @@ const DEFAULT_CONFIG: GatewayConfig = {
     principals: [
       { id: 'admin', roles: ['admin'], apiKey: process.env['ANX_ADMIN_API_KEY'] },
     ],
+    // Local-first persistence: keep the credential vault on disk so
+    // registered keys survive gateway restarts. The master key is
+    // auto-generated and stored next to the vault on first boot (see
+    // runtime.ts) unless the user overrides vaultKey / AGENT_NEXUS_VAULT_KEY.
+    vaultPath: process.env['ANX_VAULT_PATH'] ?? join(homedir(), '.agent-nexus', 'vault.json'),
   },
   network: {
     proxies: [],
@@ -99,7 +106,9 @@ export class ConfigLoader {
       try {
         const raw = await readFile(candidate, 'utf8');
         const parsed = JSON.parse(raw) as Partial<GatewayConfig>;
-        return mergeConfig(DEFAULT_CONFIG, parsed);
+        const merged = mergeConfig(DEFAULT_CONFIG, parsed);
+        validateEndpoints(merged);
+        return merged;
       } catch {
         continue;
       }
@@ -123,4 +132,17 @@ function mergeConfig(base: GatewayConfig, override: Partial<GatewayConfig>): Gat
     mcp: { ...base.mcp, ...override.mcp },
     endpoints: override.endpoints ?? base.endpoints,
   };
+}
+
+// ── Phase 16 §8: SSRF guard for operator-configured provider endpoints ──────
+// Local providers (Ollama) are reachable on loopback by design, so they are
+// allowlisted. Everything else must resolve to a public host.
+const LOCAL_PROVIDER_HOSTS = ['ollama', 'localhost', '127.0.0.1', '::1'];
+function validateEndpoints(config: GatewayConfig): void {
+  for (const ep of config.endpoints ?? []) {
+    if (!ep.baseUrl) continue;
+    const host = new URL(ep.baseUrl).hostname.toLowerCase();
+    const allowPrivate = LOCAL_PROVIDER_HOSTS.includes(host);
+    assertSsrfSafe(ep.baseUrl, { allowPrivate });
+  }
 }

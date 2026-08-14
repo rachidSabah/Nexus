@@ -81,23 +81,25 @@ describe('OpenAIAdapter', () => {
   });
 
   it('parses non-streaming response correctly', async () => {
+    const body = {
+      id: 'resp-1',
+      object: 'chat.completion',
+      created: 1234,
+      model: 'gpt-4',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: 'Hello!' },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 },
+      system_fingerprint: 'fp-1',
+    };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        id: 'resp-1',
-        object: 'chat.completion',
-        created: 1234,
-        model: 'gpt-4',
-        choices: [
-          {
-            index: 0,
-            message: { role: 'assistant', content: 'Hello!' },
-            finish_reason: 'stop',
-          },
-        ],
-        usage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 },
-        system_fingerprint: 'fp-1',
-      }),
+      json: async () => body,
+      text: async () => JSON.stringify(body),
     }));
 
     const adapter = new OpenAIAdapter();

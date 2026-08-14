@@ -72,23 +72,28 @@ const def = await engine.create({
 });
 ```
 
-### Built-in templates
+### Built-in templates (seeded at boot)
 
-Three templates ship with the package:
+The gateway seeds `BUILT_IN_WORKFLOWS` into the `WorkflowOrchestrator` at
+startup, so they always appear in the dashboard's **Registered Workflow
+Definitions** list (and survive restarts). They use the node-based DAG schema
+(`nodes` + `edges`) consumed by the orchestrator — not the step-based
+`WORKFLOW_TEMPLATES` that feed the separate `WorkflowEngine`.
 
-| Template | Steps | Use case |
+| `id` | Name | Pipeline |
 |---|---|---|
-| `software-development-pipeline` | architecture → implement → review → test → document | Full feature delivery |
-| `bug-triage` | reproduce → diagnose → fix → verify | Bug fixing |
-| `code-review` | security + performance + style (parallel) → consensus | Multi-perspective review |
+| `software-development-pipeline` | Software Development Pipeline | architecture → implement → review → test → document |
+| `bug-triage` | Bug Triage & Fix | reproduce → diagnose → fix → verify |
+| `code-review` | Multi-Agent Code Review | security + performance + style → consensus |
+| `prbuild` | PR Build & CI | build → lint → test → package → openPr |
 
-Register them:
-```ts
-import { WORKFLOW_TEMPLATES } from '@anx/workflow';
-for (const template of Object.values(WORKFLOW_TEMPLATES)) {
-  await engine.create(template);
-}
-```
+To extend the built-ins, edit `packages/core/src/application/builtin-workflows.ts`
+and rebuild `@anx/core` + the gateway. Each entry is validated as a DAG on
+registration (unique node ids, edges reference valid nodes, no cycles).
+
+> Note: the step-based `WORKFLOW_TEMPLATES` in `@anx/workflow` feed a *separate*
+> `WorkflowEngine` and are not what the dashboard lists. Use `BUILT_IN_WORKFLOWS`
+> for dashboard-visible definitions.
 
 ## Versioning
 

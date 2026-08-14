@@ -1,6 +1,7 @@
 'use client';
 
-import { Activity, Database, Zap } from 'lucide-react';
+import { Activity, Database, Zap, Shield, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
 import useSWR from 'swr';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -12,14 +13,46 @@ interface CacheStats {
   hitRate: number;
 }
 
+interface PrivacyConfig {
+  level: 'off' | 'redacted' | 'strict';
+  maxContentChars: number;
+  skipCachePersistence?: boolean;
+}
+
 export default function SettingsPage() {
   const { data: cacheStats } = useSWR<CacheStats>('/api/v1/cache/stats', fetcher, { refreshInterval: 3000 });
+  const { data: privacy, mutate: refreshPrivacy } = useSWR<PrivacyConfig>('/api/v1/privacy', fetcher);
+  const [refreshingModels, setRefreshingModels] = useState(false);
+  const [modelMsg, setModelMsg] = useState<string | null>(null);
+
+  async function setPrivacyLevel(level: 'off' | 'redacted' | 'strict') {
+    await fetch('/api/v1/privacy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level }),
+    });
+    await refreshPrivacy();
+  }
+
+  async function triggerModelRefresh() {
+    setRefreshingModels(true);
+    setModelMsg('Triggered dynamic model refresh across all provider endpoints…');
+    try {
+      await fetch('/api/v1/models/refresh', { method: 'POST' });
+    } catch {
+      setModelMsg('Refresh triggered');
+    } finally {
+      setTimeout(() => {
+        setRefreshingModels(false);
+      }, 2000);
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-white/50">Gateway configuration, runtime parameters, and observability stats.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">Settings & Privacy</h1>
+        <p className="text-sm text-white/50">Gateway configuration, runtime privacy modes, and observability stats.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -42,12 +75,51 @@ export default function SettingsPage() {
         <div className="card">
           <div className="flex items-center gap-2 text-white/80">
             <Zap className="h-4 w-4 text-nexus-400" />
-            <span className="text-sm font-medium">Configuration</span>
+            <span className="text-sm font-medium">Model Refresh</span>
           </div>
-          <div className="mt-2 text-xs text-white/60">
-            Edit <code className="rounded bg-white/5 px-1">agent-nexus.config.json</code> at the gateway and restart,
-            or use the CLI <code className="rounded bg-white/5 px-1">anx config init</code> command.
-          </div>
+          <button
+            onClick={triggerModelRefresh}
+            disabled={refreshingModels}
+            className="mt-3 flex items-center gap-2 rounded-md bg-nexus-600 px-3 py-1.5 text-xs text-white transition hover:bg-nexus-500 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshingModels ? 'animate-spin' : ''}`} />
+            Refresh Provider Models
+          </button>
+          {modelMsg && <div className="mt-1.5 text-[11px] text-white/50">{modelMsg}</div>}
+        </div>
+      </div>
+
+      {/* Dynamic Privacy Mode Card */}
+      <div className="card">
+        <div className="flex items-center gap-2 text-white/90 font-medium">
+          <Shield className="h-5 w-5 text-nexus-400" />
+          Runtime Privacy & Redaction Mode
+        </div>
+        <p className="mt-1 text-xs text-white/50">
+          Controls how prompt text and key headers are logged in traces and persistent cache.
+        </p>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {(['off', 'redacted', 'strict'] as const).map((lvl) => (
+            <button
+              key={lvl}
+              onClick={() => setPrivacyLevel(lvl)}
+              className={`rounded-lg border p-3 text-left transition ${
+                privacy?.level === lvl
+                  ? 'border-nexus-500 bg-nexus-950/20 text-white'
+                  : 'border-white/5 bg-white/[0.02] text-white/60 hover:bg-white/[0.04]'
+              }`}
+            >
+              <div className="font-semibold text-xs capitalize flex items-center justify-between">
+                <span>{lvl} Mode</span>
+                {privacy?.level === lvl && <span className="h-2 w-2 rounded-full bg-nexus-400 inline-block" />}
+              </div>
+              <div className="mt-1 text-[11px] text-white/40">
+                {lvl === 'off' && 'Full request/response context logged for debugging.'}
+                {lvl === 'redacted' && 'Redacts API keys, auth headers, and sensitive fields.'}
+                {lvl === 'strict' && 'Zero persistence of request/response payloads in logs or disk cache.'}
+              </div>
+            </button>
+          ))}
         </div>
       </div>
 

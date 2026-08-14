@@ -47,5 +47,12 @@ COPY --from=builder /app/apps/gateway/agent-nexus.config.example.json ./agent-ne
 
 EXPOSE 8787 3000
 
+# Run as non-root for security (Phase 16 §16).
+RUN addgroup -S nexus && adduser -S nexus -G nexus
+USER nexus
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://localhost:8787/health || exit 1
+
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "apps/gateway/dist/bin.js"]

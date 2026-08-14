@@ -1,6 +1,6 @@
 'use client';
 
-import { Workflow, Play, Pause, Square, RotateCcw } from 'lucide-react';
+import { Workflow, Play, Pause, Square, RotateCcw, Sparkles, Activity, Cpu } from 'lucide-react';
 import { useState } from 'react';
 import useSWR from 'swr';
 
@@ -75,40 +75,59 @@ export default function WorkflowsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <Workflow className="h-6 w-6 text-nexus-400" />
-          Workflows
-        </h1>
-        <p className="text-sm text-white/50">Define, version, execute, and replay multi-agent workflows.</p>
+    <div className="space-y-8 relative pb-12 w-full max-w-full overflow-x-hidden">
+      {/* Background Cyber Accents */}
+      <div className="pointer-events-none absolute -top-10 -right-10 h-96 w-96 rounded-full bg-nexus-600/10 blur-[120px]" />
+      <div className="pointer-events-none absolute top-1/2 -left-20 h-80 w-80 rounded-full bg-cyan-600/10 blur-[100px]" />
+
+      {/* Cyber Header */}
+      <div className="relative flex flex-col justify-between gap-4 md:flex-row md:items-center border-b border-white/10 pb-6">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-nexus-500/30 bg-nexus-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-nexus-400 backdrop-blur-md mb-2">
+            <Sparkles className="h-3.5 w-3.5 animate-pulse text-nexus-300" /> Multi-Agent Orchestration & Replay
+          </div>
+          <h1 className="flex items-center gap-3 text-2xl sm:text-3xl font-extrabold tracking-tight text-white drop-shadow-sm">
+            <Workflow className="h-8 w-8 text-nexus-400" />
+            Multi-Agent Workflows & Executions
+          </h1>
+          <p className="mt-1 text-xs sm:text-sm text-white/60 max-w-2xl">
+            Execute, pause, inspect, and replay multi-step agent pipelines across your local AI gateway.
+          </p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Workflow list */}
-        <div className="card lg:col-span-1">
-          <h2 className="mb-3 text-sm font-medium text-white/80">Definitions</h2>
-          <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Workflow Definitions Sidebar */}
+        <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/40 p-5 sm:p-6 backdrop-blur-xl lg:col-span-1">
+          <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-white/70 flex items-center gap-2">
+            <Workflow className="h-4 w-4 text-nexus-400" /> Registered Workflow Definitions
+          </h2>
+          <div className="space-y-3">
             {isLoading ? (
-              <div className="py-4 text-center text-sm text-white/40">Loading…</div>
+              <div className="py-6 text-center text-xs text-white/40">Loading workflows...</div>
             ) : (workflows ?? []).length === 0 ? (
-              <div className="py-4 text-center text-sm text-white/40">No workflows defined.</div>
+              <div className="py-6 text-center text-xs text-white/40">No workflows registered.</div>
             ) : (
               (workflows ?? []).map((w) => (
                 <div key={`${w.id}-${w.version}`} className="flex items-center gap-2">
                   <button
                     onClick={() => setSelectedId(w.id)}
-                    className={`flex-1 rounded-lg p-3 text-left transition ${selectedId === w.id ? 'bg-white/10' : 'bg-white/[0.02] hover:bg-white/5'}`}
+                    className={`flex-1 rounded-xl p-3.5 text-left border transition ${
+                      selectedId === w.id
+                        ? 'border-nexus-500/50 bg-nexus-500/10 shadow-md'
+                        : 'border-white/5 bg-white/[0.02] hover:bg-white/[0.05]'
+                    }`}
                   >
-                    <div className="text-sm font-medium">{w.name}</div>
-                    <div className="mt-0.5 text-xs text-white/40">
-                      v{w.version} · {w.steps.length} steps
+                    <div className="text-sm font-bold text-white">{w.name}</div>
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-white/50">
+                      <span>v{w.version}</span>
+                      <span>· {w.steps.length} step{w.steps.length !== 1 ? 's' : ''}</span>
                     </div>
                   </button>
                   <button
                     onClick={() => startExecution(w.id)}
-                    title="Execute"
-                    className="rounded-lg bg-nexus-600/80 p-2 text-white transition hover:bg-nexus-500"
+                    title="Dispatch Execution"
+                    className="rounded-xl bg-gradient-to-r from-nexus-600 to-cyan-600 p-3 text-white transition hover:scale-105 active:scale-95 shadow-md"
                   >
                     <Play className="h-4 w-4" />
                   </button>
@@ -118,57 +137,66 @@ export default function WorkflowsPage() {
           </div>
         </div>
 
-        {/* Workflow detail / visual builder */}
-        <div className="card lg:col-span-2">
+        {/* Workflow Visual Builder & Execution History */}
+        <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/40 p-5 sm:p-6 backdrop-blur-xl lg:col-span-2">
           {selectedId ? (
             <>
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-medium text-white/80">
-                  {workflows?.find((w) => w.id === selectedId)?.name} — visual builder
+              <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
+                <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Cpu className="h-4 w-4 text-emerald-400" /> {workflows?.find((w) => w.id === selectedId)?.name} — Visual Step Flow
                 </h2>
               </div>
+
               {/* Visual step flow */}
-              <div className="mt-4 flex items-center gap-2 overflow-x-auto pb-2">
+              <div className="flex items-center gap-2 overflow-x-auto pb-3">
                 {workflows?.find((w) => w.id === selectedId)?.steps.map((step, i) => (
                   <div key={i} className="flex items-center">
-                    <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 text-center min-w-[140px]">
-                      <div className="text-xs font-medium text-nexus-300">{step.name}</div>
-                      <div className="mt-1 text-[10px] text-white/40">{step.agent ?? 'auto'}</div>
+                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-center min-w-[130px]">
+                      <div className="text-xs font-bold text-nexus-300">{step.name}</div>
+                      <div className="mt-1 text-[10px] text-white/40 font-mono">Agent: {step.agent ?? 'auto'}</div>
                     </div>
                     {i < (workflows?.find((w) => w.id === selectedId)?.steps.length ?? 0) - 1 && (
-                      <div className="px-1 text-white/20">→</div>
+                      <div className="px-2 text-white/30 text-xs font-mono">→</div>
                     )}
                   </div>
                 ))}
               </div>
 
               {/* Executions */}
-              <h3 className="mt-6 mb-3 text-xs font-medium uppercase tracking-wider text-white/40">Recent executions</h3>
-              <div className="space-y-2">
+              <h3 className="mt-6 mb-3 text-xs font-bold uppercase tracking-wider text-white/70 flex items-center gap-2">
+                <Activity className="h-4 w-4 text-cyan-400" /> Live Execution Stream & History
+              </h3>
+              <div className="space-y-3">
                 {(executions ?? []).length === 0 ? (
-                  <div className="py-4 text-center text-sm text-white/40">No executions yet.</div>
+                  <div className="py-6 text-center text-xs text-white/40">No execution history recorded.</div>
                 ) : (
                   (executions ?? []).map((ex) => (
-                    <div key={ex.id} className="rounded-lg bg-black/30 p-3">
+                    <div key={ex.id} className="rounded-xl border border-white/5 bg-black/40 p-4">
                       <div className="flex items-center justify-between">
-                        <span className={`pill pill-${ex.status === 'completed' ? 'healthy' : ex.status === 'failed' ? 'unhealthy' : 'degraded'}`}>
+                        <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold capitalize border ${
+                          ex.status === 'completed' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' :
+                          ex.status === 'failed' ? 'border-rose-500/30 bg-rose-500/10 text-rose-400' :
+                          'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                        }`}>
                           {ex.status}
                         </span>
-                        <span className="font-mono text-[10px] text-white/30">{ex.id.slice(0, 8)}</span>
+                        <span className="font-mono text-[11px] text-white/40">ID: {ex.id.slice(0, 10)}</span>
                       </div>
-                      <div className="mt-2 flex items-center gap-3 text-xs text-white/60">
-                        <span>{new Date(ex.startedAt).toLocaleTimeString()}</span>
-                        <span>${ex.totalCostUsd.toFixed(4)}</span>
-                        <span>{ex.totalTokensUsed} tok</span>
+
+                      <div className="mt-3 flex items-center gap-4 text-xs font-mono text-white/70">
+                        <span>Started: {new Date(ex.startedAt).toLocaleTimeString()}</span>
+                        <span>Cost: ${ex.totalCostUsd.toFixed(4)}</span>
+                        <span>Tokens: {ex.totalTokensUsed.toLocaleString()}</span>
                       </div>
-                      <div className="mt-2 flex gap-1">
+
+                      <div className="mt-3 flex gap-1.5">
                         {ex.steps.map((s) => (
                           <div
                             key={s.index}
-                            className={`h-1.5 flex-1 rounded-full ${
-                              s.status === 'completed' ? 'bg-emerald-500' :
+                            className={`h-2 flex-1 rounded-full ${
+                              s.status === 'completed' ? 'bg-emerald-400' :
                               s.status === 'failed' ? 'bg-rose-500' :
-                              s.status === 'running' ? 'bg-amber-500' :
+                              s.status === 'running' ? 'bg-amber-400 animate-pulse' :
                               s.status === 'skipped' ? 'bg-white/10' :
                               'bg-white/5'
                             }`}
@@ -176,37 +204,38 @@ export default function WorkflowsPage() {
                           />
                         ))}
                       </div>
-                      <div className="mt-2 flex gap-2">
+
+                      <div className="mt-3 flex items-center gap-2">
                         {ex.status === 'running' && (
                           <button
                             onClick={() => callExecutionEndpoint(ex.id, 'pause')}
-                            className="rounded-md bg-amber-600/20 px-2 py-1 text-xs text-amber-300 hover:bg-amber-600/30"
+                            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-300 transition hover:bg-amber-500/20"
                           >
-                            <Pause className="h-3 w-3" /> Pause
+                            <Pause className="h-3 w-3 inline mr-1" /> Pause
                           </button>
                         )}
                         {ex.status === 'paused' && (
                           <button
                             onClick={() => callExecutionEndpoint(ex.id, 'resume')}
-                            className="rounded-md bg-emerald-600/20 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-600/30"
+                            className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300 transition hover:bg-emerald-500/20"
                           >
-                            <Play className="h-3 w-3" /> Resume
+                            <Play className="h-3 w-3 inline mr-1" /> Resume
                           </button>
                         )}
                         {(ex.status === 'running' || ex.status === 'paused') && (
                           <button
                             onClick={() => callExecutionEndpoint(ex.id, 'cancel')}
-                            className="rounded-md bg-rose-600/20 px-2 py-1 text-xs text-rose-300 hover:bg-rose-600/30"
+                            className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs text-rose-300 transition hover:bg-rose-500/20"
                           >
-                            <Square className="h-3 w-3" /> Cancel
+                            <Square className="h-3 w-3 inline mr-1" /> Cancel
                           </button>
                         )}
                         {(ex.status === 'completed' || ex.status === 'failed') && (
                           <button
                             onClick={() => callExecutionEndpoint(ex.id, 'replay')}
-                            className="rounded-md bg-white/5 px-2 py-1 text-xs text-white/60 hover:bg-white/10"
+                            className="rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70 transition hover:bg-white/10"
                           >
-                            <RotateCcw className="h-3 w-3" /> Replay
+                            <RotateCcw className="h-3 w-3 inline mr-1" /> Replay Execution
                           </button>
                         )}
                       </div>
@@ -216,8 +245,8 @@ export default function WorkflowsPage() {
               </div>
             </>
           ) : (
-            <div className="py-16 text-center text-sm text-white/40">
-              Select a workflow on the left to view its visual builder and execution history.
+            <div className="py-20 text-center text-xs text-white/40">
+              Select a workflow definition on the left to inspect its visual pipeline and execution history.
             </div>
           )}
         </div>
@@ -225,4 +254,5 @@ export default function WorkflowsPage() {
     </div>
   );
 }
+
 

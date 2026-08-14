@@ -21,6 +21,19 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
+  // Never let a single bad upstream response take down the whole gateway.
+  // ERR_STREAM_WRITE_AFTER_END and friends are handled at the route level,
+  // but any residual unhandled stream/network error should be logged and
+  // tolerated, not crash the process (which kills every in-flight request).
+  process.on('uncaughtException', (err) => {
+    // eslint-disable-next-line no-console
+    console.error('[uncaughtException] tolerated:', err?.message ?? err);
+  });
+  process.on('unhandledRejection', (reason) => {
+    // eslint-disable-next-line no-console
+    console.error('[unhandledRejection] tolerated:', (reason as Error)?.message ?? reason);
+  });
+
   await runtime.start();
 }
 

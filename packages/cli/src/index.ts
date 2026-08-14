@@ -41,6 +41,10 @@ export class NexusCli {
         return this.doctor(rest);
       case 'config':
         return this.config(rest);
+      case 'dev':
+      case 'start':
+      case 'launch':
+        return this.launch(rest);
       case 'version':
       case '--version':
       case '-v':
@@ -55,6 +59,44 @@ export class NexusCli {
         process.exitCode = 1;
         this.help();
     }
+  }
+
+  private async launch(args: string[]): Promise<void> {
+    const flags = this.parseFlags(args);
+    const openBrowser = flags['open'] !== 'false';
+    const devMode = flags['dev'] === 'true' || flags['watch'] === 'true';
+    const dashboardPort = flags['dashboard-port'] ?? '3000';
+    const dashboardUrl = `http://localhost:${dashboardPort}`;
+    const { spawn } = await import('node:child_process');
+
+    process.stdout.write(`\n🚀 Starting Agent Nexus Gateway & Dashboard...\n`);
+
+    // In dev mode (default when running anx dev/launch), spawn pnpm dev which runs fast watch servers.
+    // If --no-dev or --start is set, launch standalone prebuilt start commands for fast execution.
+    const command = devMode || flags['start'] !== 'true' ? 'pnpm' : 'pnpm';
+    const commandArgs = devMode || flags['start'] !== 'true' ? ['dev'] : ['run', 'start'];
+
+    const proc = spawn(command, commandArgs, {
+      stdio: 'inherit',
+      shell: true,
+      cwd: process.cwd(),
+    });
+
+    if (openBrowser) {
+      process.stdout.write(`\n🌐 Opening Dashboard at ${dashboardUrl}...\n`);
+      setTimeout(() => {
+        const openCmd = process.platform === 'win32'
+          ? `start ${dashboardUrl}`
+          : process.platform === 'darwin'
+          ? `open ${dashboardUrl}`
+          : `xdg-open ${dashboardUrl}`;
+        spawn(openCmd, { shell: true, stdio: 'ignore' });
+      }, 4000);
+    }
+
+    proc.on('error', (err) => {
+      process.stderr.write(`Failed to start services: ${err.message}\n`);
+    });
   }
 
   private client(): NexusClient {

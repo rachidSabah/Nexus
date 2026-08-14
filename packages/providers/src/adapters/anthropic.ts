@@ -139,7 +139,7 @@ export class AnthropicAdapter implements ProviderAdapter {
           displayName: m.display_name ?? m.id,
           contextWindow: this.contextWindowFor(m.id),
           maxOutputTokens: 8192,
-          pricing: { isFree: false, currency: 'USD' },
+          pricing: { isFree: false, currency: 'USD', source: 'adapter_fallback' as const, updatedAt: Date.now(), freeTier: 'UNKNOWN' as const },
           capabilities: {
             streaming: true,
             toolCalling: true,
@@ -156,8 +156,10 @@ export class AnthropicAdapter implements ProviderAdapter {
         timeout.removeEventListener('abort', onAbort);
         signal.removeEventListener('abort', onAbort);
       }
-    } catch {
-      return [];
+    } catch (err) {
+      // Do NOT swallow: the registry's refresh() records per-endpoint errors
+      // in lastErrors and continues. Silent `return []` hid discovery failures.
+      throw new Error(`Model discovery failed for ${endpoint.providerId}: ${(err as Error).message}`, { cause: err });
     }
   }
 
@@ -175,7 +177,11 @@ export class AnthropicAdapter implements ProviderAdapter {
   // ─────────────────────────────────────────────────────────────────────────
 
   protected resolveBase(endpoint: ProviderEndpoint): string {
-    return endpoint.baseUrl || this.apiBase;
+    let base = (endpoint.baseUrl || this.apiBase).trim().replace(/\/+$/, '');
+    if (base.endsWith('/v1')) {
+      base = base.substring(0, base.length - 3);
+    }
+    return base;
   }
 
   protected getApiKey(endpoint: ProviderEndpoint): string {

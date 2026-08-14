@@ -39,7 +39,10 @@ describe('EncryptedCredentialVault', () => {
     // Steal v1's encrypted blob and try to decrypt with v2's key.
     const encrypted = (v1 as unknown as { store: Map<string, string> }).store.get('openai')!;
     (v2 as unknown as { store: Map<string, string> }).store.set('openai', encrypted);
-    await expect(v2.get('openai')).rejects.toThrow();
+    // Hardened contract: undecryptable entries resolve to undefined —
+    // never the plaintext, and never a crash (corrupt vault entries must
+    // not take down the gateway boot).
+    await expect(v2.get('openai')).resolves.toBeUndefined();
   });
 });
 

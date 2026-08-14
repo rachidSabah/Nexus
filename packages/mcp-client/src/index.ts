@@ -30,27 +30,62 @@ export class McpClient {
   private readonly tools = new Map<string, McpToolDescriptor & { config: McpServerConfig }>();
   private readonly processes = new Map<string, ChildProcess>();
   private readonly pendingRequests = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private readonly serverConfigs = new Map<string, McpServerConfig>();
+  private readonly connected = new Set<string>();
   private nextRequestId = 1;
 
-  constructor(private readonly servers: McpServerConfig[]) {}
+  constructor(servers: McpServerConfig[] = []) {
+    for (const s of servers) this.serverConfigs.set(s.id, s);
+  }
+
+  /** Snapshot of configured servers with live connection status. */
+  listServers(): Array<McpServerConfig & { connected: boolean }> {
+    return Array.from(this.serverConfigs.values()).map((s) => ({ ...s, connected: this.connected.has(s.id) }));
+  }
+
+  /** Hot-add a server (does not auto-connect unless enabled); returns it. */
+  addServer(cfg: McpServerConfig): McpServerConfig & { connected: boolean } {
+    this.serverConfigs.set(cfg.id, cfg);
+    return { ...cfg, connected: this.connected.has(cfg.id) };
+  }
+
+  /** Remove a server and disconnect it if connected. */
+  async removeServer(id: string): Promise<void> {
+    if (this.connected.has(id)) await this.disconnectOne(id);
+    this.serverConfigs.delete(id);
+  }
 
   async connect(): Promise<void> {
-    for (const server of this.servers.filter((s) => s.enabled)) {
-      if (server.transport === 'stdio') {
-        await this.connectStdio(server);
-      } else if (server.transport === 'http') {
-        await this.connectHttp(server);
+    for (const server of Array.from(this.serverConfigs.values())) {
+      if (server.enabled && !this.connected.has(server.id)) {
+        await this.connectOne(server.id);
       }
     }
   }
 
+  /** Connect a single configured server by id. */
+  async connectOne(id: string): Promise<void> {
+    const server = this.serverConfigs.get(id);
+    if (!server) throw new Error(`Unknown MCP server: ${id}`);
+    if (this.connected.has(id)) return;
+    if (server.transport === 'stdio') await this.connectStdio(server);
+    else if (server.transport === 'http') await this.connectHttp(server);
+    this.connected.add(id);
+  }
+
   async disconnect(): Promise<void> {
-    for (const [, proc] of this.processes) {
-      proc.kill();
-    }
+    for (const id of Array.from(this.connected)) await this.disconnectOne(id);
     this.processes.clear();
     this.tools.clear();
     this.pendingRequests.clear();
+  }
+
+  /** Disconnect a single server by id (kills its process, clears its tools). */
+  async disconnectOne(id: string): Promise<void> {
+    const proc = this.processes.get(id);
+    if (proc) { try { proc.kill(); } catch { /* ignore */ } this.processes.delete(id); }
+    for (const [name, tool] of Array.from(this.tools)) if (tool.config.id === id) this.tools.delete(name);
+    this.connected.delete(id);
   }
 
   listTools(): readonly McpToolDescriptor[] {

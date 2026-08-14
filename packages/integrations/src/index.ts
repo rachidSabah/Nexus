@@ -19,7 +19,7 @@ export {
   type IntegrationContext,
   type IntegrationResult,
   type IntegrationStatus,
-  type IntegrationRegistry,
+  normalizeGatewayUrl,
   ok,
   fail,
   home,

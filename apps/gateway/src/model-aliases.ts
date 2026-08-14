@@ -39,7 +39,10 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
-import type { ModelDescriptor, ModelRegistry } from '@anx/core';
+import type { ModelDescriptor, ModelRegistry, ProviderEndpoint, RoutingEnginePort } from '@anx/core';
+import { isSelectable } from '@anx/core';
+import { resolveClaudeGwAlias } from './claude-catalog.js';
+import { resolveOpenAIModelId, isVirtualModelId } from './model-fabric.js';
 
 export type AliasRankingStrategy =
   | 'cheapest'     // lowest inputPer1M + outputPer1M (free first)
@@ -57,6 +60,74 @@ export interface AliasFilter {
   minContextWindow?: number;
   /** Restrict to these provider ids. */
   providers?: readonly string[];
+}
+
+/**
+ * Family routing (Free Claude Code parity, generalized to all coding agents).
+ *
+ * Coding agents natively request provider-specific model names:
+ *   - Claude Code / Cline / Continue: claude-sonnet-4-5, claude-fable-5, ...
+ *   - OpenAI Codex:                   gpt-5-codex, gpt-5-mini, o4-mini, ...
+ *   - DeepSeek Code:                  deepseek-chat, deepseek-reasoner, ...
+ *   - Gemini CLI / OpenCode / other:  gemini-3.6-flash, grok-4, qwen-3, ...
+ * The gateway rewrites any family-matched model name to the family's
+ * configured target model (env: GATEWAY_MODEL_<FAMILY> / GATEWAY_MODEL_DEFAULT),
+ * or -- when unset -- to the best currently-available free tool-calling model
+ * (dynamic, like the local/* aliases). Concrete free models (`*-free`) and
+ * registered aliases are never treated as family requests.
+ */
+export type FamilyId =
+  | 'claude' | 'openai' | 'deepseek' | 'gemini' | 'grok'
+  | 'meta' | 'qwen' | 'mistral' | 'minimax' | 'zhipu' | 'moonshot' | 'default';
+
+export const FAMILY_PATTERNS: ReadonlyArray<readonly [RegExp, FamilyId]> = [
+  [/^claude-(fable|opus|sonnet|haiku)(?:[-._]|$)/, 'claude'],
+  [/^(gpt-[0-9]|gpt-4[.o-]|gpt-4$)/, 'openai'],
+  [/^o[1-4](?:[-._]|$)/, 'openai'],
+  [/^codex/, 'openai'],
+  [/^deepseek/, 'deepseek'],
+  [/^gemini/, 'gemini'],
+  [/^grok/, 'grok'],
+  [/^llama/, 'meta'],
+  [/^qwen/, 'qwen'],
+  [/^(?:ministral|mistral)/, 'mistral'],
+  [/^minimax/, 'minimax'],
+  [/^glm-/, 'zhipu'],
+  [/^kimi/, 'moonshot'],
+];
+
+export interface FamilyDefaults {
+  /** Fallback target for any unhandled family model (env GATEWAY_MODEL_DEFAULT). */
+  readonly default?: string;
+  readonly claude?: string;
+  readonly openai?: string;
+  readonly deepseek?: string;
+  readonly gemini?: string;
+  readonly grok?: string;
+  readonly meta?: string;
+  readonly qwen?: string;
+  readonly mistral?: string;
+  readonly minimax?: string;
+  readonly zhipu?: string;
+  readonly moonshot?: string;
+  /** Claude sub-family overrides (FCC parity: model_fable / model_opus / ...). */
+  readonly fable?: string;
+  readonly opus?: string;
+  readonly sonnet?: string;
+  readonly haiku?: string;
+}
+
+/** Matches a requested model name to a model family, if any. */
+export function matchFamily(model: string): FamilyId | undefined {
+  const low = model.toLowerCase();
+  // Concrete free-tier ids (deepseek-v4-flash-free, ...) are real models,
+  // not family requests -- never rewrite them.
+  if (low.endsWith('-free')) return undefined;
+  for (const [re, family] of FAMILY_PATTERNS) {
+    if (re.test(low)) return family;
+  }
+  if (low === 'claude' || low.startsWith('claude-')) return 'claude';
+  return undefined;
 }
 
 export interface ModelAlias {
@@ -90,10 +161,21 @@ export interface AliasResolution {
 export class ModelAliasRegistry {
   private readonly aliases = new Map<string, ModelAlias>();
   private readonly modelRegistry: ModelRegistry;
+  private readonly routing?: RoutingEnginePort;
+  private readonly familyDefaults: FamilyDefaults;
 
-  constructor(modelRegistry: ModelRegistry) {
+  private readonly modelCooldowns = new Map<string, number>();
+
+  constructor(modelRegistry: ModelRegistry, routing?: RoutingEnginePort, familyDefaults: FamilyDefaults = {}) {
     this.modelRegistry = modelRegistry;
+    this.routing = routing;
+    this.familyDefaults = familyDefaults;
     this.registerBuiltins();
+  }
+
+  /** Marks a model as temporarily rate-limited for cooldownMs. */
+  recordRateLimitCooldown(modelId: string, cooldownMs = 60_000): void {
+    this.modelCooldowns.set(modelId, Date.now() + cooldownMs);
   }
 
   private registerBuiltins(): void {
@@ -161,6 +243,65 @@ export class ModelAliasRegistry {
         ranking: 'fastest',
         builtin: true,
       },
+      // ── nexus/* namespace (Model Fabric §26) ────────────────────────────
+      // Same dynamic engines as local/*, under the nexus/ prefix the fabric
+      // spec mandates. Resolved identically at request time.
+      {
+        alias: 'nexus/auto',
+        description: 'Alias for nexus/best (highest-quality model)',
+        filter: {},
+        ranking: 'most_capabilities',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/best',
+        description: 'Highest-quality model (most capabilities + largest context)',
+        filter: {},
+        ranking: 'most_capabilities',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/free',
+        description: 'Cheapest free-tier model with required capabilities',
+        filter: { freeOnly: true },
+        ranking: 'cheapest',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/free-coding',
+        description: 'Best healthy FREE tool-calling coding model',
+        filter: { freeOnly: true, capability: 'toolCalling' },
+        ranking: 'highest_quality',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/best-coding',
+        description: 'Best healthy coding model (tool calling, free preferred)',
+        filter: { capability: 'toolCalling' },
+        ranking: 'cheapest',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/fast',
+        description: 'Model with lowest latency (falls back to cheapest)',
+        filter: {},
+        ranking: 'fastest',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/reasoning',
+        description: 'Best model with reasoning capability',
+        filter: { capability: 'reasoning' },
+        ranking: 'highest_quality',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/long-context',
+        description: 'Model with the largest context window',
+        filter: {},
+        ranking: 'largest_context',
+        builtin: true,
+      },
     ];
     for (const a of builtins) {
       this.aliases.set(a.alias, a);
@@ -190,7 +331,22 @@ export class ModelAliasRegistry {
 
   /** Returns true if the given model name is a registered alias. */
   isAlias(model: string): boolean {
-    return this.aliases.has(model);
+    if (this.aliases.has(model)) return true;
+    return matchFamily(model) !== undefined;
+  }
+
+  /**
+   * Returns true when `model` names a registered FREE-ONLY alias that
+   * currently resolves to nothing — i.e. free-tier exhaustion
+   * (no free model is available/healthy right now). Callers should surface
+   * a 503 NO_ELIGIBLE_PROVIDER instead of letting the request fall through
+   * as an unresolvable literal model.
+   */
+  isExhaustedFreeOnlyAlias(model: string): boolean {
+    const alias = this.aliases.get(model);
+    if (!alias) return false;
+    if (alias.filter.freeOnly !== true) return false;
+    return this.resolve(model) === undefined;
   }
 
   /**
@@ -207,11 +363,26 @@ export class ModelAliasRegistry {
     const alias = this.aliases.get(aliasName);
     if (!alias) return undefined;
 
-    let candidates = this.modelRegistry.list().filter((m) => !m.stale);
+    const now = Date.now();
+    let candidates = this.modelRegistry.list().filter((m) => {
+      if (m.stale) return false;
+      const cooldownUntil = this.modelCooldowns.get(m.id);
+      if (cooldownUntil && now < cooldownUntil) return false;
+      return true;
+    });
+
+    // Fallback: if no models have been discovered yet (e.g. cold start,
+    // Ollama not running, discovery still in flight), derive candidates
+    // from the registered routing endpoints. This keeps aliases resolvable
+    // as soon as an endpoint -- or an API key that auto-registered an
+    // endpoint -- exists, even before provider /models discovery succeeds.
+    if (candidates.length === 0 && this.routing) {
+      candidates = this.endpointCandidates();
+    }
 
     // Apply filters.
     if (alias.filter.freeOnly) {
-      candidates = candidates.filter((m) => m.pricing?.isFree === true);
+      candidates = candidates.filter((m) => m.pricing?.isFree === true || m.pricing?.freeTier === 'FREE' || m.id.endsWith('-free'));
     }
     if (alias.filter.capability) {
       candidates = candidates.filter((m) => m.capabilities?.[alias.filter.capability!] === true);
@@ -246,15 +417,182 @@ export class ModelAliasRegistry {
    * calls before routing.
    */
   resolveIfAlias(model: string): { model: string; resolution?: AliasResolution } {
-    if (!this.isAlias(model)) return { model };
-    const resolution = this.resolve(model);
-    if (!resolution) {
-      // Alias exists but no candidates — let the routing engine fail with
-      // a proper NoEligibleProviderError rather than silently passing the
-      // alias through (which would just 404 at the provider).
-      return { model };
+    // Claude Code projection aliases (claude-gw-*) reverse to their native
+    // registry id BEFORE family rewriting, so the selected model genuinely
+    // controls routing (§17). A claude-gw-* id must never be treated as a
+    // family request or silently rewritten to a default provider.
+    const projected = resolveClaudeGwAlias(model, this.modelRegistry.list());
+    if (projected) {
+      return {
+        model: projected.modelId,
+        resolution: {
+          modelId: projected.modelId,
+          providerId: projected.providerId,
+          reason: `Claude Code gateway projection '${model}' -> '${projected.modelId}'`,
+          candidateCount: 1,
+        },
+      };
     }
-    return { model: resolution.modelId, resolution };
+    // Support virtual model identity (nexus/<provider>/<nativeModel>) resolution
+    const virtualResolved = resolveOpenAIModelId(model, this.modelRegistry.list());
+    if (virtualResolved && isVirtualModelId(model)) {
+      return {
+        model: virtualResolved.modelId,
+        resolution: {
+          modelId: virtualResolved.modelId,
+          providerId: virtualResolved.providerId,
+          reason: `Virtual model identity '${model}' -> '${virtualResolved.modelId}'`,
+          candidateCount: 1,
+        },
+      };
+    }
+    // Exact (custom-registered) aliases always win — a user can pin an
+    // exact override for e.g. `claude-sonnet-4-5` via POST /v1/aliases.
+    const registered = this.aliases.get(model);
+    if (registered) {
+      const resolution = this.resolve(model);
+      return resolution
+        ? { model: resolution.modelId, resolution }
+        : { model };
+    }
+    const family = matchFamily(model);
+    if (family) return this.resolveClaudeFamily(model, family);
+    return { model };
+  }
+
+  /**
+   * FCC-style Claude-family routing: rewrite `claude-*` model names to the
+   * family's configured target model, or to the best available tool-calling
+   * model when no explicit target is set.
+   */
+  private resolveClaudeFamily(model: string, family: FamilyId): { model: string; resolution?: AliasResolution } {
+    // Claude sub-family overrides (GATEWAY_MODEL_SONNET etc.) take precedence
+    // over the family-wide target, which itself beats the default fallback.
+    const sub = family === 'claude'
+      ? (/^claude-(fable|opus|sonnet|haiku)/.exec(model.toLowerCase())?.[1])
+      : undefined;
+    const target = this.familyDefaults[(sub ?? family) as keyof FamilyDefaults] ?? this.familyDefaults[family] ?? this.familyDefaults.default;
+    if (target) {
+      const explicit = this.findExplicitModel(target);
+      if (explicit) {
+        return {
+          model: explicit.modelId,
+          resolution: {
+            modelId: explicit.modelId,
+            providerId: explicit.providerId,
+            reason: `Claude family '${family}' -> configured target '${target}'`,
+            candidateCount: 1,
+          },
+        };
+      }
+    }
+    // No explicit target (or it isn't discovered yet): pick the best
+    // currently-available tool-calling model, like `local/coding`.
+    // Exclude the family pattern entries themselves (claude-fable-5 etc. are
+    // registered as discoverable pseudo-models for the model picker, but must
+    // never resolve to themselves or be sent upstream).
+    const freeCandidates = this.candidatesFor({ capability: 'toolCalling', freeOnly: true })
+      .filter((m) => !matchFamily(m.id));
+    const candidates = (freeCandidates.length > 0 ? freeCandidates : this.candidatesFor({ capability: 'toolCalling' }))
+      .filter((m) => !matchFamily(m.id));
+    if (candidates.length > 0) {
+      // Cheapest-first: with no pricing metadata the sort is stable,
+      // so the endpoint's first discovered model wins - typically the
+      // free default (e.g. deepseek-v4-flash-free on OpenCode Zen).
+      const winners = this.rank(candidates, 'cheapest');
+      // Deterministic free-tier pick: OpenCode Zen flags free models with a
+      // `-free` suffix (deepseek-v4-flash-free, mimo-v2.5-free, ...). Prefer
+      // those so family routing works on keyless free workspaces; explicit
+      // GATEWAY_MODEL_* overrides still take precedence above.
+      const freeTier = winners.find((m) => m.id.endsWith('-free'));
+      const winner = freeTier ?? winners[0]!;
+      return {
+        model: winner.id,
+        resolution: {
+          modelId: winner.id,
+          providerId: winner.providerId,
+          reason: family === 'default'
+            ? `Claude family 'default' -> dynamic best tool-calling model`
+            : `Claude family '${family}' -> dynamic best tool-calling model (no GATEWAY_MODEL_${family.toUpperCase()} target configured)`,
+          candidateCount: candidates.length,
+        },
+      };
+    }
+    // Nothing to rewrite to — let the routing engine fail honestly.
+    return { model: `claude-${family === 'default' ? 'default' : family}` };
+  }
+
+  /** Finds a model whose id matches a configured target (provider/model or bare model). */
+  private findExplicitModel(target: string): { modelId: string; providerId: string } | undefined {
+    const norm = (id: string): string => id.toLowerCase().split('/').pop() ?? id.toLowerCase();
+    const t = target.toLowerCase();
+    const tNorm = norm(t);
+    const models = this.modelRegistry.list().filter((m) => !m.stale);
+    // Exact / provider-prefixed / bare-name matches against discovered models.
+    for (const m of models) {
+      if (m.id.toLowerCase() === t || m.id.toLowerCase() === `auto-${t}` || norm(m.id) === tNorm) {
+        return { modelId: m.id, providerId: m.providerId };
+      }
+    }
+    // Fall back to registered endpoints (cold start before discovery).
+    if (this.routing) {
+      for (const e of this.routing.listEndpoints()) {
+        if (!isSelectable(e)) continue;
+        const eid = e.id.toLowerCase();
+        if (eid === t || eid === `auto-${t}` || norm(eid) === tNorm || e.providerId.toLowerCase() === t.split('/')[0]) {
+          return { modelId: e.id, providerId: e.providerId };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private candidatesFor(filter: AliasFilter): ModelDescriptor[] {
+    let candidates = this.modelRegistry.list().filter((m) => !m.stale);
+    if (candidates.length === 0 && this.routing) candidates = this.endpointCandidates();
+    if (filter.capability) {
+      candidates = candidates.filter((m) => m.capabilities?.[filter.capability!] === true);
+    }
+    if (filter.freeOnly) {
+      candidates = candidates.filter((m) => m.pricing?.isFree === true);
+    }
+    return candidates;
+  }
+
+  /**
+   * Derives candidate ModelDescriptors from the routing engine's registered
+   * endpoints. Used as a fallback when model discovery hasn't produced any
+   * models yet — so aliases still resolve to a provider's endpoint (and its
+   * default capabilities / pricing) even before /models discovery succeeds
+   * or when a provider doesn't implement discoverModels.
+   */
+  private endpointCandidates(): ModelDescriptor[] {
+    if (!this.routing) return [];
+    return this.routing.listEndpoints().map((e: ProviderEndpoint) => ({
+      id: e.id,
+      providerId: e.providerId,
+      displayName: e.displayName ?? e.providerId,
+      contextWindow: e.capabilities?.maxInputTokens,
+      maxOutputTokens: e.capabilities?.maxOutputTokens,
+      pricing: {
+        inputPer1M: (e.pricing?.inputPer1K ?? 0) * 1000,
+        outputPer1M: (e.pricing?.outputPer1K ?? 0) * 1000,
+        isFree: (e.pricing?.inputPer1K ?? 0) === 0 && (e.pricing?.outputPer1K ?? 0) === 0,
+        currency: e.pricing?.currency,
+      },
+      capabilities: {
+        streaming: e.capabilities?.streaming,
+        toolCalling: e.capabilities?.toolCalling,
+        vision: e.capabilities?.vision,
+        audio: e.capabilities?.audio,
+        speech: e.capabilities?.speech,
+        embeddings: e.capabilities?.embeddings,
+        reasoning: e.capabilities?.reasoning,
+        jsonMode: e.capabilities?.jsonMode,
+      },
+      discoveredAt: Date.now(),
+      stale: false,
+    }));
   }
 
   /** Ranking strategies. */

@@ -131,6 +131,12 @@ export interface RoutingEnginePort {
   unregisterEndpoint(endpointId: string): void;
 
   /**
+   * Live-patch mutable endpoint fields (e.g. correct a wrong baseUrl, or
+   * override health) without restarting the gateway.
+   */
+  updateEndpoint(endpointId: string, patch: Partial<Pick<ProviderEndpoint, 'baseUrl' | 'displayName' | 'health' | 'region' | 'tags' | 'priority' | 'weight'>>): void;
+
+  /**
    * List all currently-registered endpoints (for dashboard/CLI).
    */
   listEndpoints(): readonly ProviderEndpoint[];
@@ -202,6 +208,8 @@ export interface EventBusPort {
     type: T['type'] | T['type'][],
     handler: (event: T) => void | Promise<void>,
   ): () => void;
+  /** Subscribe to ALL events (audit log / debug / scoped SSE views). */
+  subscribeAll(handler: (event: DomainEvent) => void | Promise<void>): () => void;
 }
 
 /**
@@ -288,7 +296,7 @@ export interface PluginDescriptor {
  * HTTPS, and connection diagnostics.
  */
 export interface NetworkPort {
-  fetch(url: string, init?: RequestInit & { proxyId?: string }): Promise<Response>;
+  fetch(url: string, init?: RequestInit & { proxyId?: string; rotateProxy?: boolean }): Promise<Response>;
   measureLatency(url: string): Promise<number>;
   diagnose(): Promise<NetworkDiagnostics>;
 }
@@ -301,8 +309,21 @@ export interface NetworkDiagnostics {
     readonly ok: boolean;
     readonly latencyMs: number;
   }>;
-  readonly ipv4: { readonly ok: boolean; readonly latencyMs: number };
-  readonly ipv6: { readonly ok: boolean; readonly latencyMs: number };
+  readonly ipv4: { readonly ok: boolean; readonly latencyMs: number; readonly status?: 'OK' | 'UNREACHABLE' };
+  readonly ipv6: { readonly ok: boolean; readonly latencyMs: number; readonly status?: 'OK' | 'UNREACHABLE' | 'UNAVAILABLE' };
+  readonly directHttps?: { readonly ok: boolean; readonly latencyMs: number; readonly status?: 'OK' | 'UNREACHABLE' };
+  readonly egressMode?: import('../domain/types.js').EgressMode;
+  readonly activeEgress?: 'DIRECT' | 'PROXY';
+  readonly proxyPool?: ReadonlyArray<import('../domain/types.js').ProxyEndpoint>;
+  readonly poolSummary?: {
+    readonly discovered: number;
+    readonly testing: number;
+    readonly healthy: number;
+    readonly degraded: number;
+    readonly dead: number;
+    readonly quarantined: number;
+    readonly disabled: number;
+  };
 }
 
 /**

@@ -9,9 +9,11 @@ import { AllProvidersExhaustedError, ProviderResponseError } from '../src/domain
 import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
+  ChatCompletionChunk,
   ProviderEndpoint,
 } from '../src/domain/types.js';
 import type { ProviderAdapter } from '../src/application/ports.js';
+import { classifyFailure } from '../src/application/chat-completion.usecase.js';
 
 describe('computeCost', () => {
   it('computes linear cost per 1K tokens', () => {
@@ -241,5 +243,156 @@ describe('ChatCompletionUseCase', () => {
         messages: [{ role: 'user', content: 'hi' }],
       }),
     ).rejects.toBeInstanceOf(AllProvidersExhaustedError);
+  });
+});
+
+/** Scripted streaming adapter: yields queued chunks, or throws when scripted. */
+class FakeStreamingAdapter implements ProviderAdapter {
+  readonly providerId: string;
+  readonly displayName: string;
+  public chunks: ChatCompletionChunk[] = [];
+  public midStreamError: Error | null = null;
+  public calls = 0;
+
+  constructor(providerId: string) {
+    this.providerId = providerId;
+    this.displayName = providerId;
+  }
+
+  async *streamChatCompletion(): AsyncGenerator<ChatCompletionChunk> {
+    this.calls++;
+    for (const c of this.chunks) {
+      yield c;
+      if (this.midStreamError) {
+        const err = this.midStreamError;
+        this.midStreamError = null;
+        throw err;
+      }
+    }
+    if (this.midStreamError) {
+      const err = this.midStreamError;
+      this.midStreamError = null;
+      throw err;
+    }
+  }
+
+  async chatCompletion(): Promise<ChatCompletionResponse> {
+    throw new Error('not used');
+  }
+
+  async healthCheck() {
+    return true;
+  }
+}
+
+function chunk(id: string, content: string): ChatCompletionChunk {
+  return {
+    id,
+    object: 'chat.completion.chunk',
+    created: 1,
+    model: 'gpt-4',
+    choices: [{ index: 0, delta: { content }, finish_reason: null }],
+  };
+}
+
+describe('ChatCompletionUseCase streaming (TEST 9/10)', () => {
+  function makeUsecase(adapters: Map<string, ProviderAdapter>) {
+    const bus = new InMemoryEventBus();
+    const engine = new RoutingEngine(bus);
+    let priority = 1;
+    for (const [, adapter] of adapters) {
+      engine.registerEndpoint({
+        ...makeEndpoint(`ep-${adapter.providerId}`, adapter.providerId),
+        priority: priority++,
+      });
+    }
+    return new ChatCompletionUseCase(
+      engine,
+      new DefaultFailover(),
+      adapters,
+      bus,
+      new DefaultCostCalculator(),
+    );
+  }
+
+  function sink() {
+    const writes: ChatCompletionChunk[] = [];
+    const events: string[] = [];
+    return {
+      writes,
+      events,
+      sink: {
+        write: async (c: ChatCompletionChunk) => { writes.push(c); events.push('write'); },
+        error: async () => { events.push('error'); },
+        end: async () => { events.push('end'); },
+      },
+    };
+  }
+
+  it('TEST 9: 429 before first byte → safe failover, single clean output, no error event', async () => {
+    const primary = new FakeStreamingAdapter('openai');
+    primary.midStreamError = new ProviderResponseError('ep-openai', 429, 'rate limited');
+    const fallback = new FakeStreamingAdapter('anthropic');
+    fallback.chunks = [chunk('c1', 'Hello from fallback!')];
+
+    const usecase = makeUsecase(new Map([['openai', primary], ['anthropic', fallback]]));
+    const s = sink();
+    const response = await usecase.execute(
+      { model: 'gpt-4', messages: [{ role: 'user', content: 'hi' }], stream: true, routing: { strategy: 'priority' } },
+      s.sink,
+    );
+
+    expect(primary.calls).toBe(1);
+    expect(fallback.calls).toBe(1);
+    expect(s.writes.map((w) => w.choices[0]?.delta.content).join('')).toBe('Hello from fallback!');
+    expect(s.events).not.toContain('error');
+    expect(response.choices[0]?.message.content).toBe('Hello from fallback!');
+  });
+
+  it('TEST 10: failure AFTER bytes emitted → NO failover replay, clean rejection', async () => {
+    const primary = new FakeStreamingAdapter('openai');
+    primary.chunks = [chunk('c1', 'partial output')];
+    primary.midStreamError = new ProviderResponseError('ep-openai', 429, 'mid-stream rate limit');
+    const fallback = new FakeStreamingAdapter('anthropic');
+    fallback.chunks = [chunk('c2', 'MUST NOT BE REPLAYED')];
+
+    const usecase = makeUsecase(new Map([['openai', primary], ['anthropic', fallback]]));
+    const s = sink();
+
+    await expect(
+      usecase.execute(
+        { model: 'gpt-4', messages: [{ role: 'user', content: 'hi' }], stream: true, routing: { strategy: 'priority' } },
+        s.sink,
+      ),
+    ).rejects.toThrow();
+
+    // Bytes were emitted exactly once; the fallback provider was NEVER called
+    // (no duplicate tool calls / duplicated output).
+    expect(s.writes.map((w) => w.choices[0]?.delta.content).join('')).toBe('partial output');
+    expect(fallback.calls).toBe(0);
+  });
+
+  it('TEST 6: FreeUsageLimitError (429) → failover, key cooldown path (keyAction=cooldown)', async () => {
+    const primary = new FakeStreamingAdapter('openai');
+    primary.midStreamError = new ProviderResponseError('ep-openai', 429, JSON.stringify({
+      type: 'error',
+      error: { type: 'FreeUsageLimitError', message: 'Rate limit exceeded. Please try again later.' },
+    }));
+    const fallback = new FakeStreamingAdapter('anthropic');
+    fallback.chunks = [chunk('c1', 'ok')];
+
+    const usecase = makeUsecase(new Map([['openai', primary], ['anthropic', fallback]]));
+    const s = sink();
+    const response = await usecase.execute(
+      { model: 'gpt-4', messages: [{ role: 'user', content: 'hi' }], stream: true, routing: { strategy: 'priority' } },
+      s.sink,
+    );
+    expect(response.choices[0]?.message.content).toBe('ok');
+
+    const classification = classifyFailure(
+      new ProviderResponseError('ep-openai', 429, 'FreeUsageLimitError'),
+    );
+    expect(classification.keyAction).toBe('cooldown');
+    expect(classification.retryable).toBe(true);
   });
 });
