@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ApplicationEngine } from '../src/application/application-engine.js';
 import { WorkflowOrchestrator } from '../src/application/workflow-orchestrator.js';
 import { TaskOrchestrator } from '../src/application/task-orchestrator.js';
@@ -11,6 +13,8 @@ import { ApplicationVerifier } from '../src/application/application-verifier.js'
 import { AutonomousPlanner } from '../src/application/autonomous-planner.js';
 import type { WorkspaceConfig, AgyBuildTask, AgyBuildResult, AgyBuilderPort, WorkspaceVerificationResult, AgyHealthStatus } from '../src/domain/agy-builder.js';
 import { mkdir, writeFile } from 'node:fs/promises';
+
+const TEST_REPO_ROOT = join(tmpdir(), 'anx-test-repo');
 
 class MockAgyAdapter implements AgyBuilderPort {
   async detect(): Promise<boolean> { return true; }
@@ -86,10 +90,10 @@ describe('Phase 11: AGY Builder Integration Unit Tests', () => {
     executor = new SubprocessAgentExecutor();
     taskOrchestrator = new TaskOrchestrator(routing, taskStore, executor, events);
     workflowOrchestrator = new WorkflowOrchestrator(taskOrchestrator);
-    agyAdapter = new AgyBuilderAdapter('http://127.0.0.1:8787', 'E:/CodingGhost');
+    agyAdapter = new AgyBuilderAdapter('http://127.0.0.1:8787', TEST_REPO_ROOT);
     mockAgy = new MockAgyAdapter();
     appEngine = new ApplicationEngine(workflowOrchestrator, mockAgy, events, routing, {
-      nexusRepoRoot: 'E:/CodingGhost',
+      nexusRepoRoot: TEST_REPO_ROOT,
     });
   });
 
@@ -102,11 +106,11 @@ describe('Phase 11: AGY Builder Integration Unit Tests', () => {
   });
 
   it('ApplicationVerifier checks workspace isolation and structure', async () => {
-    const verifier = new ApplicationVerifier('E:/CodingGhost');
+    const verifier = new ApplicationVerifier(TEST_REPO_ROOT);
     const res = await verifier.verify({
       applicationId: 'test-app',
       workspaceId: 'ws-test',
-      workspacePath: 'E:/CodingGhost/.nexus/applications/test-app',
+      workspacePath: join(TEST_REPO_ROOT, '.nexus', 'applications', 'test-app'),
     });
     expect(res.pathTraversalClean).toBe(false); // Should block nested path inside nexus repo
     expect(res.issues.length).toBeGreaterThan(0);
