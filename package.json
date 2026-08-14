@@ -1,6 +1,6 @@
 {
   "name": "agent-nexus-gateway",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Universal AI Coding-Agent Gateway & Autonomous Control Plane — dynamic multi-provider routing, protocol translation, token optimization, and self-healing agent mesh.",
   "license": "Apache-2.0",

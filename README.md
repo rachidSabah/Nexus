@@ -8,7 +8,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-9.12-orange)](https://pnpm.io)
-[![Version](https://img.shields.io/badge/version-0.4.0-blueviolet)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.1-blueviolet)](CHANGELOG.md)
 
 *Nexus is not an AI model. Nexus is the infrastructure layer between your coding agents and every model provider.*
 
