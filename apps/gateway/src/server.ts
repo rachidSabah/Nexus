@@ -2239,7 +2239,7 @@ export class HttpServer {
         } catch (err) {
           if (!reply.raw.headersSent) {
             const errMsg = (err as Error).message ?? '';
-            if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429')) {
+            if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
               this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
             }
             const http = this.httpErrorFor(err as Error);
@@ -2258,7 +2258,7 @@ export class HttpServer {
         return response;
       } catch (err) {
         const errMsg = (err as Error).message ?? '';
-        if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429')) {
+        if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
           this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
         }
         this.reportUpstreamModelError(effectiveBody.model, err as Error);

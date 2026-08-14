@@ -300,13 +300,14 @@ export class KeyRegistry {
     k.lastFailureAt = Date.now();
     k.lastFailureReason = String(status);
 
-    if (status === 429) {
+    const sNum = typeof status === 'number' ? status : parseInt(status, 10);
+    if (sNum === 429 || status === '429') {
       k.rateLimitedCount++;
       k.status = 'cooldown';
       k.cooldownUntil = Date.now() + this.cooldownMs;
       return;
     }
-    if (status === 401 || status === 403) {
+    if (sNum === 401 || sNum === 403 || sNum === 402 || status === '401' || status === '403' || status === '402' || status === 'AUTH_ERROR') {
       k.status = 'invalid';
       return;
     }

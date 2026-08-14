@@ -195,7 +195,17 @@ export class RoutingEngine implements RoutingEnginePort {
     candidates: ProviderEndpoint[],
     request: RoutingRequest,
   ): ProviderEndpoint[] {
-    const copy = [...candidates];
+    let copy = [...candidates];
+
+    // Priority sort: preferred providers are always placed first for initial attempt
+    if (request.preferredProviders && request.preferredProviders.length > 0) {
+      const prefSet = new Set(request.preferredProviders);
+      copy.sort((a, b) => {
+        const aPref = prefSet.has(a.providerId) ? 1 : 0;
+        const bPref = prefSet.has(b.providerId) ? 1 : 0;
+        return bPref - aPref;
+      });
+    }
     switch (strategy) {
       case 'round_robin':
         return copy.sort((a, b) => {

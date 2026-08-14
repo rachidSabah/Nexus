@@ -376,7 +376,7 @@ export class GatewayRuntime {
       minimax: process.env.GATEWAY_MODEL_MINIMAX,
       zhipu: process.env.GATEWAY_MODEL_ZHIPU,
       moonshot: process.env.GATEWAY_MODEL_MOONSHOT,
-    });
+    }, keyRegistry);
 
     // Discover every provider's model catalog at boot (the hourly interval
     // alone leaves the catalog empty for up to an hour after start), so agent

@@ -691,7 +691,7 @@ export function classifyFailure(error: Error): FailureClassification {
         retryable: false,
         keyAction: 'none',
         endpointAction: 'mark_unavailable',
-        reason: `HTTP 404: model not found on this provider — endpoint marked unavailable`,
+        reason: `HTTP ${status}: model not found on this provider — endpoint marked unavailable`,
       };
     }
     // 408 Request Timeout — retryable, key is fine.
@@ -767,6 +767,16 @@ export function classifyFailure(error: Error): FailureClassification {
       keyAction: 'none',
       endpointAction: 'mark_degraded',
       reason: `Network error ${code} — failing over to next endpoint`,
+    };
+  }
+
+  if (error.message.includes('Missing API key') || error.message.includes('requires more credits')) {
+    return {
+      status: 401, code: 'AUTH_ERROR',
+      retryable: true,
+      keyAction: 'invalidate',
+      endpointAction: 'record_failure',
+      reason: `Auth/Quota error: ${error.message} — failing over to next endpoint`,
     };
   }
 

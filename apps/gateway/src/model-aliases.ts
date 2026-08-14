@@ -39,7 +39,7 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
-import type { ModelDescriptor, ModelRegistry, ProviderEndpoint, RoutingEnginePort } from '@anx/core';
+import type { ModelDescriptor, ModelRegistry, ProviderEndpoint, RoutingEnginePort, KeyRegistry } from '@anx/core';
 import { isSelectable } from '@anx/core';
 import { resolveClaudeGwAlias } from './claude-catalog.js';
 import { resolveOpenAIModelId, isVirtualModelId } from './model-fabric.js';
@@ -163,13 +163,15 @@ export class ModelAliasRegistry {
   private readonly modelRegistry: ModelRegistry;
   private readonly routing?: RoutingEnginePort;
   private readonly familyDefaults: FamilyDefaults;
+  private readonly keyRegistry?: KeyRegistry;
 
   private readonly modelCooldowns = new Map<string, number>();
 
-  constructor(modelRegistry: ModelRegistry, routing?: RoutingEnginePort, familyDefaults: FamilyDefaults = {}) {
+  constructor(modelRegistry: ModelRegistry, routing?: RoutingEnginePort, familyDefaults: FamilyDefaults = {}, keyRegistry?: KeyRegistry) {
     this.modelRegistry = modelRegistry;
     this.routing = routing;
     this.familyDefaults = familyDefaults;
+    this.keyRegistry = keyRegistry;
     this.registerBuiltins();
   }
 
@@ -283,9 +285,9 @@ export class ModelAliasRegistry {
       },
       {
         alias: 'nexus/best-coding',
-        description: 'Best healthy coding model (tool calling, free preferred)',
+        description: 'Best healthy coding model (tool calling)',
         filter: { capability: 'toolCalling' },
-        ranking: 'cheapest',
+        ranking: 'highest_quality',
         builtin: true,
       },
       {
@@ -378,8 +380,18 @@ export class ModelAliasRegistry {
       if (cooldownUntil && now < cooldownUntil) return false;
       const ep = registeredEndpoints.find((e: ProviderEndpoint) => e.providerId === m.providerId || e.id === `auto-${m.providerId}`);
       if (ep && (ep.health === 'unhealthy' || ep.health === 'circuit_open')) return false;
+      if (this.keyRegistry && !this.keyRegistry.select(m.providerId)) return false;
       return true;
     });
+
+    // If we have candidates from fully healthy endpoints, prefer them over degraded ones.
+    const healthyCandidates = candidates.filter((m) => {
+      const ep = registeredEndpoints.find((e: ProviderEndpoint) => e.providerId === m.providerId || e.id === `auto-${m.providerId}`);
+      return ep && ep.health === 'healthy';
+    });
+    if (healthyCandidates.length > 0) {
+      candidates = healthyCandidates;
+    }
 
     // Fallback: if no models have been discovered yet (e.g. cold start,
     // Ollama not running, discovery still in flight), derive candidates
@@ -475,6 +487,21 @@ export class ModelAliasRegistry {
         ? { model: resolution.modelId, resolution }
         : { model };
     }
+
+    // Direct discovered model match — if a provider actually serves this exact model name, route directly!
+    const directModel = this.modelRegistry.list().find((m) => !m.stale && (m.id === model || m.id.toLowerCase() === model.toLowerCase()));
+    if (directModel) {
+      return {
+        model: directModel.id,
+        resolution: {
+          modelId: directModel.id,
+          providerId: directModel.providerId,
+          reason: `Direct model match '${directModel.id}' on provider '${directModel.providerId}'`,
+          candidateCount: 1,
+        },
+      };
+    }
+
     const family = matchFamily(model);
     if (family) return this.resolveClaudeFamily(model, family);
     return { model };
@@ -574,6 +601,7 @@ export class ModelAliasRegistry {
       if (m.stale) return false;
       const cooldownUntil = this.modelCooldowns.get(m.id);
       if (cooldownUntil && now < cooldownUntil) return false;
+      if (this.keyRegistry && !this.keyRegistry.select(m.providerId)) return false;
       return true;
     });
 
