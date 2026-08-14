@@ -42,34 +42,90 @@ export class HermesCliIntegration extends BaseIntegration {
 
   protected configFiles(ctx: IntegrationContext) {
     const endpoint = `${ctx.gatewayUrl}/v1`;
+    const targetModel = ctx.defaultModel || 'nexus/best-coding';
+    const isWindows = process.platform === 'win32';
+    const configRel = isWindows ? 'AppData/Local/hermes/config.yaml' : '.hermes/config.yaml';
+    const envRel = isWindows ? 'AppData/Local/hermes/.env' : '.hermes/.env';
+
     return [
       {
+        path: configRel,
+        merge: 'overwrite' as const,
+        content: () =>
+          [
+            `model:`,
+            `  base_url: ${endpoint}`,
+            `  default: ${targetModel}`,
+            `  provider: custom:nexus`,
+            `providers:`,
+            `  nexus:`,
+            `    name: nexus`,
+            `    base_url: ${endpoint}`,
+            `    api_key: ${ctx.apiKey ?? 'no-key-required'}`,
+            `    models:`,
+            `      ${targetModel}:`,
+            `        context_length: 128000`,
+            `        features:`,
+            `          - text`,
+            `          - tools`,
+            `      nexus/best-coding:`,
+            `        context_length: 128000`,
+            `        features:`,
+            `          - text`,
+            `          - tools`,
+            `      nexus/fast:`,
+            `        context_length: 128000`,
+            `        features:`,
+            `          - text`,
+            `          - tools`,
+            `      nexus/free:`,
+            `        context_length: 128000`,
+            `        features:`,
+            `          - text`,
+            `          - tools`,
+            ``,
+          ].join('\n'),
+      },
+      {
+        path: envRel,
+        merge: 'overwrite' as const,
+        content: () =>
+          [
+            `# Agent Nexus Gateway binding for Hermes`,
+            `OPENAI_BASE_URL=${endpoint}`,
+            `OPENAI_API_KEY=${ctx.apiKey ?? 'no-key-required'}`,
+            `HERMES_INFERENCE_MODEL=${targetModel}`,
+            ``,
+          ].join('\n'),
+      },
+      {
+        // Legacy/fallback JSON for multi-platform tooling
         path: '.hermes/config.json',
         merge: 'json-merge' as const,
         content: (_ctx: IntegrationContext) =>
           jsonString({
             default_provider: 'nexus',
-            default_model: ctx.defaultModel,
+            default_model: targetModel,
             providers: {
               nexus: {
                 type: 'openai',
                 base_url: endpoint,
                 api_key: ctx.apiKey ?? 'no-key-required',
-                models: [ctx.defaultModel],
+                models: [targetModel],
               },
             },
           }),
       },
       {
-        // Env file so Hermes/shells can activate the gateway binding.
+        // Env file so shells can activate the gateway binding
         path: '.hermes/nexus.env',
         merge: 'overwrite' as const,
-        content: (_ctx: IntegrationContext) =>
+        content: () =>
           [
             `# Agent Nexus Gateway binding for Hermes (managed by anx integrations)`,
             `export OPENAI_BASE_URL="${endpoint}"`,
             `export ANTHROPIC_BASE_URL="${endpoint}"`,
-            `export NEXUS_TARGET_MODEL="${ctx.defaultModel}"`,
+            `export NEXUS_TARGET_MODEL="${targetModel}"`,
             ``,
           ].join('\n'),
       },

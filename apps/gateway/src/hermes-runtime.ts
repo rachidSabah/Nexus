@@ -162,11 +162,26 @@ export class HermesRuntimeManager {
     };
   }
 
+  private candidateConfigPaths(): string[] {
+    const isWin = platform() === 'win32';
+    const paths: string[] = [];
+    if (isWin) {
+      const localApp = process.env['LOCALAPPDATA'] || join(this.home, 'AppData', 'Local');
+      paths.push(join(localApp, 'hermes', 'config.yaml'));
+      paths.push(join(localApp, 'hermes', '.env'));
+    }
+    paths.push(join(this.home, '.hermes', 'config.yaml'));
+    paths.push(join(this.home, '.hermes', '.env'));
+    paths.push(join(this.home, '.hermes', 'config.json'));
+    paths.push(join(this.home, '.config', 'hermes', 'config.yaml'));
+    return paths;
+  }
+
   /** Detection via PATH. Fast and non-destructive. */
   private async detect() {
     try {
-      const names = ['hermes', 'hermes-cli'];
-      for (const bin of names) {
+      const candidates = ['hermes', 'hermes-agent', 'hermes-cli'];
+      for (const bin of candidates) {
         const cmd = platform() === 'win32' ? `where ${bin} 2>nul` : `command -v ${bin} 2>/dev/null`;
         const { exec } = await import('node:child_process');
         const { promisify } = await import('node:util');
@@ -181,12 +196,13 @@ export class HermesRuntimeManager {
             } catch {
               version = undefined;
             }
+            const configLocation = this.candidateConfigPaths()[0] || join(this.home, ...HERMES_CONFIG_REL);
             return {
               id: 'hermes-cli',
               name: 'Hermes CLI',
               executable: path,
               version,
-              configLocation: join(this.home, ...HERMES_CONFIG_REL),
+              configLocation,
               detectedVia: 'path',
             };
           }
@@ -201,36 +217,50 @@ export class HermesRuntimeManager {
   }
 
   private async readConfig() {
-    const path = join(this.home, ...HERMES_CONFIG_REL);
-    try {
-      await access(path, constants.F_OK);
-      const raw = await readFile(path, 'utf8');
-      let parsed: any;
+    for (const path of this.candidateConfigPaths()) {
       try {
-        parsed = JSON.parse(raw);
+        await access(path, constants.F_OK);
+        const raw = await readFile(path, 'utf8');
+
+        // Check if YAML or ENV or JSON
+        const isNexusEnv = /OPENAI_BASE_URL=.*8787/i.test(raw) || /NEXUS_TARGET_MODEL/i.test(raw);
+        const isNexusYaml = /provider:\s*(?:custom:)?nexus/i.test(raw) || /base_url:\s*http:\/\/[^\s]+:8787/i.test(raw);
+
+        let parsed: any = {};
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          // Not JSON (likely YAML or .env)
+        }
+
+        const defaultModelMatch = raw.match(/default:\s*([^\s\r\n]+)/i) || raw.match(/HERMES_INFERENCE_MODEL=([^\s\r\n]+)/i);
+        const baseUrlMatch = raw.match(/base_url:\s*([^\s\r\n]+)/i) || raw.match(/OPENAI_BASE_URL=([^\s\r\n]+)/i);
+        const providerMatch = raw.match(/provider:\s*([^\s\r\n]+)/i);
+
+        const routesThroughNexus = isNexusEnv || isNexusYaml || parsed?.default_provider === 'nexus' || !!parsed?.providers?.['nexus'];
+
+        return {
+          path,
+          fileExists: true,
+          routesThroughNexus,
+          defaultProvider: providerMatch?.[1] ?? parsed?.default_provider ?? (routesThroughNexus ? 'custom:nexus' : undefined),
+          defaultModel: defaultModelMatch?.[1] ?? parsed?.default_model ?? parsed?.providers?.['nexus']?.models?.[0],
+          openaiBaseUrl: baseUrlMatch?.[1] ?? parsed?.providers?.['nexus']?.base_url ?? (routesThroughNexus ? `http://${this.deps.gatewayHost}:${this.deps.gatewayPort}/v1` : undefined),
+        };
       } catch {
-        parsed = {};
+        // try next candidate path
       }
-      const providers = parsed?.providers ?? {};
-      const nexusProvider = providers['nexus'];
-      return {
-        path,
-        fileExists: true,
-        routesThroughNexus: parsed?.default_provider === 'nexus' || !!nexusProvider,
-        defaultProvider: parsed?.default_provider,
-        defaultModel: parsed?.default_model ?? nexusProvider?.models?.[0],
-        openaiBaseUrl: nexusProvider?.base_url,
-      };
-    } catch {
-      return {
-        path,
-        fileExists: false,
-        routesThroughNexus: false,
-        defaultProvider: undefined,
-        defaultModel: undefined,
-        openaiBaseUrl: undefined,
-      };
     }
+
+    const fallbackPath = this.candidateConfigPaths()[0] || join(this.home, ...HERMES_CONFIG_REL);
+    return {
+      path: fallbackPath,
+      fileExists: false,
+      routesThroughNexus: false,
+      defaultProvider: undefined,
+      defaultModel: undefined,
+      openaiBaseUrl: undefined,
+    };
   }
 
   private isBound(report: { routesThroughNexus: boolean }): boolean {

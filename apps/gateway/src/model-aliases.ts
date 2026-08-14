@@ -548,7 +548,13 @@ export class ModelAliasRegistry {
   }
 
   private candidatesFor(filter: AliasFilter): ModelDescriptor[] {
-    let candidates = this.modelRegistry.list().filter((m) => !m.stale);
+    const now = Date.now();
+    let candidates = this.modelRegistry.list().filter((m) => {
+      if (m.stale) return false;
+      const cooldownUntil = this.modelCooldowns.get(m.id);
+      if (cooldownUntil && now < cooldownUntil) return false;
+      return true;
+    });
     if (candidates.length === 0 && this.routing) candidates = this.endpointCandidates();
     if (filter.capability) {
       candidates = candidates.filter((m) => m.capabilities?.[filter.capability!] === true);

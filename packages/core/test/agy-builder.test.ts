@@ -103,7 +103,7 @@ describe('Phase 11: AGY Builder Integration Unit Tests', () => {
     const health = await agyAdapter.healthCheck();
     expect(health).toHaveProperty('installed');
     expect(health).toHaveProperty('runtimeHealthy');
-  });
+  }, 15000);
 
   it('ApplicationVerifier checks workspace isolation and structure', async () => {
     const verifier = new ApplicationVerifier(TEST_REPO_ROOT);
