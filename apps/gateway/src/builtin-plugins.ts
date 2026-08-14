@@ -95,7 +95,7 @@ const perfPlugin = make(
     capabilities: ['performance', 'latency', 'metrics'],
   },
   {
-    onRequest(ctx, request: any) {
+    onRequest(_ctx, request: any) {
       if (request && typeof request === 'object') request.__nexusStart = Date.now();
       return Promise.resolve(request);
     },
@@ -134,7 +134,7 @@ const errorNormalizerPlugin = make(
       }
       return Promise.resolve();
     },
-    onResponse(ctx, response: any) {
+    onResponse(_ctx, response: any) {
       if (response && typeof response === 'object' && (response as any).__nexusFailover) {
         const headers = (response as any).headers ?? {};
         headers['X-Failover'] = 'true';
