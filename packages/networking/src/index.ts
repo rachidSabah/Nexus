@@ -1,6 +1,6 @@
+import { lookup as dnsLookup, setDefaultResultOrder } from 'node:dns/promises';
 import { createConnection, Socket } from 'node:net';
 import { URL } from 'node:url';
-import { lookup as dnsLookup, setDefaultResultOrder } from 'node:dns/promises';
 
 import type {
   EgressMode,
@@ -520,7 +520,7 @@ export class NetworkEgressFabric {
     if (this.isChecking) return { discovered: this.endpoints.size, verifiedHealthy: this.listHealthy().length };
     this.isChecking = true;
 
-    let newlyDiscovered = 0;
+    let _newlyDiscovered = 0;
     try {
       // Public proxy discovery is OFF unless explicitly enabled. By default we
       // do NOT scrape public proxy lists — Nexus runs in DIRECT mode. Only
@@ -532,7 +532,7 @@ export class NetworkEgressFabric {
             const candidates = await p.discover();
             for (const c of candidates) {
               const added = this.addProxy(c.url, c.source);
-              if (added) newlyDiscovered++;
+              if (added) _newlyDiscovered++;
             }
           } catch {
             // Ignore individual provider failure
