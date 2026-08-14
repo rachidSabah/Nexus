@@ -1,68 +1,138 @@
-# Nexus Architecture
+﻿# Nexus Architecture & System Design
 
-Nexus is a **local-first Universal AI Coding-Agent Gateway**. It is the control
-plane that sits between your coding agents and the model providers. It does not
-itself write code — building agents (Hermes, OpenCode) run *through* it.
+Nexus is a **local-first Universal AI Coding-Agent Gateway and Autonomous Control Plane**. It serves as the intelligent infrastructure layer between developer coding agents (Claude Code, Codex, OpenCode, Gemini CLI, Cursor, AGY) and multi-provider model APIs (OpenAI, Anthropic, DeepSeek, Google, Groq, Mistral, xAI, OpenRouter, Cerebras, Together, Fireworks, NVIDIA NIM).
 
-## Data flow
+---
 
+## 1. High-Level Data Flow
+
+```mermaid
+flowchart TD
+    DEV["Developer / Coding Agent"]
+    
+    DEV -->|"OpenAI /v1/chat/completions or Anthropic /v1/messages"| GATEWAY["Nexus Gateway (Port 8787)"]
+    
+    subgraph NEXUS["Nexus Control Plane (Hexagonal Architecture)"]
+        direction TB
+        
+        subgraph INGRESS["Inbound Adapters"]
+            OA_ADAPTER["OpenAI Protocol Adapter"]
+            ANT_ADAPTER["Anthropic Messages Adapter"]
+            RESP_ADAPTER["Responses Protocol Adapter"]
+            WS_ADAPTER["WebSocket / Live Stream Adapter"]
+        end
+        
+        subgraph CORE["Domain Core & Routing Engine"]
+            INTENT["Intent & Capability Classifier"]
+            OPT["Token Efficiency Engine (Compressor + Schema Normalizer)"]
+            ROUTER["Routing Engine (O(1) Indexed IndexManager)"]
+            SCORER["Scorer (Latency, Health, Cooldown, Success Rate)"]
+            KEY_REG["Key Registry (Rotation, 429 Cooldown, Circuit Breakers)"]
+            APP_ENG["Application Engine & Autonomous Planner"]
+            WORKFLOW["DAG Workflow & Task Orchestrator"]
+        end
+        
+        subgraph EGRESS["Outbound Ports & Provider Adapters"]
+            HTTP_CLIENT["Resilient Undici HTTP / Proxy Transport"]
+            VAULT["Encrypted Credential Vault (~/.agent-nexus/vault.json)"]
+            MCP_PORT["MCP Client / Server Bridge"]
+            OBS_PORT["Telemetry & Event Bus Registry"]
+            AGY_PORT["AGY Builder Execution Port"]
+        end
+    end
+    
+    GATEWAY --> INGRESS
+    INGRESS --> CORE
+    CORE --> EGRESS
+    
+    EGRESS -->|"Discovered Model REST/SSE"| PROVIDERS["AI Model Providers (OpenAI, Anthropic, DeepSeek, Groq, Google, etc.)"]
+    EGRESS -->|"Isolated Subprocesses"| AGY["AGY Autonomous Builder"]
 ```
- User
-  │
-  ▼
- Coding Agent  (Claude Code, Codex, OpenCode, Hermes, Gemini CLI, …)
-  │  OpenAI-compatible /v1/chat/completions  OR  Anthropic /v1/messages
-  ▼
- Nexus Gateway  ─────────────────────────────────────────────────────
-  │  ├─ Protocol Adapter (OpenAI ⇄ Anthropic translation)
-  │  ├─ Intent Detection (coding? reasoning? vision? long-context?)
-  │  ├─ Prompt Compressor + Tool-Schema Normalizer   (token optimization)
-  │  ├─ ContextWindowManager (budget check before routing)
-  │  ├─ Routing Engine + RoutingIndexManager (O(1) candidate filtering)
-  │  ├─ Scoring Engine (static quality + dynamic health/latency)
-  │  ├─ Key Registry (rotation, cooldown, circuit breaker)
-  │  ├─ Provider / Model failover
-  │  └─ Streaming SSE pass-through (minimal transformation)
-  ▼
- Model Fabric (normalized, dynamically discovered models)
-  ▼
- Provider Fabric (Provider A / B / C …)
-  ▼
- LLM Models
-```
 
-## Subsystems
+---
+
+## 2. Hexagonal Architecture (Ports & Adapters)
+
+Nexus is organized following pure Clean / Hexagonal Architecture patterns:
+
+### Core Domain (Inner Layer)
+- **`packages/core`**: Pure domain logic, domain types, entities, policies, and port interfaces. Zero dependency on Fastify, HTTP servers, or external SDKs.
+  - `ModelRegistry`: Aggregates dynamic models, tracks catalog versions, emits delta events.
+  - `RoutingEngine`: Implements cost/latency/quality routing algorithms (`FREE`, `CHEAP`, `FAST`, `BEST`, `BEST-CODING`, `REASONING`, `VISION`, `LONG_CONTEXT`).
+  - `KeyRegistry`: Multi-key rotation, 429 exponential cooldown, 401 disablement, circuit breakers.
+  - `ApplicationEngine`: Autonomous software planning, scaffolding, verification, and repair cycle.
+  - `AutonomousPlanner` & `RiskEngine`: Analyzes intent and enforces user approval for high-risk operations.
+
+### Inbound Adapters (Driving Ports)
+- **`apps/gateway`**: Fastify REST & WebSocket HTTP server exposing standard endpoints (`/v1/chat/completions`, `/v1/messages`, `/v1/models`, `/v1/catalog`, `/v1/applications`, `/v1/doctor`).
+- **`packages/cli`**: CLI binary (`anx-gateway`) providing diagnostic and management subcommands.
+
+### Outbound Adapters (Driven Ports)
+- **`packages/providers`**: Direct REST/SSE transport implementations for all AI providers.
+- **`packages/security`**: AES-256-GCM encrypted local vault, PBKDF2 key derivation, token hashing.
+- **`packages/token-efficiency`**: Token counter, prompt compressor, context cache tagger, tool-schema normalizer.
+- **`packages/networking`**: Proxy transport (HTTP/HTTPS/SOCKS5), DNS resolution, egress diagnostics.
+- **`packages/observability`**: Telemetry ring buffers, latency percentile calculators (p50/p95/p99), event bus.
+- **`packages/mcp-server` & `packages/mcp-client`**: Model Context Protocol client/server integration.
+
+---
+
+## 3. Subsystem Breakdown
 
 | Subsystem | Responsibility |
 |---|---|
-| **Protocol Adapter** | Translates between OpenAI chat-completions and Anthropic Messages APIs. |
-| **Model Fabric** | Normalizes every discovered model (id, context window, pricing, capabilities, free/paid). |
-| **ModelRegistry** | Aggregates discovered models, classifies free models, background + runtime refresh. Increments `catalogVersion` on every mutation. |
-| **RoutingIndexManager** | Indexes models by capability/policy for O(1) candidate filtering. |
-| **ScoringEngine** | Separates static quality scores from dynamic health/latency/cooldown. |
-| **KeyRegistry** | Per-provider key rotation, 429/5xx cooldown, 401 disable, circuit breaker. |
-| **Provider Failover** | Model → key → provider → alternative-model escalation. |
-| **Catalog Sync** | `catalogVersion` + ETag/304 + `/v1/catalog/delta` so the dashboard fetches only changes. |
-| **Token Optimization** | `PromptCompressor`, tool-schema normalization, context hashing, measured savings via `/v1/debug/tokens`. |
-| **AgentRuntimeManager** | Detects, configures, and verifies coding agents (detected/configured/runnable/liveVerified). |
-| **Observability** | Event bus → OpenTelemetry bridge; sanitized request traces. |
+| **Protocol Adapter** | Bidirectional translation between OpenAI format and Anthropic Messages format. |
+| **Universal Model Fabric** | Normalizes discovered models across context size, pricing, speed, capability tags, and modality. |
+| **Model Registry** | Dynamic background and on-demand model discovery. Increments `catalogVersion` and publishes delta changes (ETag/304). |
+| **Routing Engine** | O(1) indexed candidate lookup matching requests against configured routing policies and model capabilities. |
+| **Key Registry** | Per-provider multi-key rotation, rate limit isolation, and automatic failover escalation. |
+| **Token Efficiency Engine** | Exact-duplicate deduplication, tool schema normalization, and context compaction reporting measured savings. |
+| **Autonomous Application Engine** | Manages application build lifecycle: Discover → Specify → Architect → Plan → Approval → Scaffold → Build → Test → Verify → Repair → Finalize. |
+| **AGY Builder Port** | Controlled execution port for AGY subprocess actions in isolated workspaces. |
+| **Mission Control Dashboard** | Next.js 15 / React 19 operational UI for real-time traffic, provider configuration, model catalog, and metrics. |
 
-## Cross-cutting concerns
+---
 
-- **Catalog Synchronization** — adding a provider key triggers discovery →
-  registration → `catalogVersion++` → delta event, with no gateway restart and
-  no hardcoded catalog.
-- **Token Optimization** — runs in the gateway; reports `originalInputTokens`,
-  `optimizedInputTokens`, `savedTokens`, `savingsPercent` from real measurements.
-- **Health Monitoring** — per-provider endpoint health, per-key health, model
-  availability; unhealthy candidates are excluded from routing.
-- **Observability** — domain events (`route.resolved`, `failover.triggered`,
-  `provider.request.failed`, `model.updated`, …) feed metrics and the dashboard.
+## 4. AGY Application Builder Architecture
 
-## Security boundaries
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Developer
+    participant Nexus as Nexus Control Plane
+    participant AppEng as Application Engine
+    participant Model as Discovered Model Fabric
+    participant AGY as AGY Builder Agent
+    participant Target as Generated Application
 
-- Provider API keys are encrypted at rest in `~/.agent-nexus/vault.json`.
-- Keys are never forwarded across providers.
-- Logs and traces never contain raw credentials or full sensitive prompts.
-- Context caches are scoped by session/agent/project; they are never reused
-  across security boundaries.
+    Dev->>Nexus: POST /v1/applications { objective }
+    Nexus->>AppEng: createApplication()
+    AppEng->>AppEng: Plan & Risk Analysis
+    opt High Risk Detected
+        AppEng-->>Dev: Stage: APPROVAL required
+        Dev->>Nexus: POST /v1/applications/:id/approve
+    end
+    AppEng->>AGY: Execute Scaffold Task
+    AGY->>Target: Initialize Workspace & Config
+    AppEng->>AGY: Execute Implement Task
+    AGY->>Nexus: Route Prompts via nexus/best-coding
+    Nexus->>Model: Forward Request
+    Model-->>Nexus: Stream Response
+    Nexus-->>AGY: Optimized Code
+    AGY->>Target: Write Source Files
+    AppEng->>AGY: Execute Test & Verification
+    AGY->>Target: Run Unit Tests & Lint
+    AGY-->>AppEng: Test & Artifact Verification Results
+    alt Tests Failed
+        AppEng->>AGY: Bounded Repair Loop (Test -> Inspect -> Fix)
+    end
+    AppEng-->>Dev: Stage: COMPLETED (Artifacts Verified)
+```
+
+---
+
+## 5. Security & Isolation Boundaries
+
+- **Credential Vault**: Keys are encrypted at rest in `~/.agent-nexus/vault.json` using AES-256-GCM. Keys are never logged or echoed back.
+- **Workspace Isolation**: AGY execution tasks operate within sandbox paths with explicit forbidden path guards preventing modification of the Nexus repository or system roots.
+- **Security Fabric**: Strips authentication headers from outgoing responses and applies `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`.

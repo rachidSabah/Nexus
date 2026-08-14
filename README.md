@@ -2,10 +2,10 @@
 
 # Nexus
 
-**Universal AI Coding-Agent Gateway &amp; Autonomous Control Plane**
+**Universal AI Coding-Agent Gateway & Autonomous Control Plane**
 
 [![CI](https://github.com/rachidSabah/codingghosts/actions/workflows/ci.yml/badge.svg)](https://github.com/rachidSabah/codingghosts/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-9.12-orange)](https://pnpm.io)
 [![Version](https://img.shields.io/badge/version-0.4.0-blueviolet)](CHANGELOG.md)
@@ -18,16 +18,16 @@
 
 ## What is Nexus?
 
-Nexus is a **universal AI coding-agent gateway and autonomous control plane** that dynamically discovers models across providers and exposes them through one OpenAI-compatible and agent-compatible local endpoint.
+Nexus is a **universal AI coding-agent gateway and autonomous control plane** that dynamically discovers models across providers and exposes them through one OpenAI-compatible and Anthropic-compatible local endpoint (`http://127.0.0.1:8787`).
 
 You point **one URL** at Nexus. Nexus handles everything else:
 
-- Discovers every model from every provider you configure — automatically, with no hardcoded catalog.
-- Routes each request to the best available, healthy, cost-appropriate model.
-- Rotates API keys, cools down on 429s, and fails over across models, keys, and providers.
-- Projects each provider's catalog into the protocol your coding agent expects.
-- Reports token savings from prompt compression and tool-schema normalization.
-- Surfaces every discovered model to every compatible agent through a single gateway.
+- **Dynamic Model Discovery:** Discovers every model from every provider you configure — automatically, with zero hardcoded catalogs.
+- **Intelligent Routing:** Routes each request to the best available, healthy, cost-appropriate model using policies like `nexus/best-coding`, `nexus/free`, `nexus/fast`, and `nexus/reasoning`.
+- **Multi-Key Rotation & Cooldown:** Rotates API keys, isolates 429 rate limits, and automatically fails over across models, keys, and providers.
+- **Protocol Translation:** Transparently projects OpenAI `/v1/chat/completions` and Anthropic `/v1/messages` requests to any upstream provider with streaming SSE support.
+- **Token Optimization:** Prompt compression and tool-schema normalization run directly in the gateway with real-time measured token savings.
+- **AGY Application Builder:** Autonomous software building lifecycle (plan, scaffold, build, test, verify, repair) orchestrated through the Nexus control plane.
 
 **Nexus is the control plane — not another coding agent.**
 
@@ -37,26 +37,26 @@ You point **one URL** at Nexus. Nexus handles everything else:
 
 ```mermaid
 flowchart TD
-    DEV["Developer"]
+    DEV["Developer / Coding Agent"]
 
-    DEV --> AGENT["Coding Agents\nClaude Code · Codex · Gemini CLI\nOpenCode · Kimi · Qwen · AGY · Hermes"]
+    DEV -->|"OpenAI /v1 or Anthropic /v1\nhttp://127.0.0.1:8787"| NEXUS
 
-    AGENT -->|"OpenAI /v1 or Anthropic /v1\nhttp://127.0.0.1:8787"| NEXUS
-
-    subgraph NEXUS["Nexus Gateway  —  http://127.0.0.1:8787"]
-        PROTO["Protocol Adapter\nOpenAI to Anthropic translation"]
-        OPT["Token Optimizer\nprompt compressor and tool-schema normalizer"]
+    subgraph NEXUS["Nexus Gateway & Control Plane — http://127.0.0.1:8787"]
+        PROTO["Protocol Adapter\nOpenAI ↔ Anthropic translation"]
+        OPT["Token Optimizer\nprompt compressor & tool-schema normalizer"]
         ROUTER["Routing Engine\nFREE · CHEAP · FAST · BEST · BEST-CODING\nvision · reasoning · long-context · tool-calling"]
         KEYS["Key Registry\nrotation · cooldown · circuit breaker"]
         CATALOG["Model Catalog\ndynamic discovery · ETag delta sync"]
-        VAULT["Credential Vault\nencrypted at rest"]
-        OBS["Observability\nmetrics · audit trail · routing history"]
+        VAULT["Credential Vault\nAES-256-GCM encrypted at rest"]
+        OBS["Observability\nmetrics · latency p50/p95/p99 · audit trail"]
+        APP_ENG["Autonomous Application Engine\nPlanner · Risk Engine · Workflow DAG"]
 
         PROTO --> OPT --> ROUTER
         ROUTER --> KEYS
         KEYS --> CATALOG
         CATALOG --> VAULT
         ROUTER --> OBS
+        APP_ENG --> ROUTER
     end
 
     CATALOG -->|"live REST calls"| PROVIDERS
@@ -66,18 +66,21 @@ flowchart TD
         ANT["Anthropic"]
         DSK["DeepSeek"]
         ORT["OpenRouter"]
-        GGL["Google AI"]
+        GGL["Google AI / Gemini"]
         GRQ["Groq"]
         MST["Mistral"]
         XAI["xAI / Grok"]
         TGT["Together AI"]
-        FRW["Fireworks"]
+        FRW["Fireworks AI"]
         CBR["Cerebras"]
-        NVD["NVIDIA"]
-        MORE["and more"]
+        NVD["NVIDIA NIM"]
+        CUSTOM["Generic OpenAI-compatible"]
     end
 
-    DEV --> DASHBOARD["Dashboard\nhttp://127.0.0.1:3000\nproviders · models · routing\nagents · metrics · audit trail"]
+    APP_ENG -->|"Subprocess Execution"| AGY["AGY Building Agent"]
+    AGY -->|"Routes code generation"| NEXUS
+
+    DEV --> DASHBOARD["Mission Control Dashboard\nhttp://127.0.0.1:3000\nproviders · models · routing · agents · metrics · audit"]
     DASHBOARD --> NEXUS
 ```
 
@@ -85,7 +88,7 @@ flowchart TD
 
 ## Why Nexus?
 
-| Problem | Nexus solution |
+| Problem | Nexus Solution |
 |---|---|
 | Rate limits hit on one provider | Fans load across every configured key and provider automatically |
 | Paying for GPT-4 on routine tasks | `nexus/free` and `nexus/cheap` route to the best free/cheap model |
@@ -94,44 +97,11 @@ flowchart TD
 | New models released constantly | Dynamic discovery — no restarts, no config file edits |
 | Tool-calling schemas differ by provider | Gateway normalizes schemas before routing |
 | Context window wasted on boilerplate | Prompt compressor runs before routing; reports measured savings |
+| Multi-step application construction | Autonomous Application Engine coordinates planning, AGY scaffolding, and testing |
 
 ---
 
-## Feature matrix
-
-| Feature | Status |
-|---|---|
-| Dynamic model discovery (zero hardcoded catalog) | ✅ |
-| Multi-provider simultaneous | ✅ |
-| Multi-key rotation per provider | ✅ |
-| Automatic failover: model → key → provider → alt-model | ✅ |
-| Routing policies: FREE / CHEAP / FAST / BEST / BEST-CODING | ✅ |
-| Capability routing: vision · reasoning · long-context · tool-calling | ✅ |
-| OpenAI-compatible `/v1/chat/completions` (streaming + non-streaming) | ✅ |
-| Anthropic `/v1/messages` (streaming + non-streaming) | ✅ |
-| Responses API (`/v1/responses`) | ✅ |
-| Claude Code — live-verified | ✅ |
-| Codex CLI — live-verified | ✅ |
-| OpenCode — detected | ✅ |
-| Gemini CLI — detected | ✅ |
-| AGY / Hermes — native building-agent integration | ✅ |
-| Token optimization (prompt compressor + tool-schema normalizer) | ✅ |
-| Catalog delta sync (ETag / 304) | ✅ |
-| Encrypted credential vault | ✅ |
-| Mission Control dashboard (25+ pages) | ✅ |
-| MCP server + client | ✅ |
-| Agent-to-Agent (A2A) coordination | ✅ |
-| Workflow DAG engine | ✅ |
-| Autonomous Application Engine | ✅ |
-| Observability (metrics · latency · audit trail) | ✅ |
-| Windows (PowerShell one-liner) | ✅ |
-| WSL / Linux / macOS (curl one-liner) | ✅ |
-| Docker | ✅ |
-| CI: secret scan + lint + typecheck + test + build | ✅ |
-
----
-
-## Quick start
+## Quick Start
 
 ### Windows (PowerShell)
 
@@ -145,9 +115,9 @@ irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/inst
 curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.sh | bash
 ```
 
-Both installers verify Node.js >= 20, clone the repo, build it, create `~/.agent-nexus`, generate an encrypted vault key, start the gateway, and print the dashboard URL.
+Both installers verify Node.js >= 20, clone the repo, install pnpm if missing, build from source, initialize `~/.agent-nexus`, generate an encrypted vault key, start the gateway, and print the dashboard URL.
 
-### From source
+### From Source
 
 ```bash
 # Prerequisites: Node.js >= 20, pnpm >= 9
@@ -173,129 +143,130 @@ Gateway: `http://127.0.0.1:8787` · Dashboard: `http://127.0.0.1:3000`
 
 ---
 
-## First run
+## First-Run Experience
 
-1. **Open the dashboard** at `http://127.0.0.1:3000`.
-2. **Add a provider** → enter your API key. It is stored encrypted in `~/.agent-nexus/vault.json` — never logged or forwarded.
-3. **Model discovery runs immediately** — no restart, no manual catalog edit. Every model the provider exposes appears in the Discovered Models table.
-4. **Configure your coding agent** to point at Nexus:
-
-### Agent configuration
-
-| Agent | Config location | Setting |
-|---|---|---|
-| **Claude Code** | `~/.claude/settings.json` | `"apiBaseUrl": "http://127.0.0.1:8787"` |
-| **Codex CLI** | `~/.codex/config.json` | `"baseUrl": "http://127.0.0.1:8787/v1"` |
-| **Gemini CLI** | `~/.gemini/settings.json` | `"baseUrl": "http://127.0.0.1:8787/v1"` |
-| **OpenCode** | `~/.opencode.json` | `"url": "http://127.0.0.1:8787/v1"` |
-| **Cursor / Windsurf / Cline** | Settings → Base URL | `http://127.0.0.1:8787/v1` |
-| **Any OpenAI-compatible agent** | Base URL setting | `http://127.0.0.1:8787/v1` |
-
-> Or use the dashboard **Integrations** page to auto-configure any detected agent with one click.
-
-5. **Select a routing policy** — e.g. `nexus/best-coding` — and start coding.
-
-### Routing policy aliases
-
-| Policy alias | Picks |
-|---|---|
-| `nexus/free` | Best healthy free-tier model across all providers |
-| `nexus/cheap` | Lowest-cost model that meets the request requirements |
-| `nexus/fast` | Lowest-latency healthy model |
-| `nexus/best` | Highest-quality model available |
-| `nexus/best-coding` | Highest-quality coding-optimised model |
-| `nexus/reasoning` | Best reasoning / chain-of-thought model |
-| `nexus/vision` | Best vision-capable model |
-| `nexus/long-context` | Best model for very long context windows |
+1. **Open the Dashboard:** Navigate to `http://127.0.0.1:3000`.
+2. **Add a Provider:** Enter your API key (stored encrypted in `~/.agent-nexus/vault.json`).
+3. **Model Discovery:** Nexus immediately contacts the provider, discovers all accessible models, classifies their capabilities, and registers them in the dynamic catalog.
+4. **Point Your Coding Agent:** Configure your favorite coding agent to use `http://127.0.0.1:8787/v1` as its base URL.
+5. **Start Coding:** Use high-level aliases such as `nexus/best-coding` or direct model IDs.
 
 ---
 
-## CLI reference
+## Connecting Coding Agents
 
-The `anx-gateway` binary exposes diagnostic subcommands:
+Nexus provides drop-in compatibility for all major coding agents:
 
+| Agent | Config File | Setting | Protocol |
+|---|---|---|---|
+| **Claude Code** | `~/.claude/settings.json` | `"apiBaseUrl": "http://127.0.0.1:8787"` | Anthropic `/v1/messages` |
+| **Codex CLI** | `~/.codex/config.json` | `"baseUrl": "http://127.0.0.1:8787/v1"` | OpenAI `/v1/chat/completions` |
+| **Gemini CLI** | `~/.gemini/settings.json` | `"baseUrl": "http://127.0.0.1:8787/v1"` | OpenAI-compatible |
+| **OpenCode** | `~/.opencode.json` | `"url": "http://127.0.0.1:8787/v1"` | OpenAI-compatible |
+| **Qwen Code / Kimi Code** | Agent config / env | `OPENAI_BASE_URL=http://127.0.0.1:8787/v1` | OpenAI-compatible |
+| **Aider** | Command-line | `--openai-api-base http://127.0.0.1:8787/v1` | OpenAI-compatible |
+| **Cursor / Windsurf** | Settings → Models | Override Base URL: `http://127.0.0.1:8787/v1` | OpenAI-compatible |
+| **Cline / Roo Code** | Extension Settings | API Provider: OpenAI-compatible, URL: `http://127.0.0.1:8787/v1` | OpenAI-compatible |
+| **AGY** | Native Port | Auto-bound via `AgyBuilderAdapter` | Control Plane Native |
+
+> **Tip:** You can also auto-configure detected agents with one command:  
+> `node apps/gateway/dist/bin.js integrations install --all`
+
+---
+
+## Routing Policy Aliases
+
+Instead of hardcoding a specific provider model, point your agent at Nexus policy aliases:
+
+| Policy Alias | Selection Strategy |
+|---|---|
+| `nexus/best-coding` | Highest-ranked coding-optimized model available |
+| `nexus/free` | Best healthy free-tier model across all connected providers |
+| `nexus/cheap` | Lowest-cost healthy model meeting token & capability requirements |
+| `nexus/fast` | Lowest-latency healthy model |
+| `nexus/best` | Highest general quality model |
+| `nexus/reasoning` | Best reasoning / chain-of-thought model |
+| `nexus/vision` | Best vision-capable model |
+| `nexus/long-context` | Best model for large context windows (>128k tokens) |
+
+---
+
+## AGY Application Builder
+
+Nexus includes an **Autonomous Application Builder** that executes end-to-end software construction in isolated workspaces:
+
+```
+USER ──► NEXUS ──► APPLICATION ENGINE ──► PLANNER ──► RISK ENGINE ──► WORKFLOW ──► AGY ──► NEXUS ROUTING ──► MODELS
+```
+
+- **AGY is the Building Agent:** Responsible for project scaffolding, code implementation, test execution, inspection, and repair.
+- **Nexus is the Control Plane:** Responsible for specification generation, DAG planning, approval gate enforcement, model routing, API key rotation, artifact verification, and telemetry.
+
+To create an application:
 ```bash
-node apps/gateway/dist/bin.js status      # gateway health + uptime
-node apps/gateway/dist/bin.js doctor      # connectivity, providers, models
-node apps/gateway/dist/bin.js models      # discovered model count + free tier
-node apps/gateway/dist/bin.js providers   # active providers + model counts
-node apps/gateway/dist/bin.js agents      # detected coding agents + status
+curl -X POST http://127.0.0.1:8787/v1/applications \
+  -H "Content-Type: application/json" \
+  -d '{"objective": "Build a high-performance URL shortener with SQLite and Fastify"}'
 ```
 
 ---
 
-## REST API (key endpoints)
+## Supported Providers & Generic Endpoints
+
+Nexus supports all major providers natively plus any custom OpenAI-compatible endpoint:
+
+- **Native Providers:** OpenAI, Anthropic, DeepSeek, Google Gemini, Groq, Mistral, xAI (Grok), Together AI, Fireworks AI, Cerebras, NVIDIA NIM, Azure OpenAI, Cloudflare AI, OpenRouter.
+- **Generic OpenAI-Compatible Endpoints:** Any standard API exposing `/v1/models` and `/v1/chat/completions` (e.g., LocalAI, vLLM, Ollama, LM Studio) can be connected through the dashboard or `.env`.
+
+---
+
+## REST API Summary
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions |
-| `POST` | `/v1/messages` | Anthropic-compatible messages |
-| `POST` | `/v1/responses` | Responses API |
-| `GET` | `/v1/models` | All discovered models |
-| `GET` | `/v1/catalog/status` | Model/provider counts, catalog version |
-| `GET` | `/v1/catalog/delta` | Delta sync (ETag / 304) |
-| `GET` | `/v1/providers` | Configured providers + health |
-| `GET` | `/v1/runtime-agents` | Detected coding agents |
-| `POST` | `/v1/runtime-agents/:id/configure` | Auto-configure an agent |
-| `GET` | `/v1/debug/observability` | Latency p50/p95/p99, token savings, routing |
-| `GET` | `/v1/debug/routing/recent` | Recent routing decisions |
-| `GET` | `/v1/openapi.json` | OpenAPI 3.0 specification |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions with routing extensions |
+| `POST` | `/v1/messages` | Anthropic-compatible Messages API |
+| `GET` | `/v1/models` | All discovered models across all healthy providers |
+| `GET` | `/v1/catalog/status` | Model/provider counts and active catalog version |
+| `GET` | `/v1/catalog/delta` | Delta synchronization (`ETag` / `304 Not Modified`) |
+| `GET` | `/v1/providers` | Configured provider health, models, and latency |
+| `GET` | `/v1/runtime-agents` | Detected coding agent status on the host system |
+| `POST` | `/v1/applications` | Create a new autonomous software build project |
+| `GET` | `/v1/debug/observability` | Real-time p50/p95/p99 latencies, token savings, and routing history |
+| `GET` | `/v1/doctor` | Gateway diagnostic summary |
 
 Full API reference: [`docs/API.md`](docs/API.md)
 
 ---
 
-## Supported providers
-
-OpenAI · Anthropic · DeepSeek · OpenRouter · Google AI (Gemini) · Groq · Mistral · xAI (Grok) · Together AI · Fireworks AI · Cerebras · NVIDIA NIM · Azure OpenAI · Cloudflare AI
-
-Provider onboarding guide: [`docs/PROVIDERS.md`](docs/PROVIDERS.md)
-
----
-
-## Documentation
+## Documentation Index
 
 | Document | Description |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Full subsystem diagram and data flow |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Hexagonal architecture, ports, adapters, and data flows |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Adding and configuring providers |
-| [`docs/API.md`](docs/API.md) | Complete REST API reference |
-| [`docs/ROUTING.md`](docs/ROUTING.md) | Routing engine, policies, and scoring |
-| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | Coding agent integration guides |
-| [`docs/WORKFLOW.md`](docs/WORKFLOW.md) | Workflow DAG engine and DAG syntax |
-| [`docs/AGENT_DEV.md`](docs/AGENT_DEV.md) | Building custom agents on top of Nexus |
-| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Plugin system and extension marketplace |
-| [`SECURITY.md`](SECURITY.md) | Security policy and reporting vulnerabilities |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute |
-| [`CHANGELOG.md`](CHANGELOG.md) | Release history |
+| [`docs/API.md`](docs/API.md) | Full REST API reference |
+| [`docs/ROUTING.md`](docs/ROUTING.md) | Routing algorithms, scoring engine, and failover |
+| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | In-depth agent configuration guides |
+| [`docs/WORKFLOW.md`](docs/WORKFLOW.md) | Workflow DAG engine and tasks |
+| [`docs/AGENT_DEV.md`](docs/AGENT_DEV.md) | Developing custom agent adapters |
+| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Plugin runtime and lifecycle hooks |
+| [`NEXUS_PUBLIC_SECURITY_AUDIT.md`](NEXUS_PUBLIC_SECURITY_AUDIT.md) | Security audit and zero-secret guarantee |
+| [`SECURITY.md`](SECURITY.md) | Vulnerability disclosure policy |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Developer guide and quality gates |
+| [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | Release notes for v0.4.0 |
+| [`CHANGELOG.md`](CHANGELOG.md) | Changelog history |
 
 ---
 
 ## Security
 
-- Provider API keys are **encrypted at rest** in `~/.agent-nexus/vault.json`.
-- Keys are **never logged**, never forwarded across providers, and never appear in traces.
-- CI runs **gitleaks** on every push — commits containing detected secrets are blocked.
-- The dashboard API is protected by an admin key (`ANX_ADMIN_API_KEY`).
-
-Report vulnerabilities: see [`SECURITY.md`](SECURITY.md).
-
----
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). PRs, issues, and provider adapters are welcome.
-
-```bash
-pnpm install
-pnpm dev        # starts all packages in watch mode
-pnpm test       # run all tests
-pnpm lint       # lint
-pnpm typecheck  # typecheck
-```
+- Provider API keys are **encrypted at rest** in `~/.agent-nexus/vault.json` using AES-256-GCM.
+- Keys are **never logged**, never forwarded across providers, and never returned in API responses.
+- Continuous CI secret scanning via **Gitleaks** on every push.
 
 ---
 
 ## License
 
-[MIT](LICENSE) © Nexus contributors
+[Apache-2.0](LICENSE) © Nexus Contributors

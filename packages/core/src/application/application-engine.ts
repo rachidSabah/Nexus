@@ -830,7 +830,7 @@ export class ApplicationEngine {
       kind,
       specSummary: app.spec ? `${app.spec.title}\n${app.spec.summary}\nTech: ${app.spec.techStack.join(', ')}` : undefined,
       architectureConstraints: app.architecture ? `Pattern: ${app.architecture.pattern}. Components: ${app.architecture.components.join(', ')}.` : undefined,
-      forbiddenPaths: [this.nexusRepoRoot ?? 'E:/CodingGhost'],
+      forbiddenPaths: [this.nexusRepoRoot ?? process.cwd()],
       targetModel: ctx?.selectedModel,
       policy: (ctx?.selectedPolicy ?? 'nexus/best-coding') as AgyBuildTask['policy'],
       timeoutMs: this.buildTimeoutMs,

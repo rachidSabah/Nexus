@@ -1419,9 +1419,10 @@ export class HttpServer {
     });
 
     // ── Phase 11 Autonomous Application Engine API (AGY Builder) ──────────
+    const nexusRoot = process.env['NEXUS_REPO_ROOT'] ?? process.cwd();
     const globalAgyAdapter = new AgyBuilderAdapter(
       `http://127.0.0.1:${this.deps.config.server.port ?? 8787}`,
-      'E:/CodingGhost', // Nexus repo root — workspace isolation guard
+      nexusRoot, // Nexus repo root — workspace isolation guard
     );
     const she = new HermesRuntimeManager({
       gatewayHost: this.deps.config.server.host,
@@ -1436,7 +1437,7 @@ export class HttpServer {
       {
         gatewayBaseUrl: `http://127.0.0.1:${this.deps.config.server.port ?? 8787}`,
         gatewayPort: this.deps.config.server.port ?? 8787,
-        nexusRepoRoot: 'E:/CodingGhost',
+        nexusRepoRoot: nexusRoot,
       },
     );
 
