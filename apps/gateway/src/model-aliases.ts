@@ -81,19 +81,19 @@ export type FamilyId =
   | 'meta' | 'qwen' | 'mistral' | 'minimax' | 'zhipu' | 'moonshot' | 'default';
 
 export const FAMILY_PATTERNS: ReadonlyArray<readonly [RegExp, FamilyId]> = [
-  [/^claude-(fable|opus|sonnet|haiku)(?:[-._]|$)/, 'claude'],
-  [/^(gpt-[0-9]|gpt-4[.o-]|gpt-4$)/, 'openai'],
-  [/^o[1-4](?:[-._]|$)/, 'openai'],
-  [/^codex/, 'openai'],
-  [/^deepseek/, 'deepseek'],
-  [/^gemini/, 'gemini'],
-  [/^grok/, 'grok'],
-  [/^llama/, 'meta'],
-  [/^qwen/, 'qwen'],
-  [/^(?:ministral|mistral)/, 'mistral'],
-  [/^minimax/, 'minimax'],
-  [/^glm-/, 'zhipu'],
-  [/^kimi/, 'moonshot'],
+  [/^claude(?:[-._]|$)/i, 'claude'],
+  [/^(gpt-[0-9]|gpt-4[.o-]|gpt-4$)/i, 'openai'],
+  [/^o[1-4](?:[-._]|$)/i, 'openai'],
+  [/^codex/i, 'openai'],
+  [/^deepseek/i, 'deepseek'],
+  [/^gemini/i, 'gemini'],
+  [/^grok/i, 'grok'],
+  [/^llama/i, 'meta'],
+  [/^qwen/i, 'qwen'],
+  [/^(?:ministral|mistral)/i, 'mistral'],
+  [/^minimax/i, 'minimax'],
+  [/^glm-/i, 'zhipu'],
+  [/^kimi/i, 'moonshot'],
 ];
 
 export interface FamilyDefaults {
@@ -264,6 +264,13 @@ export class ModelAliasRegistry {
         alias: 'nexus/free',
         description: 'Cheapest free-tier model with required capabilities',
         filter: { freeOnly: true },
+        ranking: 'cheapest',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/cheap',
+        description: 'Lowest-cost model (free preferred, then cheapest paid)',
+        filter: {},
         ranking: 'cheapest',
         builtin: true,
       },
@@ -469,7 +476,7 @@ export class ModelAliasRegistry {
     // Claude sub-family overrides (GATEWAY_MODEL_SONNET etc.) take precedence
     // over the family-wide target, which itself beats the default fallback.
     const sub = family === 'claude'
-      ? (/^claude-(fable|opus|sonnet|haiku)/.exec(model.toLowerCase())?.[1])
+      ? (/(?:fable|opus|sonnet|haiku)/i.exec(model.toLowerCase())?.[0])
       : undefined;
     const target = this.familyDefaults[(sub ?? family) as keyof FamilyDefaults] ?? this.familyDefaults[family] ?? this.familyDefaults.default;
     if (target) {
@@ -486,26 +493,27 @@ export class ModelAliasRegistry {
         };
       }
     }
-    // No explicit target (or it isn't discovered yet): pick the best
-    // currently-available tool-calling model, like `local/coding`.
-    // Exclude the family pattern entries themselves (claude-fable-5 etc. are
-    // registered as discoverable pseudo-models for the model picker, but must
-    // never resolve to themselves or be sent upstream).
+    // If an alias like nexus/best-coding or local/coding resolves to a healthy model, use it
+    const bestCoding = this.resolve('nexus/best-coding') ?? this.resolve('local/coding');
+    if (bestCoding) {
+      return {
+        model: bestCoding.modelId,
+        resolution: {
+          modelId: bestCoding.modelId,
+          providerId: bestCoding.providerId,
+          reason: `Claude family '${family}' -> ${bestCoding.reason}`,
+          candidateCount: bestCoding.candidateCount,
+        },
+      };
+    }
+
     const freeCandidates = this.candidatesFor({ capability: 'toolCalling', freeOnly: true })
       .filter((m) => !matchFamily(m.id));
     const candidates = (freeCandidates.length > 0 ? freeCandidates : this.candidatesFor({ capability: 'toolCalling' }))
       .filter((m) => !matchFamily(m.id));
     if (candidates.length > 0) {
-      // Cheapest-first: with no pricing metadata the sort is stable,
-      // so the endpoint's first discovered model wins - typically the
-      // free default (e.g. deepseek-v4-flash-free on OpenCode Zen).
       const winners = this.rank(candidates, 'cheapest');
-      // Deterministic free-tier pick: OpenCode Zen flags free models with a
-      // `-free` suffix (deepseek-v4-flash-free, mimo-v2.5-free, ...). Prefer
-      // those so family routing works on keyless free workspaces; explicit
-      // GATEWAY_MODEL_* overrides still take precedence above.
-      const freeTier = winners.find((m) => m.id.endsWith('-free'));
-      const winner = freeTier ?? winners[0]!;
+      const winner = winners[0]!;
       return {
         model: winner.id,
         resolution: {
@@ -555,6 +563,21 @@ export class ModelAliasRegistry {
       if (cooldownUntil && now < cooldownUntil) return false;
       return true;
     });
+
+    // Prefer models whose provider endpoints are currently healthy and selectable
+    if (this.routing) {
+      const endpoints = this.routing.listEndpoints();
+      const healthyProviders = new Set(
+        endpoints.filter((e) => isSelectable(e)).map((e) => e.providerId),
+      );
+      if (healthyProviders.size > 0) {
+        const healthyCandidates = candidates.filter((m) => healthyProviders.has(m.providerId));
+        if (healthyCandidates.length > 0) {
+          candidates = healthyCandidates;
+        }
+      }
+    }
+
     if (candidates.length === 0 && this.routing) candidates = this.endpointCandidates();
     if (filter.capability) {
       candidates = candidates.filter((m) => m.capabilities?.[filter.capability!] === true);

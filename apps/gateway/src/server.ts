@@ -443,15 +443,23 @@ export class HttpServer {
       const q = request.query as { free?: string; capability?: string };
       const models = new Map<string, { id: string; object: 'model'; owned_by: string; pricing?: unknown; capabilities?: unknown; context_window?: number }>();
 
-      // Static endpoint-derived models.
-      for (const e of this.deps.routing.listEndpoints()) {
-        const alias = e.tags[0] ?? e.providerId;
-        if (!models.has(alias)) {
-          models.set(alias, { id: alias, object: 'model', owned_by: e.providerId });
-        }
-        if (this.deps.adapters.get(e.providerId)) {
-          models.set(e.id, { id: e.id, object: 'model', owned_by: e.providerId });
-        }
+      // Nexus system aliases
+      const systemAliases = [
+        'nexus/best-coding',
+        'nexus/fast',
+        'nexus/free',
+        'nexus/best',
+        'nexus/cheap',
+      ];
+      for (const alias of systemAliases) {
+        models.set(alias, {
+          id: alias,
+          object: 'model',
+          owned_by: 'nexus',
+          pricing: { isFree: alias === 'nexus/free' || alias === 'nexus/cheap' },
+          capabilities: { streaming: true, toolCalling: true, jsonMode: true },
+          context_window: 128000,
+        });
       }
 
       // Dynamically discovered models (from ModelRegistry).
