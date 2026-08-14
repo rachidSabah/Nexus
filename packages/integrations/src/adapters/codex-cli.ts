@@ -22,8 +22,8 @@ export class CodexCliIntegration extends BaseIntegration {
 
   protected configFiles(ctx: IntegrationContext) {
     const endpoint = `${ctx.gatewayUrl}/v1`;
-    const targetModel = ctx.defaultModel || 'nexus/fast';
-    const key = ctx.apiKey ?? 'no-key-required';
+    const targetModel = ctx.defaultModel || 'liquid/lfm-2.5-2.6b:free';
+    const envKey = process.platform === 'win32' ? 'USERPROFILE' : 'USER';
 
     return [
       {
@@ -32,11 +32,13 @@ export class CodexCliIntegration extends BaseIntegration {
         content: () =>
           [
             `model = "${targetModel}"`,
-            `model_provider = "openai"`,
+            `model_provider = "nexus"`,
             ``,
-            `[providers.openai]`,
+            `[model_providers.nexus]`,
+            `name = "nexus"`,
             `base_url = "${endpoint}"`,
-            `api_key = "${key}"`,
+            `wire_specification = "custom"`,
+            `env_key = "${envKey}"`,
           ].join('\n') + '\n',
       },
       {

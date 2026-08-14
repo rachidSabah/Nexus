@@ -2255,7 +2255,7 @@ export class HttpServer {
     // Lets Claude Code (and other Anthropic-protocol agents) talk to the
     // gateway natively — set ANTHROPIC_BASE_URL=http://127.0.0.1:8787 and
     // ANTHROPIC_AUTH_TOKEN=<anything> and it just works.
-    this.fastify.post('/v1/responses', async (request, reply) => {
+    const handleResponses = async (request: any, reply: any) => {
       const body = request.body as ResponsesRequest | null | undefined;
       if (!body || typeof body !== 'object') {
         return reply.code(400).send({ error: { message: 'request body required' } });
@@ -2279,7 +2279,8 @@ export class HttpServer {
       const chatReq = toChatRequest(body);
       const maxTokens = chatReq.maxTokens && chatReq.maxTokens > 4096 ? 4096 : chatReq.maxTokens;
       const effectiveBody = { ...chatReq, maxTokens, model: aliasResolution.model, routing };
-      if (body.stream) {
+      const wantsStream = Boolean(body.stream || request.headers.accept?.includes('text/event-stream'));
+      if (wantsStream) {
         reply.raw.writeHead(200, {
           'content-type': 'text/event-stream',
           'cache-control': 'no-cache',
@@ -2329,7 +2330,11 @@ export class HttpServer {
         const http = this.httpErrorFor(error as Error);
         return reply.code(http.status).send({ error: { message: http.message } });
       }
-    });
+    };
+
+    this.fastify.post('/responses', handleResponses);
+    this.fastify.post('/v1/responses', handleResponses);
+    this.fastify.post('/v1/v1/responses', handleResponses);
 
     const handleMessages = async (request: any, reply: any) => {
       const anthropicReq = request.body as AnthropicRequest;

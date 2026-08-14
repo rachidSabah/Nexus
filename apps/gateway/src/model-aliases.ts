@@ -371,10 +371,13 @@ export class ModelAliasRegistry {
     if (!alias) return undefined;
 
     const now = Date.now();
+    const registeredEndpoints: readonly ProviderEndpoint[] = this.routing ? this.routing.listEndpoints() : [];
     let candidates = this.modelRegistry.list().filter((m) => {
       if (m.stale) return false;
       const cooldownUntil = this.modelCooldowns.get(m.id);
       if (cooldownUntil && now < cooldownUntil) return false;
+      const ep = registeredEndpoints.find((e: ProviderEndpoint) => e.providerId === m.providerId || e.id === `auto-${m.providerId}`);
+      if (ep && (ep.health === 'unhealthy' || ep.health === 'circuit_open')) return false;
       return true;
     });
 
@@ -424,21 +427,31 @@ export class ModelAliasRegistry {
    * calls before routing.
    */
   resolveIfAlias(model: string): { model: string; resolution?: AliasResolution } {
-    // Claude Code projection aliases (claude-gw-*) reverse to their native
-    // registry id BEFORE family rewriting, so the selected model genuinely
-    // controls routing (§17). A claude-gw-* id must never be treated as a
-    // family request or silently rewritten to a default provider.
-    const projected = resolveClaudeGwAlias(model, this.modelRegistry.list());
-    if (projected) {
-      return {
-        model: projected.modelId,
-        resolution: {
-          modelId: projected.modelId,
-          providerId: projected.providerId,
-          reason: `Claude Code gateway projection '${model}' -> '${projected.modelId}'`,
-          candidateCount: 1,
-        },
-      };
+    if (model.startsWith('claude-gw-')) {
+      const projected = resolveClaudeGwAlias(model, this.modelRegistry.list());
+      if (projected) {
+        return {
+          model: projected.modelId,
+          resolution: {
+            modelId: projected.modelId,
+            providerId: projected.providerId,
+            reason: `Claude Code gateway projection '${model}' -> '${projected.modelId}'`,
+            candidateCount: 1,
+          },
+        };
+      }
+      const fallback = this.resolve('nexus/best-coding') ?? this.resolve('local/coding') ?? this.resolve('local/free');
+      if (fallback) {
+        return {
+          model: fallback.modelId,
+          resolution: {
+            modelId: fallback.modelId,
+            providerId: fallback.providerId,
+            reason: `Claude Code gateway projection '${model}' (stale) -> fallback '${fallback.modelId}'`,
+            candidateCount: fallback.candidateCount,
+          },
+        };
+      }
     }
     // Support virtual model identity (nexus/<provider>/<nativeModel>) resolution
     const virtualResolved = resolveOpenAIModelId(model, this.modelRegistry.list());

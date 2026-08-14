@@ -262,12 +262,8 @@ export async function registerDefaultEndpoints(
       { providerId: 'fireworks', envVar: 'FIREWORKS_API_KEY', baseUrl: 'https://api.fireworks.ai/inference/v1', keyless: false, pricing: { inputPer1K: 0.002, outputPer1K: 0.008, currency: 'USD' } },
       { providerId: 'cerebras', envVar: 'CEREBRAS_API_KEY', baseUrl: 'https://api.cerebras.ai/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'nvidia-nim', envVar: 'NVIDIA_API_KEY', baseUrl: 'https://integrate.api.nvidia.com/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
-      // opencode-zen / opencode-go serve a free tier without an API key
-      // (bare models like deepseek-v4-flash-free). Register them keyless so
-      // the gateway works out of the box; an OPENCODE_ZEN_API_KEY env var is
-      // still honoured when present.
-      { providerId: 'opencode-zen', envVar: 'OPENCODE_ZEN_API_KEY', baseUrl: 'https://opencode.ai/zen/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
-      { providerId: 'opencode-go', envVar: 'OPENCODE_GO_API_KEY', baseUrl: 'https://opencode.ai/zen/go/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'opencode-zen', envVar: 'OPENCODE_ZEN_API_KEY', baseUrl: 'https://opencode.ai/zen/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'opencode-go', envVar: 'OPENCODE_GO_API_KEY', baseUrl: 'https://opencode.ai/zen/go/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'ollama', envVar: '', baseUrl: 'http://localhost:11434/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
     ];
 
