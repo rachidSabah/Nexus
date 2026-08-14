@@ -31,7 +31,7 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { ApplicationState } from '../domain/application.js';
+
 import type {
   AgyBuilderPort,
   AgyBuildSession,
@@ -41,10 +41,12 @@ import type {
   AgyTokenMetrics,
   WorkspaceConfig,
 } from '../domain/agy-builder.js';
+import type { ApplicationState } from '../domain/application.js';
+
+import { ApplicationVerifier } from './application-verifier.js';
+import { AutonomousPlanner } from './autonomous-planner.js';
 import type { EventBusPort, RoutingEnginePort } from './ports.js';
 import type { WorkflowOrchestrator } from './workflow-orchestrator.js';
-import { AutonomousPlanner } from './autonomous-planner.js';
-import { ApplicationVerifier } from './application-verifier.js';
 
 const DEFAULT_MAX_REPAIR_ATTEMPTS = 3;
 const DEFAULT_BUILD_TIMEOUT_MS = 300_000; // 5 minutes per AGY node

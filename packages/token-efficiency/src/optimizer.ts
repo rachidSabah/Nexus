@@ -16,6 +16,10 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
+import { applyBudget } from './budget.js';
+import { compactConversation } from './compaction.js';
+import { estimateTokens, canonicalizeContent, stableKey } from './estimate.js';
+import { compressMessageContent } from './tool-output.js';
 import {
   OptimizationMode,
   type OptMessage,
@@ -24,10 +28,6 @@ import {
   type OptimizationStats,
   type CategoryStats,
 } from './types.js';
-import { estimateTokens, canonicalizeContent, stableKey } from './estimate.js';
-import { applyBudget } from './budget.js';
-import { compactConversation } from './compaction.js';
-import { compressMessageContent } from './tool-output.js';
 
 const CATEGORIES: OptimizationCategory[] = [
   'duplicate_system',

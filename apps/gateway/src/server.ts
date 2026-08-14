@@ -1602,7 +1602,7 @@ export class HttpServer {
 
     // GET /v1/applications/:id/builds/:buildId — get specific build session
     this.fastify.get('/v1/applications/:id/builds/:buildId', async (request, reply) => {
-      const { id, buildId } = request.params as { id: string; buildId: string };
+      const { id: _id, buildId } = request.params as { id: string; buildId: string };
       const build = globalAppEngine.getBuildSession(buildId);
       if (!build) return reply.code(404).send({ error: { message: `Build session '${buildId}' not found` } });
       return build;
@@ -1695,7 +1695,7 @@ export class HttpServer {
     });
 
     // GET /v1/applications/:id/builds/:buildId/checkpoints
-    this.fastify.get('/v1/applications/:id/builds/:buildId/checkpoints', async (request, reply) => {
+    this.fastify.get('/v1/applications/:id/builds/:buildId/checkpoints', async (request, _reply) => {
       const { buildId } = request.params as { id: string; buildId: string };
       const checkpoints = globalAppEngine.getBuildCheckpoints(buildId);
       return { buildSessionId: buildId, checkpoints };

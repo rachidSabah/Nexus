@@ -20,11 +20,10 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { exec, spawn, type ChildProcess } from 'node:child_process';
 import { access, mkdir, readdir, constants } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { join, resolve, isAbsolute } from 'node:path';
-import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import type {
@@ -372,7 +371,7 @@ export class AgyBuilderAdapter implements AgyBuilderPort {
           }
         } else {
           proc.kill('SIGTERM');
-          setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 3000);
+          setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* best effort */ } }, 3000);
         }
       } catch {
         // best effort
