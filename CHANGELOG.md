@@ -4,6 +4,19 @@ All notable changes to Nexus are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — Phase 23
+
+### Added
+- **Public release readiness**: professional README rewrite with Mermaid architecture
+  diagram, badge bar, feature matrix, agent configuration table, routing policy table,
+  REST API reference, and full documentation index.
+- **From-source installers**: `scripts/install.ps1` (Windows) and `scripts/install.sh`
+  (Linux / WSL / macOS) now clone the repository, install pnpm if missing, build from
+  source, create `~/.agent-nexus`, generate an encrypted vault key, start the gateway,
+  and print the dashboard URL and next steps — no npm global package required.
+- **`.gitignore` hardening**: added `apps/gateway/*.log` and `apps/gateway/*.err.log`
+  patterns to prevent gateway runtime logs from being committed.
+
 ## [0.4.0] — 2026-08
 
 ### Added

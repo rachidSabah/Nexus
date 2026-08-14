@@ -280,17 +280,21 @@ export class OpenAIAdapter implements ProviderAdapter {
       // -> `deepseek-v4-flash-free`) so adapters like NVIDIA NIM don't 404 on
       // prefixed ids. Idempotent when OpenAICompatibleAdapter pre-strips too.
       model: req.model.replace(/^anthropic\//, '').replace(/^opencode(?:-zen|-go)?\//, ''),
-      // Map core camelCase messages to the OpenAI wire format. Passing
-      // req.messages raw used to silently drop toolCallId/toolCalls, so every
-      // tool message reached the upstream without `tool_call_id` and the
-      // upstream rejected the whole request (invalid_request_error 500).
-      messages: req.messages.map((m) => ({
-        role: m.role,
-        content: m.content ?? '',
-        ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
-        ...(m.toolCalls && m.toolCalls.length > 0 ? { tool_calls: m.toolCalls } : {}),
-        ...(m.reasoningContent ? { reasoning_content: m.reasoningContent } : {}),
-      })),
+      // Map core camelCase / OpenAI snake_case messages to the OpenAI wire format.
+      // Inbound messages may originate from Anthropic bridge (camelCase) or
+      // directly from OpenAI clients like Hermes (snake_case). Handle both.
+      messages: req.messages.map((m) => {
+        const toolCallId = m.toolCallId ?? m.tool_call_id;
+        const toolCalls = m.toolCalls ?? m.tool_calls;
+        const reasoningContent = m.reasoningContent ?? m.reasoning_content;
+        return {
+          role: m.role,
+          content: m.content ?? '',
+          ...(toolCallId ? { tool_call_id: toolCallId } : {}),
+          ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+          ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+        };
+      }),
       stream: streaming,
     };
     if (req.temperature !== undefined) body.temperature = req.temperature;

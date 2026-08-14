@@ -62,13 +62,19 @@ function candidateAgyPaths(): string[] {
   ];
 }
 
+let cachedAgyPath: string | null | undefined = undefined;
+
 /** Returns the resolved path to the AGY executable, or undefined. */
 async function resolveAgyExecutable(): Promise<string | undefined> {
+  if (cachedAgyPath !== undefined) {
+    return cachedAgyPath === null ? undefined : cachedAgyPath;
+  }
   // 1. Check well-known paths
   for (const candidate of candidateAgyPaths()) {
     if (!isAbsolute(candidate)) continue;
     try {
       await access(candidate, constants.X_OK);
+      cachedAgyPath = candidate;
       return candidate;
     } catch {
       // not here
@@ -77,12 +83,16 @@ async function resolveAgyExecutable(): Promise<string | undefined> {
   // 2. Fall back to PATH lookup
   try {
     const cmd = platform() === 'win32' ? 'where agy' : 'which agy';
-    const { stdout } = await execAsync(cmd, { timeout: 3000 });
+    const { stdout } = await execAsync(cmd, { timeout: 1000 });
     const found = stdout.trim().split('\n')[0]?.trim();
-    if (found) return found;
+    if (found) {
+      cachedAgyPath = found;
+      return found;
+    }
   } catch {
     // not in PATH
   }
+  cachedAgyPath = null;
   return undefined;
 }
 

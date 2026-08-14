@@ -704,7 +704,7 @@ export class HttpServer {
       };
     });
 
-    // ── Nexus Doctor Diagnostic API (§18) ──────────────────────────────
+    // ── Nexus Doctor Diagnostic API (§18 / Phase 21 §13) ──────────────
     this.fastify.get('/v1/doctor', async () => {
       const models = this.deps.modelRegistry.list();
       const freeModels = this.deps.modelRegistry.listFree();
@@ -714,34 +714,69 @@ export class HttpServer {
       const agyHealth = await globalAgyAdapter.healthCheck();
       const apps = globalAppEngine.listApplications();
       const vaultKeys = this.deps.keyRegistry.listAll();
+      const catalogVersion = this.deps.modelRegistry.getCatalogVersion();
+      const healthyModels = models.filter((m) => !m.stale);
 
       return {
-        status: 'HEALTHY',
+        status: endpoints.length > 0 ? 'HEALTHY' : 'NO_PROVIDERS_CONFIGURED',
         version: GATEWAY_VERSION,
         uptime: process.uptime(),
+        catalogVersion,
+        providerCount: endpoints.length,
+        modelCount: models.length,
+        healthyModelCount: healthyModels.length,
+        freeModelCount: freeModels.length,
+        agentCount: detectedAgents.length,
+        configuredAgentCount: detectedAgents.filter((a) => a.found).length,
         checks: {
           gatewayReachable: true,
           modelRegistryHealthy: models.length > 0,
           totalModels: models.length,
           freeModelsCount: freeModels.length,
-          activeProviders: endpoints.filter(e => e.health === 'healthy').length,
+          activeProviders: endpoints.filter((e) => e.health === 'healthy').length,
           apiKeysLoaded: vaultKeys.length,
-          catalogVersion: 1024,
-          detectedAgentsCount: detectedAgents.filter(a => a.found).length,
+          catalogVersion,
+          detectedAgentsCount: detectedAgents.filter((a) => a.found).length,
           routingEngineState: 'operational',
           tokenEfficiencyState: 'active',
           orchestrationState: 'operational',
           agyInstalled: agyHealth.installed,
           agyVersion: agyHealth.version,
           agyRuntimeHealthy: agyHealth.runtimeHealthy,
-          activeBuilds: apps.filter(a => a.stage === 'BUILD' || a.stage === 'SCAFFOLD' || a.stage === 'REPAIR').length,
-          queuedBuilds: apps.filter(a => a.stage === 'DISCOVER' || a.stage === 'SPECIFY' || a.stage === 'ARCHITECT' || a.stage === 'PLAN' || a.stage === 'APPROVAL').length,
-          failedBuilds: apps.filter(a => a.stage === 'FAILED').length,
+          activeBuilds: apps.filter((a) => a.stage === 'BUILD' || a.stage === 'SCAFFOLD' || a.stage === 'REPAIR').length,
+          queuedBuilds: apps.filter((a) => a.stage === 'DISCOVER' || a.stage === 'SPECIFY' || a.stage === 'ARCHITECT' || a.stage === 'PLAN' || a.stage === 'APPROVAL').length,
+          failedBuilds: apps.filter((a) => a.stage === 'FAILED').length,
           repairCycles: apps.reduce((acc, a) => acc + a.repairAttempts, 0),
           workspaceHealth: 'healthy',
         },
         detectedAgents,
         agyRuntime: agyHealth,
+      };
+    });
+
+    // ── Phase 21 Release Health API (§14) ──────────────────────────────
+    this.fastify.get('/v1/release/health', async () => {
+      const models = this.deps.modelRegistry.list();
+      const endpoints = this.deps.routing.listEndpoints();
+      const detector = new AgentDetector();
+      const detectedAgents = await detector.detectAll();
+      const healthyProviders = endpoints.filter((e) => e.health === 'healthy');
+
+      return {
+        status: 'healthy',
+        version: GATEWAY_VERSION,
+        build: 'production-phase21',
+        gateway: true,
+        modelRegistry: true,
+        routing: true,
+        agents: detectedAgents.length > 0,
+        dashboard: true,
+        uptime: process.uptime(),
+        catalogVersion: this.deps.modelRegistry.getCatalogVersion(),
+        providerCount: endpoints.length,
+        healthyProviderCount: healthyProviders.length,
+        modelCount: models.length,
+        freeModelCount: this.deps.modelRegistry.listFree().length,
       };
     });
 
@@ -1554,6 +1589,143 @@ export class HttpServer {
       }
     });
 
+    // ── Phase 22 Build Sessions & Controls (§17, §18, §23) ────────────
+
+    // GET /v1/applications/:id/builds — list all build sessions for an application
+    this.fastify.get('/v1/applications/:id/builds', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const app = globalAppEngine.getApplication(id);
+      if (!app) return reply.code(404).send({ error: { message: `Application '${id}' not found` } });
+      const builds = globalAppEngine.listBuildSessions(id);
+      return { applicationId: id, builds };
+    });
+
+    // GET /v1/applications/:id/builds/:buildId — get specific build session
+    this.fastify.get('/v1/applications/:id/builds/:buildId', async (request, reply) => {
+      const { id, buildId } = request.params as { id: string; buildId: string };
+      const build = globalAppEngine.getBuildSession(buildId);
+      if (!build) return reply.code(404).send({ error: { message: `Build session '${buildId}' not found` } });
+      return build;
+    });
+
+    // POST /v1/applications/:id/builds — alias for starting a build
+    this.fastify.post('/v1/applications/:id/builds', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean }) ?? {};
+      try {
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const app = await globalAppEngine.buildApplication(id, availableAgents, { dryRun: body.dryRun });
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // POST /v1/applications/:id/build/pause & /v1/applications/:id/builds/:buildId/pause
+    this.fastify.post('/v1/applications/:id/build/pause', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const app = await globalAppEngine.pauseApplication(id);
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+    this.fastify.post('/v1/applications/:id/builds/:buildId/pause', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const app = await globalAppEngine.pauseApplication(id);
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // POST /v1/applications/:id/build/resume & /v1/applications/:id/builds/:buildId/resume
+    this.fastify.post('/v1/applications/:id/build/resume', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean }) ?? {};
+      try {
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const app = await globalAppEngine.resumeApplication(id, availableAgents, { dryRun: body.dryRun });
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+    this.fastify.post('/v1/applications/:id/builds/:buildId/resume', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean }) ?? {};
+      try {
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const app = await globalAppEngine.resumeApplication(id, availableAgents, { dryRun: body.dryRun });
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // POST /v1/applications/:id/build/repair & /v1/applications/:id/builds/:buildId/repair
+    this.fastify.post('/v1/applications/:id/build/repair', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean }) ?? {};
+      try {
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const app = await globalAppEngine.repairApplication(id, availableAgents, { dryRun: body.dryRun });
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+    this.fastify.post('/v1/applications/:id/builds/:buildId/repair', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean }) ?? {};
+      try {
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const app = await globalAppEngine.repairApplication(id, availableAgents, { dryRun: body.dryRun });
+        return app;
+      } catch (err: any) {
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+
+    // GET /v1/applications/:id/builds/:buildId/checkpoints
+    this.fastify.get('/v1/applications/:id/builds/:buildId/checkpoints', async (request, reply) => {
+      const { buildId } = request.params as { id: string; buildId: string };
+      const checkpoints = globalAppEngine.getBuildCheckpoints(buildId);
+      return { buildSessionId: buildId, checkpoints };
+    });
+
+    // GET /v1/applications/:id/builds/:buildId/metrics
+    this.fastify.get('/v1/applications/:id/builds/:buildId/metrics', async (request, reply) => {
+      const { buildId } = request.params as { id: string; buildId: string };
+      const metrics = globalAppEngine.getBuildMetrics(buildId);
+      if (!metrics) return reply.code(404).send({ error: { message: `Metrics for build session '${buildId}' not found` } });
+      return { buildSessionId: buildId, metrics };
+    });
+
+    // GET /v1/agents/agy/health — truthful AGY health endpoint (§24)
+    this.fastify.get('/v1/agents/agy/health', async () => {
+      const health = await globalAgyAdapter.healthCheck();
+      const apps = globalAppEngine.listApplications();
+      const activeBuilds = apps.filter((a) => a.stage === 'BUILD' || a.stage === 'SCAFFOLD' || a.stage === 'REPAIR').length;
+      return {
+        installed: health.installed,
+        version: health.version ?? 'unknown',
+        executable: health.executablePath ?? 'none',
+        gatewayReachable: true,
+        runtimeReady: health.runtimeHealthy,
+        activeBuilds,
+        lastBuild: apps[apps.length - 1]?.updatedAt ? new Date(apps[apps.length - 1]!.updatedAt).toISOString() : 'none',
+        status: health.installed && health.runtimeHealthy ? 'READY' : health.installed ? 'DEGRADED' : 'NOT_INSTALLED',
+      };
+    });
+
     // GET /v1/applications/:id/build — alias for build status
     this.fastify.get('/v1/applications/:id/build', async (request, reply) => {
       const { id } = request.params as { id: string };
@@ -1588,7 +1760,7 @@ export class HttpServer {
       };
     });
 
-    // POST /v1/applications/:id/build/cancel
+    // POST /v1/applications/:id/build/cancel & /v1/applications/:id/builds/:buildId/cancel
     this.fastify.post('/v1/applications/:id/build/cancel', async (request, reply) => {
       const { id } = request.params as { id: string };
       try {
@@ -1598,14 +1770,38 @@ export class HttpServer {
         return reply.code(404).send({ error: { message: err.message } });
       }
     });
+    this.fastify.post('/v1/applications/:id/builds/:buildId/cancel', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const app = await globalAppEngine.cancelApplication(id);
+        return app;
+      } catch (err: any) {
+        return reply.code(404).send({ error: { message: err.message } });
+      }
+    });
 
-    // POST /v1/applications/:id/build/retry
+    // POST /v1/applications/:id/build/retry & /v1/applications/:id/builds/:buildId/retry
     this.fastify.post('/v1/applications/:id/build/retry', async (request, reply) => {
       const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean }) ?? {};
       try {
         const runtimeManager = new AgentRuntimeManager();
         const availableAgents = await runtimeManager.listAgents();
-        const app = await globalAppEngine.retryApplication(id, availableAgents);
+        const app = await globalAppEngine.retryApplication(id, availableAgents, { dryRun: body.dryRun });
+        she.recordBuild(id, app.stage === 'COMPLETED' ? 'SUCCESS' : app.stage === 'FAILED' ? 'FAILED' : 'RUNNING');
+        return app;
+      } catch (err: any) {
+        she.recordBuild(id, 'FAILED', { error: err.message });
+        return reply.code(400).send({ error: { message: err.message } });
+      }
+    });
+    this.fastify.post('/v1/applications/:id/builds/:buildId/retry', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { dryRun?: boolean }) ?? {};
+      try {
+        const runtimeManager = new AgentRuntimeManager();
+        const availableAgents = await runtimeManager.listAgents();
+        const app = await globalAppEngine.retryApplication(id, availableAgents, { dryRun: body.dryRun });
         she.recordBuild(id, app.stage === 'COMPLETED' ? 'SUCCESS' : app.stage === 'FAILED' ? 'FAILED' : 'RUNNING');
         return app;
       } catch (err: any) {

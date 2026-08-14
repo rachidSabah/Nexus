@@ -4,6 +4,8 @@ import { Moon, Search, Sun } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { getStoredTheme, onThemeChange, setTheme, type ThemeMode } from '@/lib/theme';
+
 const NAV_TARGETS = [
   { pattern: /^(prov|model)/i, href: '/providers' },
   { pattern: /^(agent|bot)/i, href: '/agents' },
@@ -24,26 +26,15 @@ const NAV_TARGETS = [
 
 export function Topbar() {
   const [time, setTime] = useState<string>('');
-  const [dark, setDark] = useState<boolean>(true);
+  const [themeMode, setThemeMode] = useState<ThemeMode>('dark');
   const [search, setSearch] = useState<string>('');
   const router = useRouter();
 
-  // Apply theme to <html> element on mount and whenever it changes.
+  // Sync with canonical theme system
   useEffect(() => {
-    const html = document.documentElement;
-    if (dark) {
-      html.classList.add('dark');
-      html.style.colorScheme = 'dark';
-    } else {
-      html.classList.remove('dark');
-      html.style.colorScheme = 'light';
-    }
-  }, [dark]);
-
-  // Restore theme from localStorage on mount (default: dark).
-  useEffect(() => {
-    const stored = typeof window !== 'undefined' ? window.localStorage.getItem('anx-theme') : null;
-    if (stored === 'light') setDark(false);
+    setThemeMode(getStoredTheme());
+    const unsub = onThemeChange((mode) => setThemeMode(mode));
+    return unsub;
   }, []);
 
   useEffect(() => {
@@ -70,6 +61,8 @@ export function Topbar() {
     setSearch('');
   }
 
+  const isDark = themeMode !== 'light';
+
   return (
     <header className="flex h-14 items-center justify-between border-b border-white/5 bg-black/20 px-8">
       <form onSubmit={handleSearch} className="flex items-center gap-3">
@@ -89,17 +82,14 @@ export function Topbar() {
         <span className="font-mono text-white/40">{time}</span>
         <button
           onClick={() => {
-            const next = !dark;
-            setDark(next);
-            if (typeof window !== 'undefined') {
-              window.localStorage.setItem('anx-theme', next ? 'dark' : 'light');
-            }
+            const next: ThemeMode = isDark ? 'light' : 'dark';
+            setTheme(next);
           }}
           className="rounded-lg p-2 text-white/60 transition hover:bg-white/5 hover:text-white"
           aria-label="Toggle theme"
-          title={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
         >
-          {dark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+          {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
         </button>
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-full bg-gradient-to-br from-nexus-500 to-fuchsia-500" />

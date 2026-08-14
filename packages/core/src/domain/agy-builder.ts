@@ -155,3 +155,75 @@ export const DEFAULT_REPAIR_CONFIG: RepairLoopConfig = {
   maxRepairAttempts: 3,
   checkpointEachAttempt: true,
 };
+
+// ── Phase 22 AGY Build Session & Checkpointing ────────────────────────────────
+
+export type AgyBuildStage =
+  | 'CREATED'
+  | 'INITIALIZING'
+  | 'SCAFFOLDING'
+  | 'IMPLEMENTING'
+  | 'TESTING'
+  | 'INSPECTING'
+  | 'REPAIRING'
+  | 'VERIFYING'
+  | 'COMPLETED'
+  | 'PAUSED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export interface AgyTokenMetrics {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+  readonly estimatedCostUsd: number;
+  readonly savedTokens: number;
+  readonly compressionPercent: number;
+}
+
+export interface AgyCheckpoint {
+  readonly checkpointId: string;
+  readonly buildSessionId: string;
+  readonly stage: AgyBuildStage;
+  readonly timestamp: number;
+  readonly changedFiles: readonly string[];
+  readonly testStatus?: {
+    readonly passed: boolean;
+    readonly testsRan: number;
+    readonly testsPassed: number;
+    readonly testsFailed: number;
+  };
+  readonly model: string;
+  readonly provider: string;
+  readonly tokenUsage: AgyTokenMetrics;
+  readonly outputSummary: string;
+}
+
+export interface AgyBuildSession {
+  readonly buildSessionId: string;
+  readonly applicationId: string;
+  readonly workspaceId: string;
+  readonly agentId: string;
+  readonly selectedModel: string;
+  readonly providerId: string;
+  readonly routingPolicy: string;
+  readonly startedAt: number;
+  readonly updatedAt: number;
+  readonly currentStage: AgyBuildStage;
+  readonly status: 'PENDING' | 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  readonly tokensUsed: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cost: number;
+  readonly filesCreated: readonly string[];
+  readonly filesModified: readonly string[];
+  readonly testsRun: number;
+  readonly testsPassed: number;
+  readonly testsFailed: number;
+  readonly lastError?: string;
+  readonly checkpoints: readonly AgyCheckpoint[];
+  readonly startedBy?: string;
+}
+

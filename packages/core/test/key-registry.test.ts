@@ -185,4 +185,49 @@ describe('KeyRegistry', () => {
     );
     expect(picks.every((p) => p !== 'k1')).toBe(true);
   });
+
+  it('handles multi-key pools of 1, 3, 5, 10, 50, 100 keys with automatic failover and rotation (Phase 21 §7)', async () => {
+    for (const poolSize of [1, 3, 5, 10, 50, 100]) {
+      const poolRegistry = new KeyRegistry(vault as never, { cooldownMs: 50 });
+      const pId = `provider-pool-${poolSize}`;
+
+      // Register N keys
+      for (let i = 0; i < poolSize; i++) {
+        await poolRegistry.register({
+          id: `key-${poolSize}-${i}`,
+          providerId: pId,
+          plaintext: `sk-pool-${poolSize}-${i}`,
+        });
+      }
+
+      expect(poolRegistry.listByProvider(pId).length).toBe(poolSize);
+
+      // Verify selection distributes properly
+      const picked = new Set<string>();
+      const iterations = Math.min(poolSize * 2, 200);
+      for (let j = 0; j < iterations; j++) {
+        const selected = poolRegistry.select(pId, { strategy: 'round_robin' });
+        expect(selected).toBeDefined();
+        picked.add(selected!);
+      }
+      expect(picked.size).toBe(poolSize);
+
+      if (poolSize > 1) {
+        // Cooldown first key (429)
+        poolRegistry.recordFailure(`key-${poolSize}-0`, 429, true);
+        const nextPick = poolRegistry.select(pId, { strategy: 'round_robin' });
+        expect(nextPick).toBeDefined();
+        expect(nextPick).not.toBe(`key-${poolSize}-0`);
+
+        // Invalidate second key (401)
+        if (poolSize > 2) {
+          poolRegistry.recordFailure(`key-${poolSize}-1`, 401, false);
+          expect(poolRegistry.get(`key-${poolSize}-1`)?.status).toBe('invalid');
+          const safePick = poolRegistry.select(pId);
+          expect(safePick).toBeDefined();
+          expect(safePick).not.toBe(`key-${poolSize}-1`);
+        }
+      }
+    }
+  });
 });

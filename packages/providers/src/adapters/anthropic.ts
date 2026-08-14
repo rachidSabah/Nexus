@@ -269,17 +269,22 @@ export class AnthropicAdapter implements ProviderAdapter {
     content: string | Array<ChatMessageContentPart>;
     toolCallId?: string;
     toolCalls?: readonly ToolCall[];
+    tool_call_id?: string;
+    tool_calls?: readonly ToolCall[];
   }): { role: string; content: unknown } {
+    const toolCallId = m.toolCallId ?? m.tool_call_id;
+    const toolCalls = m.toolCalls ?? m.tool_calls;
+
     // Tool result messages: role='tool', toolCallId set.
     // Anthropic expects these as user messages with a tool_result content block.
-    if (m.role === 'tool' && m.toolCallId) {
+    if (m.role === 'tool' && toolCallId) {
       const resultText = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
       return {
         role: 'user',
         content: [
           {
             type: 'tool_result',
-            tool_use_id: m.toolCallId,
+            tool_use_id: toolCallId,
             content: resultText,
           },
         ],
@@ -287,14 +292,14 @@ export class AnthropicAdapter implements ProviderAdapter {
     }
 
     // Assistant messages with tool_calls: emit text + tool_use blocks.
-    if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+    if (m.role === 'assistant' && toolCalls && toolCalls.length > 0) {
       const blocks: unknown[] = [];
       // Include any text content first.
       const text = typeof m.content === 'string' ? m.content : '';
       if (text) {
         blocks.push({ type: 'text', text });
       }
-      for (const tc of m.toolCalls) {
+      for (const tc of toolCalls) {
         let input: unknown = {};
         try {
           input = JSON.parse(tc.function.arguments);

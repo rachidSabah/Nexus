@@ -63,6 +63,43 @@ describe('OpenAIAdapter', () => {
     expect(translated['stream']).toBe(false);
   });
 
+  it('preserves tool_call_id and tool_calls for both camelCase and snake_case messages', () => {
+    const adapter = new OpenAIAdapter();
+    const req: ChatCompletionRequest = {
+      model: 'meta/llama-3.1-405b-instruct',
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{"location":"Paris"}' } }],
+        } as never,
+        {
+          role: 'tool',
+          content: '{"temp":22}',
+          tool_call_id: 'call_1',
+        } as never,
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call_2', type: 'function', function: { name: 'get_time', arguments: '{}' } }],
+        },
+        {
+          role: 'tool',
+          content: '{"time":"12:00"}',
+          toolCallId: 'call_2',
+        },
+      ],
+    };
+    const translated = (adapter as unknown as {
+      translateRequest: (r: ChatCompletionRequest, s: boolean) => { messages: Array<Record<string, unknown>> };
+    }).translateRequest(req, false);
+
+    expect(translated.messages[0]?.tool_calls).toHaveLength(1);
+    expect(translated.messages[1]?.tool_call_id).toBe('call_1');
+    expect(translated.messages[2]?.tool_calls).toHaveLength(1);
+    expect(translated.messages[3]?.tool_call_id).toBe('call_2');
+  });
+
   it('throws on 401 with descriptive ProviderResponseError', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,

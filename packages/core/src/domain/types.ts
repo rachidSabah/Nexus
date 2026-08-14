@@ -156,6 +156,8 @@ export interface ChatMessage {
   readonly name?: string;
   readonly toolCallId?: string;
   readonly toolCalls?: readonly ToolCall[];
+  readonly tool_call_id?: string;
+  readonly tool_calls?: readonly ToolCall[];
   /**
    * Reasoning text (thinking tokens) from reasoning-capable upstreams.
    * Serially: adapters capture `reasoning_content`/`reasoning` here so
@@ -164,6 +166,7 @@ export interface ChatMessage {
    * emits it as a `thinking` block.
    */
   readonly reasoningContent?: string;
+  readonly reasoning_content?: string;
 }
 
 export type ChatMessageContentPart =

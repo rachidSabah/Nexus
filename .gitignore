@@ -13,10 +13,17 @@ coverage/
 
 # Environment / secrets — NEVER commit real credentials
 .env
+.env.*
+!.env.example
 .env.local
 .env.*.local
 .envrc
 *.local
+vault.json
+*.pem
+*.key
+*.db
+*.sqlite
 
 # IDE
 .idea/
@@ -33,6 +40,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+
+# Gateway runtime logs
+apps/gateway/*.log
+apps/gateway/*.err.log
 
 # Local helper artifacts / machine-specific scripts
 *.lnk

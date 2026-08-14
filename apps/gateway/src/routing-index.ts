@@ -61,34 +61,39 @@ export class RoutingIndexManager {
     reasoning?: boolean;
     providerId?: string;
   }): ModelDescriptor[] {
-    let candidateIds: Set<string> | undefined;
-
-    const intersect = (set: Set<string>) => {
-      if (!candidateIds) {
-        candidateIds = new Set(set);
-      } else {
-        for (const id of candidateIds) {
-          if (!set.has(id)) candidateIds.delete(id);
-        }
-      }
-    };
-
-    if (opts.freeOnly) intersect(this.freeSet);
-    if (opts.toolCalling) intersect(this.toolCallingSet);
-    if (opts.vision) intersect(this.visionSet);
-    if (opts.reasoning) intersect(this.reasoningSet);
-    if (opts.providerId && this.providerMap.has(opts.providerId)) {
-      intersect(this.providerMap.get(opts.providerId)!);
+    const setsToIntersect: Array<Set<string>> = [];
+    if (opts.freeOnly) setsToIntersect.push(this.freeSet);
+    if (opts.toolCalling) setsToIntersect.push(this.toolCallingSet);
+    if (opts.vision) setsToIntersect.push(this.visionSet);
+    if (opts.reasoning) setsToIntersect.push(this.reasoningSet);
+    if (opts.providerId) {
+      const pSet = this.providerMap.get(opts.providerId);
+      if (!pSet) return [];
+      setsToIntersect.push(pSet);
     }
 
-    if (!candidateIds) {
+    if (setsToIntersect.length === 0) {
       return Array.from(this.modelMap.values());
     }
 
+    // Sort by smallest set first for minimal iterations (optimal multi-set intersection)
+    setsToIntersect.sort((a, b) => a.size - b.size);
+    const smallest = setsToIntersect[0]!;
+    const otherSets = setsToIntersect.slice(1);
+
     const result: ModelDescriptor[] = [];
-    for (const id of candidateIds) {
-      const m = this.modelMap.get(id);
-      if (m) result.push(m);
+    for (const id of smallest) {
+      let match = true;
+      for (let i = 0; i < otherSets.length; i++) {
+        if (!otherSets[i]!.has(id)) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        const m = this.modelMap.get(id);
+        if (m) result.push(m);
+      }
     }
     return result;
   }
