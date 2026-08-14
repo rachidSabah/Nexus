@@ -181,17 +181,16 @@ export default function ModelsPage() {
             No models match this filter. Trigger a refresh to run provider discovery.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+          <div className="w-full">
+            <table className="w-full text-left text-sm table-fixed">
               <thead>
                 <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-white/50">
-                  <th className="pb-3 pr-4 font-semibold">Model</th>
-                  <th className="pb-3 pr-4 font-semibold">Provider</th>
-                  <th className="pb-3 pr-4 font-semibold">Tier</th>
-                  <th className="pb-3 pr-4 font-semibold">Context</th>
-                  <th className="pb-3 pr-4 font-semibold">Capabilities</th>
-                  <th className="pb-3 pr-4 font-semibold">Pricing /1K</th>
-                  <th className="pb-3 font-semibold">Status</th>
+                  <th className="w-[30%] pb-3 pr-4 font-semibold">Model</th>
+                  <th className="w-[15%] pb-3 pr-4 font-semibold">Provider</th>
+                  <th className="w-[10%] pb-3 pr-4 font-semibold">Tier</th>
+                  <th className="w-[12%] pb-3 pr-4 font-semibold">Context</th>
+                  <th className="w-[18%] pb-3 pr-4 font-semibold">Capabilities</th>
+                  <th className="w-[15%] pb-3 font-semibold">Pricing / Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -201,18 +200,18 @@ export default function ModelsPage() {
                   const capsList = Object.entries(caps)
                     .filter(([, v]) => v === true)
                     .map(([k]) => k)
-                    .slice(0, 4);
+                    .slice(0, 3);
                   const input = m.pricing?.inputPer1K ?? undefined;
                   const output = m.pricing?.outputPer1K ?? undefined;
                   return (
                     <tr key={`${m.providerId}-${m.id}-${index}`} className="transition hover:bg-white/[0.03]">
-                      <td className="py-3 pr-4">
-                        <div className="font-mono text-xs text-white">{m.id}</div>
+                      <td className="py-3 pr-4 overflow-hidden">
+                        <div className="font-mono text-xs text-white truncate" title={m.id}>{m.id}</div>
                         {m.nativeModelId && m.nativeModelId !== m.id && (
-                          <div className="font-mono text-[10px] text-white/35">{m.nativeModelId}</div>
+                          <div className="font-mono text-[10px] text-white/35 truncate" title={m.nativeModelId}>{m.nativeModelId}</div>
                         )}
                       </td>
-                      <td className="py-3 pr-4 font-mono text-xs text-nexus-300">{m.providerId}</td>
+                      <td className="py-3 pr-4 font-mono text-xs text-nexus-300 truncate" title={m.providerId}>{m.providerId}</td>
                       <td className="py-3 pr-4">
                         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold border ${
                           isFree
@@ -241,20 +240,22 @@ export default function ModelsPage() {
                           {capsList.length === 0 && <span className="text-[10px] text-white/30">—</span>}
                         </div>
                       </td>
-                      <td className="py-3 pr-4 font-mono text-[11px] text-white/60">
-                        {isFree
-                          ? 'free'
-                          : input !== undefined && output !== undefined
-                            ? `$${input}/${output}`
-                            : '—'}
-                      </td>
-                      <td className="py-3">
-                        <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${
-                          m.stale ? 'text-amber-400' : 'text-emerald-400'
-                        }`}>
-                          <CheckCircle2 className="h-3 w-3" />
-                          {m.stale ? 'stale' : m.availability ?? 'available'}
-                        </span>
+                      <td className="py-3 font-mono text-[11px] text-white/60">
+                        <div className="flex flex-col gap-0.5">
+                          <span>
+                            {isFree
+                              ? 'free'
+                              : input !== undefined && output !== undefined
+                                ? `$${input}/${output}`
+                                : '—'}
+                          </span>
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${
+                            m.stale ? 'text-amber-400' : 'text-emerald-400'
+                          }`}>
+                            <CheckCircle2 className="h-2.5 w-2.5" />
+                            {m.stale ? 'stale' : m.availability ?? 'available'}
+                          </span>
+                        </div>
                       </td>
                     </tr>
                   );
