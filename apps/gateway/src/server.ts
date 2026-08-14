@@ -351,7 +351,7 @@ export class HttpServer {
 
   private registerRoutes(): void {
     // ── Health ─────────────────────────────────────────────────────────
-    this.fastify.get('/health', async () => {
+    const handleHealth = async () => {
       const endpoints = this.deps.routing.listEndpoints();
       const healthy = endpoints.filter((e) => e.health === 'healthy').length;
       return {
@@ -360,7 +360,9 @@ export class HttpServer {
         endpoints: { total: endpoints.length, healthy, degraded: endpoints.filter((e) => e.health === 'degraded').length, open: endpoints.filter((e) => e.health === 'circuit_open').length },
         uptime: process.uptime(),
       };
-    });
+    };
+    this.fastify.get('/health', handleHealth);
+    this.fastify.get('/v1/health', handleHealth);
 
     // ── Readiness (Phase 16 §20) ────────────────────────────────────────
     // Reports whether critical Nexus subsystems are up. A single unhealthy
@@ -714,7 +716,7 @@ export class HttpServer {
     });
 
     // ── Nexus Doctor Diagnostic API (§18 / Phase 21 §13) ──────────────
-    this.fastify.get('/v1/doctor', async () => {
+    const handleDoctor = async () => {
       const models = this.deps.modelRegistry.list();
       const freeModels = this.deps.modelRegistry.listFree();
       const endpoints = this.deps.routing.listEndpoints();
@@ -724,18 +726,12 @@ export class HttpServer {
       const apps = globalAppEngine.listApplications();
       const vaultKeys = this.deps.keyRegistry.listAll();
       const catalogVersion = this.deps.modelRegistry.getCatalogVersion();
-      const healthyModels = models.filter((m) => !m.stale);
 
       return {
         status: endpoints.length > 0 ? 'HEALTHY' : 'NO_PROVIDERS_CONFIGURED',
         version: GATEWAY_VERSION,
         uptime: process.uptime(),
         catalogVersion,
-        providerCount: endpoints.length,
-        modelCount: models.length,
-        healthyModelCount: healthyModels.length,
-        freeModelCount: freeModels.length,
-        agentCount: detectedAgents.length,
         configuredAgentCount: detectedAgents.filter((a) => a.found).length,
         checks: {
           gatewayReachable: true,
@@ -761,7 +757,9 @@ export class HttpServer {
         detectedAgents,
         agyRuntime: agyHealth,
       };
-    });
+    };
+    this.fastify.get('/v1/doctor', handleDoctor);
+    this.fastify.get('/doctor', handleDoctor);
 
     // ── Phase 21 Release Health API (§14) ──────────────────────────────
     this.fastify.get('/v1/release/health', async () => {
@@ -797,7 +795,7 @@ export class HttpServer {
     // ── Agent Runtime Management API (§2) ─────────────────────────────
     this.fastify.get('/v1/runtime-agents', async () => {
       const manager = new AgentRuntimeManager();
-      const agents = await manager.listAgents();
+      const agents = await manager.getTruthfulStates();
       return { agents };
     });
 
@@ -814,41 +812,56 @@ export class HttpServer {
       };
     });
 
-    // ── Universal Agent Proxy Health (Phase 20 §4) ─────────────────────
+    // ── Universal Agent Proxy Health (Phase 20 §4 & Phase 23-PRE §13) ──
     this.fastify.get('/v1/runtime-agents/health', async () => {
-      const unified = await this.getUnifiedRegistry().composeAll();
+      const manager = new AgentRuntimeManager();
+      const states = await manager.getTruthfulStates();
       const models = this.deps.modelRegistry.list();
       const healthMap: Record<string, {
         status: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' | 'NOT_INSTALLED' | 'NOT_CONFIGURED';
         gateway: 'reachable' | 'unreachable';
         models: number;
         detected: boolean;
+        configured: boolean;
         runnable: boolean;
-        liveVerified: boolean;
+        gatewayReachable: boolean;
+        catalogReachable: boolean;
+        inferenceVerified: boolean;
+        streamingVerified: boolean;
+        toolCallingVerified: boolean;
         protocol: string;
+        lastVerification: string | null;
+        failureReason: string | null;
         lastCheck: string;
       }> = {};
 
-      for (const a of unified) {
+      for (const a of states) {
         let status: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' | 'NOT_INSTALLED' | 'NOT_CONFIGURED' = 'NOT_INSTALLED';
-        if (a.liveVerified) {
+        if (a.inferenceVerified) {
           status = 'HEALTHY';
-        } else if (a.runnable) {
+        } else if (a.runnable && a.configured) {
           status = 'HEALTHY';
-        } else if (a.registered) {
-          status = 'DEGRADED';
-        } else if (a.detected) {
+        } else if (a.runnable && !a.configured) {
           status = 'NOT_CONFIGURED';
+        } else if (a.detected) {
+          status = 'DEGRADED';
         }
 
         healthMap[a.id] = {
           status,
-          gateway: 'reachable',
+          gateway: a.gatewayReachable ? 'reachable' : 'unreachable',
           models: models.length,
           detected: a.detected,
+          configured: a.configured,
           runnable: a.runnable,
-          liveVerified: a.liveVerified,
+          gatewayReachable: a.gatewayReachable,
+          catalogReachable: a.catalogReachable,
+          inferenceVerified: a.inferenceVerified,
+          streamingVerified: a.streamingVerified,
+          toolCallingVerified: a.toolCallingVerified,
           protocol: a.protocol,
+          lastVerification: a.lastVerification,
+          failureReason: a.failureReason,
           lastCheck: new Date().toISOString(),
         };
       }
@@ -859,11 +872,17 @@ export class HttpServer {
     this.fastify.get('/v1/runtime-agents/:id', async (request, reply) => {
       const { id } = request.params as { id: string };
       const manager = new AgentRuntimeManager();
-      const agent = await manager.getAgent(id);
+      const agent = await manager.getTruthfulState(id);
       if (!agent) {
         return reply.code(404).send({ error: { message: `Agent '${id}' not found` } });
       }
       return agent;
+    });
+
+    this.fastify.post('/v1/runtime-agents/:id/verify', async (request) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      return manager.verifyAgent(id);
     });
 
     this.fastify.post('/v1/runtime-agents/:id/configure', async (request) => {

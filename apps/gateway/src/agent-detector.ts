@@ -23,6 +23,7 @@
  */
 
 import { exec } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { access, constants } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { promisify } from 'node:util';
@@ -67,15 +68,21 @@ const KNOWN_AGENTS: Array<{
     configPaths: ['.claude/settings.json', '.claude/settings.local.json'],
   },
   {
+    id: 'agy',
+    name: 'AGY Builder Agent',
+    binaries: ['agy'],
+    configPaths: ['.agy/config.json'],
+  },
+  {
     id: 'codex-cli',
     name: 'Codex CLI',
     binaries: ['codex'],
-    configPaths: ['.codex/config.json'],
+    configPaths: ['.codex/config.toml', '.codex/config.json'],
   },
   {
     id: 'gemini-cli',
     name: 'Gemini CLI',
-    binaries: ['gemini'],
+    binaries: ['gemini', 'gemini-cli'],
     npmPackages: ['@anthropic-ai/gemini-cli', '@google/gemini-cli'],
     configPaths: ['.gemini/settings.json'],
   },
@@ -83,7 +90,7 @@ const KNOWN_AGENTS: Array<{
     id: 'hermes-cli',
     name: 'Hermes CLI',
     binaries: ['hermes'],
-    configPaths: ['.hermes/config.json'],
+    configPaths: ['AppData/Local/hermes/config.yaml', '.hermes/config.yaml', '.hermes/config.json'],
   },
   {
     id: 'opencode',
@@ -280,25 +287,47 @@ export class AgentDetector {
     };
   }
 
-  /** Looks for a binary in PATH using `command -v` (Unix) or `where` (Windows). */
+  /** Looks for a binary in PATH using `command -v` (Unix) or `where` (Windows) with known folder fallbacks. */
   private async findInPath(binary: string): Promise<string | undefined> {
     try {
       const cmd = this.platform === 'win32'
         ? `where ${binary} 2>nul`
         : `command -v ${binary} 2>/dev/null`;
       const { stdout } = await execAsync(cmd, { timeout: 2000 });
-      const path = stdout.trim().split('\n')[0]?.trim();
-      return path || undefined;
+      const path = stdout.trim().split(/\r?\n/)[0]?.trim();
+      if (path) return path;
     } catch {
-      return undefined;
+      // Fall through to known location search
     }
+
+    if (this.platform === 'win32') {
+      const candidates = [
+        `${this.home}/.local/bin/${binary}.exe`,
+        `${this.home}/.local/bin/${binary}.cmd`,
+        `${this.home}/AppData/Local/Programs/${binary}/bin/${binary}.exe`,
+        `${this.home}/AppData/Local/Programs/${binary}/${binary}.exe`,
+        `${this.home}/AppData/Local/${binary}/${binary}-agent/venv/Scripts/${binary}.exe`,
+        `${this.home}/AppData/Local/${binary}/bin/${binary}.exe`,
+        `${this.home}/AppData/Roaming/npm/${binary}.cmd`,
+        `${this.home}/AppData/Local/agy/bin/${binary}.exe`,
+      ];
+      for (const c of candidates) {
+        try {
+          await access(c, constants.F_OK);
+          return c;
+        } catch {
+          // not found
+        }
+      }
+    }
+    return undefined;
   }
 
   /** Tries to extract a version string from `binary --version`. */
   private async tryGetVersion(binary: string): Promise<string | undefined> {
     try {
       const { stdout } = await execAsync(`${binary} --version`, { timeout: 3000 });
-      return stdout.trim().split('\n')[0] || undefined;
+      return stdout.trim().split(/\r?\n/)[0] || undefined;
     } catch {
       return undefined;
     }
@@ -324,6 +353,14 @@ export class AgentDetector {
   /** Resolves the first existing config path, or the first candidate if none exist. */
   private resolveConfigPath(paths?: string[]): string | undefined {
     if (!paths || paths.length === 0) return undefined;
+    for (const p of paths) {
+      const full = p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) ? p : `${this.home}/${p}`;
+      try {
+        if (accessSyncExists(full)) return full;
+      } catch {
+        // continue
+      }
+    }
     return `${this.home}/${paths[0]}`;
   }
 
@@ -335,5 +372,13 @@ export class AgentDetector {
     } catch {
       return false;
     }
+  }
+}
+
+function accessSyncExists(path: string): boolean {
+  try {
+    return existsSync(path);
+  } catch {
+    return false;
   }
 }

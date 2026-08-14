@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   InMemoryEventBus,
   ModelRegistry,
@@ -264,4 +264,32 @@ describe('Phase 22.6: Universal Coding-Agent Gateway Certification Suite', () =>
       expect(serialized).not.toContain('Bearer');
     });
   });
+
+  describe('7. Phase 23-PRE: Truthful Agent Health & Verification Model (§13 & §14)', () => {
+    it('provides granular truthful agent health verification without collapsing states', async () => {
+      const { AgentRuntimeManager } = await import('../src/agent-runtime-manager.js');
+      const manager = new AgentRuntimeManager();
+
+      const states = await manager.getTruthfulStates();
+      expect(Array.isArray(states)).toBe(true);
+      expect(states.length).toBeGreaterThan(0);
+
+      const agy = states.find((a) => a.id === 'agy');
+      expect(agy).toBeDefined();
+      expect(agy?.name).toBe('AGY Builder Agent');
+
+      const verification = await manager.verifyAgent('claude-code');
+      expect(verification).toBeDefined();
+      expect(verification.id).toBe('claude-code');
+      expect(typeof verification.detected).toBe('boolean');
+      expect(typeof verification.configured).toBe('boolean');
+      expect(typeof verification.runnable).toBe('boolean');
+      expect(typeof verification.gatewayReachable).toBe('boolean');
+      expect(typeof verification.catalogReachable).toBe('boolean');
+      expect(typeof verification.inferenceVerified).toBe('boolean');
+      expect(typeof verification.streamingVerified).toBe('boolean');
+      expect(typeof verification.toolCallingVerified).toBe('boolean');
+    }, 20000);
+  });
 });
+

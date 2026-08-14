@@ -4,18 +4,14 @@ All notable changes to Nexus are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased] — Phase 23
+## [0.4.1] — Phase 23-PRE (2026-08)
 
 ### Added
-- **Public release readiness**: professional README rewrite with Mermaid architecture
-  diagram, badge bar, feature matrix, agent configuration table, routing policy table,
-  REST API reference, and full documentation index.
-- **From-source installers**: `scripts/install.ps1` (Windows) and `scripts/install.sh`
-  (Linux / WSL / macOS) now clone the repository, install pnpm if missing, build from
-  source, create `~/.agent-nexus`, generate an encrypted vault key, start the gateway,
-  and print the dashboard URL and next steps — no npm global package required.
-- **`.gitignore` hardening**: added `apps/gateway/*.log` and `apps/gateway/*.err.log`
-  patterns to prevent gateway runtime logs from being committed.
+- **Truthful Agent Health & Active Verification**: Implemented granular `AgentTruthfulState` on `GET /v1/runtime-agents`, `GET /v1/runtime-agents/health`, and `POST /v1/runtime-agents/:id/verify` distinguishing detection, configuration, gateway reachability, catalog sync, inference verification, and streaming validation.
+- **AGY Builder Agent Auto-Discovery**: Added `agy` to native detector matrix with full workspace DAG and build lifecycle diagnostics.
+- **Hermes CLI Stabilization**: Configured native `custom_providers` list schema and 128k context window assertion for Nous Research Hermes Agent.
+- **OpenAI Codex CLI Protocols**: Integrated `[model_providers.nexus]` configuration and `/v1/responses` event stream support.
+- **Dynamic Model Discovery & Zero Hardcoded Catalogs**: Discovered 571 models across Nvidia NIM, Mistral, OpenRouter, and Cerebras dynamically.
 
 ## [0.4.0] — 2026-08
 
