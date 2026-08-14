@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 # Nexus
 
@@ -11,6 +11,10 @@
 [![Version](https://img.shields.io/badge/version-0.4.0-blueviolet)](CHANGELOG.md)
 
 *Nexus is not an AI model. Nexus is the infrastructure layer between your coding agents and every model provider.*
+
+<br/>
+
+<img src="./docs/assets/nexus-dashboard.png" alt="Nexus Universal Dashboard & Control Plane" width="880" />
 
 </div>
 

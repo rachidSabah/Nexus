@@ -2,7 +2,7 @@
   "name": "agent-nexus-gateway",
   "version": "0.4.0",
   "private": true,
-  "description": "The most advanced local AI Gateway — universal routing, streaming, MCP, A2A, plugins, and a beautiful dashboard.",
+  "description": "Universal AI Coding-Agent Gateway & Autonomous Control Plane — dynamic multi-provider routing, protocol translation, token optimization, and self-healing agent mesh.",
   "license": "Apache-2.0",
   "author": "Agent Nexus Gateway Contributors",
   "homepage": "https://github.com/rachidSabah/codingghosts",
