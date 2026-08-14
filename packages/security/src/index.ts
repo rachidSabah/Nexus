@@ -173,15 +173,87 @@ export class RbacService {
 
 /**
  * Built-in roles.
+ *
+ * Phase 19 extends the vocabulary with granular permissions (spec §5) while
+ * preserving the original coarse perms (`gateway:chat`, `providers:read`, …)
+ * so existing `requirePermission` calls keep working. Wildcards (`*`, `:*` )
+ * are resolved by `RbacService.matches`.
  */
+export const PERMISSIONS = {
+  // Catalog / models
+  READ_CATALOG: 'catalog:read',
+  READ_MODELS: 'models:read',
+  READ_AGENTS: 'agents:read',
+  READ_APPLICATIONS: 'applications:read',
+  READ_WORKFLOWS: 'workflows:read',
+  READ_AUDIT: 'audit:read',
+  // Execution
+  RUN_AGENT: 'agents:run',
+  RUN_WORKFLOW: 'workflows:run',
+  BUILD_APPLICATION: 'applications:build',
+  // Management
+  MANAGE_PROVIDERS: 'providers:write',
+  MANAGE_KEYS: 'keys:write',
+  MANAGE_RUNTIME_AGENTS: 'agents:write',
+  MANAGE_POLICIES: 'policies:write',
+  // Diagnostics / system
+  MANAGE_METRICS: 'metrics:read',
+  ADMIN_SYSTEM: '*',
+} as const;
+
 export const BUILTIN_ROLES: Record<string, Role> = {
   admin: {
     name: 'admin',
     permissions: ['*'],
   },
+  operator: {
+    name: 'operator',
+    permissions: [
+      'gateway:chat',
+      'gateway:embed',
+      'gateway:stream',
+      'providers:read',
+      'providers:write',
+      'agents:read',
+      'agents:run',
+      'agents:write',
+      'workflows:read',
+      'workflows:run',
+      'applications:read',
+      'applications:build',
+      'metrics:read',
+      'audit:read',
+      'keys:read',
+    ],
+  },
   developer: {
     name: 'developer',
-    permissions: ['gateway:chat', 'gateway:embed', 'gateway:stream', 'providers:read'],
+    permissions: [
+      'gateway:chat',
+      'gateway:embed',
+      'gateway:stream',
+      'providers:read',
+      'agents:read',
+      'agents:run',
+      'workflows:read',
+      'workflows:run',
+      'applications:read',
+      'applications:build',
+      'metrics:read',
+    ],
+  },
+  reader: {
+    name: 'reader',
+    permissions: [
+      'providers:read',
+      'models:read',
+      'catalog:read',
+      'agents:read',
+      'workflows:read',
+      'applications:read',
+      'metrics:read',
+      'audit:read',
+    ],
   },
   viewer: {
     name: 'viewer',

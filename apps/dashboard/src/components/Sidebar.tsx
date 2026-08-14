@@ -9,6 +9,8 @@ const NAV = [
   { href: '/providers', label: 'Providers', icon: Boxes },
   { href: '/models', label: 'Models', icon: Cpu },
   { href: '/keys', label: 'API Keys', icon: KeyRound },
+  { href: '/observability', label: 'Observability', icon: Activity },
+  { href: '/audit', label: 'Audit', icon: ScrollText },
   { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/agents', label: 'Agents', icon: Boxes },
   { href: '/applications', label: 'Applications', icon: Blocks },

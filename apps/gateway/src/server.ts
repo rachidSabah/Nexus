@@ -9,6 +9,17 @@ import { ChatCompletionUseCase, TaskOrchestrator, InMemoryTaskStore, SubprocessA
 import { AgentRuntimeManager } from './agent-runtime-manager.js';
 import { UnifiedAgentRegistry } from './unified-agent-registry.js';
 import { IntegrationBuildingAgentAdapter, type BuildingAgentPort } from './building-agent-port.js';
+import {
+  PolicyEngine,
+  AuditLogger,
+  createTenantContext,
+  classifyPrincipal,
+  redactSecrets,
+  newRequestId,
+  NEXUS_REQUEST_ID_HEADER,
+  type SecurityContext,
+} from './security-fabric.js';
+import { globalObservability } from './observability.js';
 import { finalizeResponsesEvents, newResponsesStreamState, toChatRequest, toResponsesResponse, translateChunkToResponsesEvents, type ResponsesRequest } from './responses-compat.js';
 import type {
   BudgetManager,
@@ -189,6 +200,91 @@ export class HttpServer {
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
+
+    // ── Robustness: accept POST/PUT with no/empty JSON body as `{}` ──
+    // Fastify's default JSON parser throws FST_ERR_CTP_EMPTY_JSON_BODY on an
+    // empty body with content-type application/json. Action endpoints (plan,
+    // build, cancel, retry, …) legitimately accept an optional body, so we
+    // normalize an empty body to `{}` instead of 400ing well-formed requests.
+    this.fastify.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+      if (body === '' || body == null) return done(null, {});
+      try {
+        done(null, JSON.parse(body as string));
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    });
+    // ── Phase 19 §7/§9: request correlation id + secret-redaction hook ──
+    this.fastify.addHook('onRequest', async (request) => {
+      (request as unknown as { nexusRequestId: string; nexusStartTime: number }).nexusRequestId = newRequestId();
+      (request as unknown as { nexusRequestId: string; nexusStartTime: number }).nexusStartTime = Date.now();
+      globalObservability.recordRequestStart();
+    });
+    this.fastify.addHook('onResponse', async (request, reply) => {
+      const startTime = (request as unknown as { nexusStartTime?: number }).nexusStartTime ?? Date.now();
+      const duration = Date.now() - startTime;
+      const success = reply.statusCode < 400;
+      globalObservability.recordRequestEnd(duration, success);
+    });
+    this.fastify.addHook('onSend', async (request, reply, payload) => {
+      const reqId = (request as unknown as { nexusRequestId?: string }).nexusRequestId ?? newRequestId();
+      reply.header(NEXUS_REQUEST_ID_HEADER, reqId);
+      // Redact secrets from any serializable response body (defense in depth).
+      if (typeof payload === 'string' && payload.length > 0 && (payload.startsWith('{') || payload.startsWith('['))) {
+        try {
+          const parsed = JSON.parse(payload);
+          const redacted = redactSecrets(parsed);
+          return JSON.stringify(redacted);
+        } catch {
+          // Not JSON — leave untouched.
+        }
+      }
+      return payload;
+    });
+
+    // ── Phase 19 §4/§5: centralized management-endpoint authentication ──
+    // Public endpoints (health, readiness, liveness, catalog, models, version,
+    // metrics, observability) stay open. Everything else under /v1/* requires
+    // a valid principal when auth is enabled (open-install → allow, mirroring
+    // requirePermission). Per-action RBAC still applies on the routes that call
+    // requirePermission(); this guard enforces the "management = authenticated"
+    // floor without rewriting every handler.
+    const PUBLIC_PREFIXES = [
+      '/health',
+      '/ready',
+      '/live',
+      '/v1/version',
+      '/v1/catalog',
+      '/v1/models',
+      '/metrics',
+      '/v1/metrics',
+      '/v1/debug/observability',
+      '/v1/debug/tokens',
+      '/v1/debug/routing',
+      '/v1/openapi.json',
+    ];
+    this.fastify.addHook('preHandler', async (request, reply) => {
+      const url = (request.routeOptions.url ?? request.url ?? '').split('?')[0]!;
+      if (PUBLIC_PREFIXES.some((p) => url === p || url.startsWith(p + '/'))) return;
+
+      const enforceable = this.deps.rbac.listPrincipals().filter((p) => p.apiKeyHash).length;
+      if (enforceable === 0) return; // open install — anonymous allowed
+
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const decision = this.getPolicyEngine().decide(principal, 'access', url, enforceable);
+      if (!decision.allow) {
+        await this.getAuditLogger().record({
+          event: 'auth.failed',
+          requestId: (request as unknown as { nexusRequestId?: string }).nexusRequestId,
+          action: 'access',
+          resource: url,
+          principal,
+          success: false,
+          metadata: { reason: decision.reason },
+        });
+        return reply.code(401).send({ error: { message: 'Authentication required', code: 'AUTHENTICATION_ERROR' } });
+      }
+    });
   }
 
   /** Memoized Unified Agent Registry (composes detection + runtime + registry). */
@@ -198,6 +294,30 @@ export class HttpServer {
       this.unifiedRegistry = new UnifiedAgentRegistry(this.deps.agents);
     }
     return this.unifiedRegistry;
+  }
+
+  /** Memoized PolicyEngine (default-deny over existing RbacService). */
+  private policyEngine?: PolicyEngine;
+  private getPolicyEngine(): PolicyEngine {
+    if (!this.policyEngine) {
+      const enforceable = this.deps.rbac.listPrincipals().filter((p) => p.apiKeyHash).length;
+      this.policyEngine = new PolicyEngine(this.deps.rbac, { authEnabled: enforceable > 0 });
+    }
+    return this.policyEngine;
+  }
+
+  /** Memoized structured AuditLogger (over existing InMemoryAuditLog sink). */
+  private auditLogger?: AuditLogger;
+  private getAuditLogger(): AuditLogger {
+    if (!this.auditLogger) {
+      const enabled = process.env['NEXUS_AUDIT_ENABLED'] !== 'false';
+      const promptAudit = process.env['NEXUS_PROMPT_AUDIT_ENABLED'] === 'true';
+      this.auditLogger = new AuditLogger(this.deps.audit, {
+        promptAuditEnabled: enabled && promptAudit,
+        promptSnippetMaxLen: 120,
+      });
+    }
+    return this.auditLogger;
   }
 
   /** Memoized BuildingAgentPort (Hermes / OpenCode / other coding agents). */
@@ -261,6 +381,44 @@ export class HttpServer {
         version: GATEWAY_VERSION,
         catalogVersion: this.deps.modelRegistry.getCatalogVersion(),
         subsystems,
+      });
+    });
+
+    // ── Liveness (Phase 19 §20) ───────────────────────────────────────────
+    // Process is alive. Does NOT expose secrets. Distinct from /ready (which
+    // checks subsystem readiness) and /health (human-readable overview).
+    this.fastify.get('/live', async (_request, reply) => {
+      return reply.code(200).send({
+        alive: true,
+        status: 'alive',
+        uptime: process.uptime(),
+        pid: process.pid,
+        version: GATEWAY_VERSION,
+      });
+    });
+
+    // ── Security context (Phase 19 §3/§6/§7) ─────────────────────────────
+    // Returns the caller's resolved SecurityContext + TenantContext. Anonymous
+    // (open install) is reported honestly — never fabricates a principal.
+    this.fastify.get('/v1/security/context', async (request, reply) => {
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const roles = this.getPolicyEngine().rolesOf(principal);
+      const kind = classifyPrincipal(roles);
+      const tenant = createTenantContext({
+        requestId: (request as unknown as { nexusRequestId?: string }).nexusRequestId,
+      });
+      const ctx: SecurityContext = { principalId: principal, kind, roles, tenant };
+      return reply.send({
+        principalId: ctx.principalId ?? null,
+        kind: ctx.kind,
+        roles: ctx.roles,
+        tenant: {
+          tenantId: ctx.tenant.tenantId,
+          userId: ctx.tenant.userId,
+          requestId: ctx.tenant.requestId,
+          traceId: ctx.tenant.traceId,
+        },
+        authEnabled: this.deps.rbac.listPrincipals().some((p) => p.apiKeyHash),
       });
     });
 
@@ -526,6 +684,26 @@ export class HttpServer {
       };
     });
 
+    // ── Real-Time Catalog Status (Phase 20 §2) ─────────────────────────
+    this.fastify.get('/v1/catalog/status', async () => {
+      const stats = this.deps.modelRegistry.stats();
+      const endpoints = this.deps.routing.listEndpoints();
+      const allModels = this.deps.modelRegistry.list();
+      const healthyModels = allModels.filter(m => !m.stale).length;
+      return {
+        catalogVersion: this.deps.modelRegistry.getCatalogVersion(),
+        lastUpdated: new Date(stats.lastRefreshAt || Date.now()).toISOString(),
+        providers: endpoints.length,
+        models: stats.totalModels,
+        newModels: 0,
+        removedModels: 0,
+        staleModels: stats.staleModels,
+        healthyModels,
+        freeModels: stats.freeModels,
+        errors: stats.errors,
+      };
+    });
+
     // ── Nexus Doctor Diagnostic API (§18) ──────────────────────────────
     this.fastify.get('/v1/doctor', async () => {
       const models = this.deps.modelRegistry.list();
@@ -590,6 +768,48 @@ export class HttpServer {
         gatewayReachability: 'http://127.0.0.1:8787',
         recommendedBaseUrl: 'http://127.0.0.1:8787',
       };
+    });
+
+    // ── Universal Agent Proxy Health (Phase 20 §4) ─────────────────────
+    this.fastify.get('/v1/runtime-agents/health', async () => {
+      const unified = await this.getUnifiedRegistry().composeAll();
+      const models = this.deps.modelRegistry.list();
+      const healthMap: Record<string, {
+        status: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' | 'NOT_INSTALLED' | 'NOT_CONFIGURED';
+        gateway: 'reachable' | 'unreachable';
+        models: number;
+        detected: boolean;
+        runnable: boolean;
+        liveVerified: boolean;
+        protocol: string;
+        lastCheck: string;
+      }> = {};
+
+      for (const a of unified) {
+        let status: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' | 'NOT_INSTALLED' | 'NOT_CONFIGURED' = 'NOT_INSTALLED';
+        if (a.liveVerified) {
+          status = 'HEALTHY';
+        } else if (a.runnable) {
+          status = 'HEALTHY';
+        } else if (a.registered) {
+          status = 'DEGRADED';
+        } else if (a.detected) {
+          status = 'NOT_CONFIGURED';
+        }
+
+        healthMap[a.id] = {
+          status,
+          gateway: 'reachable',
+          models: models.length,
+          detected: a.detected,
+          runnable: a.runnable,
+          liveVerified: a.liveVerified,
+          protocol: a.protocol,
+          lastCheck: new Date().toISOString(),
+        };
+      }
+
+      return healthMap;
     });
 
     this.fastify.get('/v1/runtime-agents/:id', async (request, reply) => {
@@ -1613,6 +1833,15 @@ export class HttpServer {
       };
     });
 
+    // ── Routing Decisions History (Phase 20 §5) ────────────────────────
+    this.fastify.get('/v1/debug/routing/recent', async (request) => {
+      const q = request.query as { limit?: string };
+      const limit = Math.min(100, Math.max(1, parseInt(q.limit ?? '50', 10) || 50));
+      return {
+        recent: globalObservability.getRecentRouting(limit),
+      };
+    });
+
     this.fastify.post('/v1/models/refresh', async () => {
       // Don't await — refresh can take 15+ seconds if providers are slow.
       // Return immediately so the dashboard can poll /stats for completion.
@@ -2323,6 +2552,146 @@ let optMessages: never[] | undefined;
           memoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
           nodeVersion: process.version,
           platform: process.platform,
+        },
+      };
+    });
+
+    // ── Granular Metrics Sub-resources (Phase 20 §11) ──────────────────
+    this.fastify.get('/v1/metrics/usage', async () => {
+      const traces = this.deps.tracer.stats();
+      const opt = getOptStatsSummary();
+      return {
+        requestsTotal: traces.totalTraces,
+        requestsSuccess: traces.successCount,
+        requestsFailed: traces.failedCount,
+        tokensInput: opt.originalTokens,
+        tokensOutput: opt.optimizedTokens,
+        tokensSaved: opt.savedTokens,
+        tokenSavingsPercent: opt.overallSavingsPct,
+        uptime: process.uptime(),
+      };
+    });
+
+    this.fastify.get('/v1/metrics/providers', async () => {
+      const endpoints = this.deps.routing.listEndpoints();
+      const keys = this.deps.keyRegistry.listAll();
+      const byProvider: Record<string, {
+        providerId: string;
+        healthy: boolean;
+        endpointsCount: number;
+        keysCount: number;
+        activeKeys: number;
+        totalRequests: number;
+        totalTokens: number;
+        totalErrors: number;
+        avgLatencyMs: number;
+      }> = {};
+
+      for (const ep of endpoints) {
+        const pid = ep.providerId;
+        if (!byProvider[pid]) {
+          byProvider[pid] = {
+            providerId: pid,
+            healthy: ep.health === 'healthy',
+            endpointsCount: 0,
+            keysCount: 0,
+            activeKeys: 0,
+            totalRequests: 0,
+            totalTokens: 0,
+            totalErrors: 0,
+            avgLatencyMs: 0,
+          };
+        }
+        byProvider[pid].endpointsCount++;
+        if (ep.health === 'healthy') byProvider[pid].healthy = true;
+      }
+
+      for (const k of keys) {
+        const pid = k.providerId;
+        if (byProvider[pid]) {
+          byProvider[pid].keysCount++;
+          if (k.status === 'active') byProvider[pid].activeKeys++;
+          byProvider[pid].totalRequests += k.requests;
+          byProvider[pid].totalTokens += k.tokens;
+          byProvider[pid].totalErrors += k.errors;
+        }
+      }
+
+      return { providers: Object.values(byProvider) };
+    });
+
+    this.fastify.get('/v1/metrics/models', async () => {
+      const stats = this.deps.modelRegistry.stats();
+      return {
+        totalModels: stats.totalModels,
+        freeModels: stats.freeModels,
+        staleModels: stats.staleModels,
+        byProvider: stats.byProvider,
+        lastRefreshAt: stats.lastRefreshAt,
+      };
+    });
+
+    // ── Unified Observability Snapshot (Phase 20 §16) ───────────────────
+    this.fastify.get('/v1/debug/observability', async () => {
+      const obs = globalObservability.getSnapshot();
+      const opt = getOptStatsSummary();
+      const endpoints = this.deps.routing.listEndpoints();
+      const apps = globalAppEngine.listApplications();
+      const manager = new AgentRuntimeManager();
+      const agents = await manager.listAgents();
+
+      return {
+        requestsTotal: obs.requestsTotal,
+        requestsSuccess: obs.requestsSuccess,
+        requestsFailed: obs.requestsFailed,
+        activeRequests: obs.activeRequests,
+        avgLatencyMs: obs.avgLatencyMs,
+        p50Ms: obs.p50Ms,
+        p95Ms: obs.p95Ms,
+        p99Ms: obs.p99Ms,
+        tokensInput: opt.originalTokens,
+        tokensOutput: opt.optimizedTokens,
+        tokensSaved: opt.savedTokens,
+        tokenSavingsPercent: opt.overallSavingsPct,
+        activeAgents: agents.filter(a => a.runnable).length,
+        activeWorkflows: 0,
+        activeApplications: apps.filter(a => a.stage === 'BUILD' || a.stage === 'REPAIR').length,
+        providerFailures: 0,
+        modelFailures: 0,
+        rateLimits: 0,
+        cooldowns: this.deps.keyRegistry.listAll().filter(k => k.status === 'cooldown').length,
+        circuitOpenCount: endpoints.filter(e => e.health === 'circuit_open').length,
+        uptime: process.uptime(),
+        catalogVersion: this.deps.modelRegistry.getCatalogVersion(),
+      };
+    });
+
+    // ── OpenAPI Schema Endpoint (Phase 20 §14) ──────────────────────────
+    this.fastify.get('/v1/openapi.json', async () => {
+      return {
+        openapi: '3.0.3',
+        info: {
+          title: 'Nexus Autonomous AI Gateway API',
+          version: GATEWAY_VERSION,
+          description: 'Production-grade universal AI coding-agent gateway and control plane API.',
+        },
+        paths: {
+          '/health': { get: { summary: 'Overall gateway health check' } },
+          '/ready': { get: { summary: 'Subsystem readiness probe' } },
+          '/live': { get: { summary: 'Process liveness probe' } },
+          '/v1/models': { get: { summary: 'List discovered and registered models' } },
+          '/v1/catalog': { get: { summary: 'Universal normalized model catalog' } },
+          '/v1/catalog/status': { get: { summary: 'Real-time catalog and provider discovery status' } },
+          '/v1/runtime-agents': { get: { summary: 'List detected and configured coding agents' } },
+          '/v1/runtime-agents/health': { get: { summary: 'Health diagnostics for supported agents' } },
+          '/v1/debug/observability': { get: { summary: 'Aggregated real-time observability telemetry' } },
+          '/v1/metrics': { get: { summary: 'System, provider, and router metrics' } },
+          '/v1/metrics/usage': { get: { summary: 'Token and request usage metrics' } },
+          '/v1/debug/routing/recent': { get: { summary: 'Recent intelligent routing decisions history' } },
+          '/v1/applications': {
+            get: { summary: 'List autonomous applications' },
+            post: { summary: 'Create new autonomous application specification' },
+          },
         },
       };
     });

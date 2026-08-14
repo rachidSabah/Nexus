@@ -113,7 +113,7 @@ export default function ApplicationsPage() {
         const res = await fetch(`/api/v1/applications/${id}/${action}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: body ? JSON.stringify(body) : undefined,
+          body: JSON.stringify(body ?? {}),
         });
         if (!res.ok) {
           const txt = await res.text();
@@ -196,8 +196,8 @@ export default function ApplicationsPage() {
             </p>
           )}
           <ul className="flex flex-col gap-2">
-            {apps.map((a) => (
-              <li key={a.appId}>
+            {apps.map((a, i) => (
+              <li key={`${i}-${a.appId}`}>
                 <button
                   onClick={() => setSelectedId(a.appId)}
                   className={`w-full rounded-lg border px-3 py-2.5 text-left transition ${
@@ -279,8 +279,8 @@ export default function ApplicationsPage() {
                 <div>
                   <div className="stat-label mb-1">Risk Flags</div>
                   <div className="flex flex-wrap gap-1.5">
-                    {detail.buildContext.riskFlags.map((f) => (
-                      <span key={f} className="pill bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/30">
+                    {detail.buildContext.riskFlags.map((f, i) => (
+                      <span key={`${i}-${f}`} className="pill bg-amber-500/10 text-amber-300 ring-1 ring-amber-500/30">
                         {f}
                       </span>
                     ))}
@@ -292,8 +292,8 @@ export default function ApplicationsPage() {
                 <div>
                   <div className="stat-label mb-1">Architecture</div>
                   <ul className="flex flex-col gap-1">
-                    {detail.architecture.components.map((c) => (
-                      <li key={c.name} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    {detail.architecture.components.map((c, i) => (
+                      <li key={`${i}-${c.name}`} className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
                         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> {c.name}
                         <span className="font-mono text-xs" style={{ color: 'var(--text-muted)' }}>({c.type})</span>
                       </li>
