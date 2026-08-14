@@ -137,38 +137,44 @@ export default function ModelsPage() {
         </div>
       </div>
 
-      {/* Filter chips + provider breakdown */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          {(['all', 'free', 'paid', 'stale'] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`rounded-full px-3.5 py-1.5 text-xs font-semibold border transition ${
-                filter === f
-                  ? 'border-nexus-500/50 bg-nexus-500/20 text-nexus-200'
-                  : 'border-white/10 bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              {f === 'all' ? 'All' : f === 'free' ? `Free (${freeCount})` : f === 'paid' ? `Paid (${paidCount})` : `Stale (${statStale})`}
-            </button>
-          ))}
-          <div className="relative ml-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search models, providers, capabilities…"
-              className="w-56 rounded-full border border-white/10 bg-black/40 py-1.5 pl-8 pr-3 text-xs text-white placeholder-white/30 outline-none transition focus:border-nexus-500/50 focus:bg-black/60"
-            />
-          </div>
+      {/* Search and Filters Bar */}
+      <div className="flex flex-col gap-4">
+        {/* Dedicated Prominent Search Bar */}
+        <div className="relative w-full">
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/50" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search discovered models by model ID, native name, provider (e.g. nvidia-nim, openrouter, mistral), or capability (e.g. vision, tools)..."
+            className="w-full rounded-xl border border-white/15 bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-white placeholder-white/40 backdrop-blur-md outline-none transition focus:border-nexus-400 focus:bg-white/[0.07] focus:ring-2 focus:ring-nexus-500/20"
+          />
         </div>
-        <div className="flex flex-wrap gap-1.5 text-[11px] text-white/50">
-          {Object.entries(byProvider).map(([provider, count]) => (
-            <span key={provider} className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 font-mono">
-              {provider}: <span className="text-white/80 font-semibold">{count}</span>
-            </span>
-          ))}
+
+        {/* Filter chips + provider breakdown */}
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            {(['all', 'free', 'paid', 'stale'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`rounded-full px-3.5 py-1.5 text-xs font-semibold border transition ${
+                  filter === f
+                    ? 'border-nexus-500/50 bg-nexus-500/20 text-nexus-200'
+                    : 'border-white/10 bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                {f === 'all' ? `All (${discover?.models?.length ?? 0})` : f === 'free' ? `Free (${freeCount})` : f === 'paid' ? `Paid (${paidCount})` : `Stale (${statStale})`}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5 text-[11px] text-white/50">
+            {Object.entries(byProvider).map(([provider, count]) => (
+              <span key={provider} className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 font-mono">
+                {provider}: <span className="text-white/80 font-semibold">{count}</span>
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
