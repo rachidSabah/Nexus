@@ -141,10 +141,9 @@ export class AgentRuntimeManager {
   /**
    * Executes truthful active verification for a specific agent (Phase 23-PRE §14).
    */
-  async verifyAgent(id: string, opts: { gatewayUrl?: string } = {}): Promise<AgentTruthfulState> {
+  async verifyAgent(id: string, _opts: { gatewayUrl?: string } = {}): Promise<AgentTruthfulState> {
     const detected = await this.detector.detectById(id);
     const adapter = this.integrationMap.get(id);
-    const _gatewayUrl = opts.gatewayUrl ?? 'http://127.0.0.1:8787';
 
     if (!detected) {
       const state: AgentTruthfulState = {

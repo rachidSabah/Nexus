@@ -433,13 +433,11 @@ export class AgyBuilderAdapter implements AgyBuilderPort {
     delete childEnv['OPENAI_API_KEY'];
     // Do NOT delete NEXUS_API_KEY / ANX_API_KEY — needed for gateway auth if set
 
-    // AGY arguments: --print for non-interactive, --model, --dangerously-skip-permissions
+    // AGY arguments: -p <prompt> for non-interactive execution with skip permissions
     const args: string[] = [
-      '--print',
       '--dangerously-skip-permissions',
-      '--model', model,
       '--output-format', 'text',
-      prompt,
+      '-p', prompt,
     ];
 
     let stdout = '';
