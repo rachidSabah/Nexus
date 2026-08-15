@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 
 import type {
   AgentSelection,
@@ -112,6 +113,10 @@ export class AgentOrchestrator {
    * executes via bridge, and executes automated multi-agent failover if necessary.
    */
   async execute(request: OrchestratedExecutionRequest): Promise<OrchestratedExecutionResult> {
+    if (request.workspace && (!isAbsolute(request.workspace) || request.workspace.includes('..'))) {
+      throw new Error(`Workspace path must be an absolute path without traversal: '${request.workspace}'`);
+    }
+
     this.totalOrchestrations++;
     const executionId = `orch-${randomUUID().substring(0, 8)}`;
     const startTime = Date.now();
