@@ -42,6 +42,7 @@ import type {
   KeyRegistry,
   ModelDescriptor,
 } from '@anx/core';
+import { isSsrfSafe } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
 import {
@@ -2175,6 +2176,13 @@ export class HttpServer {
       }
 
       const cleanBase = rawBase.endsWith('/v1') ? rawBase : `${rawBase}/v1`;
+      if (!isSsrfSafe(cleanBase, { allowPrivate: true })) {
+        return reply.code(400).send({
+          ok: false,
+          step: 'CONNECT',
+          error: 'SSRF guard: invalid or prohibited destination URL (cloud metadata and non-HTTP schemes are blocked)',
+        });
+      }
       const modelsUrl = `${cleanBase}/models`;
       const headers: Record<string, string> = {
         'Accept': 'application/json',
@@ -2271,6 +2279,14 @@ export class HttpServer {
       }
 
       const cleanBase = rawBase.endsWith('/v1') ? rawBase : `${rawBase}/v1`;
+      if (!isSsrfSafe(cleanBase, { allowPrivate: true })) {
+        return reply.code(400).send({
+          error: {
+            message: 'SSRF guard: invalid or prohibited destination URL (cloud metadata and non-HTTP schemes are blocked)',
+            code: 'PROHIBITED_BASE_URL',
+          },
+        });
+      }
       const displayName = (body?.displayName ?? '').trim() || rawId.toUpperCase();
       const apiKey = body?.apiKey?.trim();
       const endpointId = `auto-${rawId}`;
@@ -2281,9 +2297,10 @@ export class HttpServer {
       }
 
       // 2. Store API Key in KeyRegistry (automatically encrypted into vault)
+      let registeredKey;
       if (apiKey) {
         const keyId = `key-${rawId}-${Date.now().toString(36)}`;
-        await this.deps.keyRegistry.register({
+        registeredKey = await this.deps.keyRegistry.register({
           id: keyId,
           providerId: rawId,
           plaintext: apiKey,
@@ -2337,6 +2354,7 @@ export class HttpServer {
         displayName,
         baseUrl: cleanBase,
         modelsDiscovered: discoveryResult.discovered,
+        key: registeredKey ? { id: registeredKey.id, lastFour: registeredKey.lastFour, status: registeredKey.status } : undefined,
         message: `Provider '${displayName}' successfully onboarded with ${discoveryResult.discovered} model(s) ready for routing.`,
       });
     });

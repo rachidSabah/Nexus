@@ -93,4 +93,4 @@ export {
 } from './application/session-runtime.js';
 
 // ── Version ─────────────────────────────────────────────────────────────────
-export const CORE_VERSION = '0.1.0';
+export const CORE_VERSION = '0.5.0';

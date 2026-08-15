@@ -21,12 +21,15 @@ export interface SsrfOptions {
   allowlist?: string[];
 }
 
+const METADATA_RANGES: Array<[number, number]> = [
+  [0xa9fe0000, 0xffff0000], // 169.254.0.0/16 link-local + metadata (IMDS)
+];
+
 const PRIVATE_RANGES: Array<[number, number]> = [
   [0x7f000000, 0xff000000], // 127.0.0.0/8 loopback
   [0x0a000000, 0xff000000], // 10.0.0.0/8
   [0xac100000, 0xfff00000], // 172.16.0.0/12
   [0xc0a80000, 0xffff0000], // 192.168.0.0/16
-  [0xa9fe0000, 0xffff0000], // 169.254.0.0/16 link-local + metadata
   [0x00000000, 0xff000000], // 0.0.0.0/8 unspecified
 ];
 
@@ -40,6 +43,15 @@ function ipv4ToInt(ip: string): number | null {
     n = (n << 8) | o;
   }
   return n >>> 0;
+}
+
+function isMetadataIp(ip: string): boolean {
+  const n = ipv4ToInt(ip);
+  if (n === null) return false;
+  for (const [net, mask] of METADATA_RANGES) {
+    if (((n & mask) >>> 0) === net) return true;
+  }
+  return false;
 }
 
 function isPrivateIp(ip: string): boolean {
@@ -62,16 +74,25 @@ export function isSsrfSafe(url: string, opts: SsrfOptions = {}): boolean {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   const host = parsed.hostname.toLowerCase();
   if (!host) return false;
+
+  // Cloud metadata hosts are ALWAYS blocked unconditionally
+  if (host === 'metadata.google.internal' || host === 'instance-data') return false;
+
+  // IPv4 literals
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    // 169.254.0.0/16 (AWS/Azure/GCP metadata) is NEVER allowed under any circumstances
+    if (isMetadataIp(host)) return false;
+    if (isPrivateIp(host) && !opts.allowPrivate) return false;
+    return true;
+  }
+
   if (host === 'localhost' || host.endsWith('.localhost')) return !!opts.allowPrivate;
   if (host === '::1' || host === '0.0.0.0') return !!opts.allowPrivate;
   if (opts.allowlist?.includes(host)) return true;
 
   // IPv6 literal or hostname — defer to DNS at connection time; for explicit
-  // IPv4 literals we can block immediately.
-  if (host.includes(':')) return !!opts.allowPrivate; // IPv6 — treat as private unless allowed
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-    if (isPrivateIp(host) && !opts.allowPrivate) return false;
-  }
+  // IPv6 literals treat as private unless allowed
+  if (host.includes(':')) return !!opts.allowPrivate;
   return true;
 }
 
