@@ -42,8 +42,10 @@ import type {
   KeyRegistry,
   ModelDescriptor,
   LocalAgentExecutionRequest,
+  OrchestratedExecutionRequest,
+  OrchestrationPolicy,
 } from '@anx/core';
-import { LocalAgentBridge, isSsrfSafe } from '@anx/core';
+import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
 import {
@@ -149,6 +151,7 @@ export interface HttpServerDeps {
   readonly contextWindowManager: ContextWindowManager;
   readonly costPredictor: CostPredictor;
   readonly localAgentBridge?: LocalAgentBridge;
+  readonly agentOrchestrator?: AgentOrchestrator;
 }
 
 // ── Token-economics accumulator (§30) — real measurements only, capped ring. ──
@@ -171,19 +174,27 @@ export function getOptStatsSummary() {
       originalTokens: acc.originalTokens + r.originalTokens,
       optimizedTokens: acc.optimizedTokens + r.optimizedTokens,
       savedTokens: acc.savedTokens + r.savedTokens,
+      savingsPct: 0,
+      changed: false,
     }),
-    { originalTokens: 0, optimizedTokens: 0, savedTokens: 0 },
+    { originalTokens: 0, optimizedTokens: 0, savedTokens: 0, savingsPct: 0, changed: false },
   );
-  const byMode = new Map<string, { requests: number; savedTokens: number }>();
-  for (const r of optStats) {
-    const mm = byMode.get(r.mode) ?? { requests: 0, savedTokens: 0 };
-    mm.requests += 1;
-    mm.savedTokens += r.savedTokens;
-    byMode.set(r.mode, mm);
+  const byMode = new Map<string, { original: number; optimized: number; saved: number }>();
+  for (const s of optStats) {
+    const cur = byMode.get(s.mode) ?? { original: 0, optimized: 0, saved: 0 };
+    cur.original += s.originalTokens;
+    cur.optimized += s.optimizedTokens;
+    cur.saved += s.savedTokens;
+    byMode.set(s.mode, cur);
   }
   return {
     totalRequests: optStats.length,
-    ...total,
+    originalTokens: total.originalTokens,
+    optimizedTokens: total.optimizedTokens,
+    savedTokens: total.savedTokens,
+    totalOriginalTokens: total.originalTokens,
+    totalOptimizedTokens: total.optimizedTokens,
+    totalSavedTokens: total.savedTokens,
     overallSavingsPct:
       total.originalTokens > 0 ? Math.round((total.savedTokens / total.originalTokens) * 1000) / 10 : 0,
     byMode: Object.fromEntries(byMode),
@@ -202,6 +213,7 @@ export function recordOptStats(entry: Omit<OptStatEntry, 'ts'>) {
 export class HttpServer {
   private readonly fastify;
   private readonly localAgentBridge: LocalAgentBridge;
+  private readonly agentOrchestrator: AgentOrchestrator;
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
@@ -209,6 +221,10 @@ export class HttpServer {
       gatewayUrl: `http://${deps.config.server.host}:${deps.config.server.port}`,
       routing: deps.routing,
       modelRegistry: deps.modelRegistry,
+      events: deps.events,
+    });
+    this.agentOrchestrator = deps.agentOrchestrator ?? new AgentOrchestrator({
+      bridge: this.localAgentBridge,
       events: deps.events,
     });
 
@@ -955,7 +971,94 @@ export class HttpServer {
       return { configuredAgents: results };
     });
 
-    // ── Orchestration API (§5) ─────────────────────────────────────────
+    // ── Phase 28: Intelligent Agent Orchestration API ─────────────────
+    // POST /v1/agents/select — Dry-run / Explain mode
+    this.fastify.post('/v1/agents/select', async (request, reply) => {
+      const body = (request.body as {
+        prompt: string;
+        policy?: OrchestrationPolicy;
+        userPreferences?: { preferredAgents?: string[]; excludedAgents?: string[] };
+      }) ?? {};
+      if (!body.prompt?.trim()) {
+        return reply.code(400).send({ error: { message: 'prompt is required for agent selection' } });
+      }
+      const selection = await this.agentOrchestrator.selectAgent({
+        prompt: body.prompt.trim(),
+        policy: body.policy,
+        userPreferences: body.userPreferences,
+      });
+      return selection;
+    });
+
+    // POST /v1/agents/execute — Automated selection, lease acquisition, execution & failover
+    this.fastify.post('/v1/agents/execute', async (request, reply) => {
+      const body = request.body as OrchestratedExecutionRequest;
+      if (!body?.prompt?.trim()) {
+        return reply.code(400).send({ error: { message: 'prompt is required for orchestrated execution' } });
+      }
+
+      // Check risk approval if high risk task
+      const promptLower = body.prompt.toLowerCase();
+      const isDangerous = /\b(drop database|rm -rf|delete all|destroy infrastructure|format disk)\b/i.test(promptLower);
+      if (isDangerous) {
+        return reply.code(403).send({
+          error: {
+            message: 'High-risk operation requires explicit operator approval before orchestrated agent dispatch',
+            requiresApproval: true,
+          },
+        });
+      }
+
+      try {
+        const result = await this.agentOrchestrator.execute({
+          prompt: body.prompt.trim(),
+          workspace: body.workspace,
+          policy: body.policy,
+          targetModel: body.targetModel,
+          timeoutMs: body.timeoutMs,
+          maxRetries: body.maxRetries,
+          allowFailover: body.allowFailover,
+          env: body.env,
+          userPreferences: body.userPreferences,
+        });
+        return result;
+      } catch (err) {
+        return reply.code(500).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // GET /v1/agents/executions — List recent orchestrated executions
+    this.fastify.get('/v1/agents/executions', async (request) => {
+      const { limit } = (request.query as { limit?: string }) ?? {};
+      const lim = limit ? parseInt(limit, 10) : 50;
+      return { executions: this.agentOrchestrator.listExecutions(lim) };
+    });
+
+    // GET /v1/agents/executions/:id — Get execution details by ID
+    this.fastify.get('/v1/agents/executions/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const execution = this.agentOrchestrator.getExecution(id);
+      if (!execution) {
+        return reply.code(404).send({ error: { message: `Execution '${id}' not found` } });
+      }
+      return execution;
+    });
+
+    // POST /v1/agents/executions/:id/cancel — Cancel running orchestrated execution
+    this.fastify.post('/v1/agents/executions/:id/cancel', async (request) => {
+      const { id } = request.params as { id: string };
+      const cancelled = this.agentOrchestrator.cancelExecution(id);
+      return { ok: cancelled, executionId: id };
+    });
+
+    // GET /v1/debug/agent-orchestration — Telemetry, active leases & distribution
+    this.fastify.get('/v1/debug/agent-orchestration', async () => {
+      return {
+        metrics: this.agentOrchestrator.getMetrics(),
+        recentExecutions: this.agentOrchestrator.listExecutions(20),
+      };
+    });
+
     // ── Orchestration API (§5 & §6) ───────────────────────────────────
     const globalTaskStore = new InMemoryTaskStore();
     const globalAgentExecutor = new SubprocessAgentExecutor();

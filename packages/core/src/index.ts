@@ -104,5 +104,12 @@ export { AgyAdapter } from './application/agent-adapters/agy-adapter.js';
 export { GeminiAdapter } from './application/agent-adapters/gemini-adapter.js';
 export { LocalAgentBridge, type LocalAgentBridgeMetrics, type LocalAgentBridgeOptions } from './application/local-agent-bridge.js';
 
+// ── Phase 28: Intelligent Multi-Agent Orchestration Fabric ──────────────────
+export * from './domain/agent-orchestrator.js';
+export { IntentClassifier } from './application/orchestrator/intent-classifier.js';
+export { AgentScoringEngine, KNOWN_AGENT_CAPABILITIES, type AgentRuntimeMetricsSnapshot } from './application/orchestrator/agent-scoring-engine.js';
+export { AgentPool } from './application/orchestrator/agent-pool.js';
+export { AgentOrchestrator, type AgentOrchestratorOptions } from './application/orchestrator/agent-orchestrator.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';

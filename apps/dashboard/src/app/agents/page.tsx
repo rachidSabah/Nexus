@@ -298,6 +298,43 @@ export default function AgentsPage() {
         </div>
       </div>
 
+      {/* Phase 28: Intelligent Multi-Agent Orchestrator Section */}
+      <div className="rounded-2xl border border-nexus-500/30 bg-gradient-to-b from-nexus-950/30 to-black/40 p-6 backdrop-blur-xl space-y-6">
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center border-b border-white/10 pb-4">
+          <div>
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-nexus-400" /> Intelligent Multi-Agent Orchestration Fabric
+            </h2>
+            <p className="text-xs text-white/50">
+              Autonomous selection, intent classification, multi-dimensional candidate scoring, execution leases, and automated failover.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
+              Auto-Selection: Active
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="rounded-xl border border-white/10 bg-black/40 p-4 space-y-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-nexus-300">Default Policy</div>
+            <div className="font-mono text-sm font-bold text-white">nexus/auto</div>
+            <div className="text-[11px] text-white/50">Dynamically routes to optimal local runtime by task intent & capability</div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/40 p-4 space-y-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-cyan-300">Supported Adapters</div>
+            <div className="font-mono text-sm font-bold text-cyan-200">Claude · Codex · Hermes · OpenCode · AGY · Gemini</div>
+            <div className="text-[11px] text-white/50">Normalized capability matrix with cross-platform process isolation</div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-black/40 p-4 space-y-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">Automated Failover</div>
+            <div className="font-mono text-sm font-bold text-emerald-200">Multi-Agent + Model + Key Failover</div>
+            <div className="text-[11px] text-white/50">Circuit-breaker protected fallback without indefinite loops</div>
+          </div>
+        </div>
+      </div>
+
       {/* Service Mesh Agent Registry */}
       <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/40 p-6 backdrop-blur-xl">
         <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-white/70 flex items-center gap-2">
