@@ -36,6 +36,7 @@ import {
   InMemorySessionStore,
   LocalAgentBridge,
   AgentOrchestrator,
+  MissionOrchestrator,
 } from '@anx/core';
 import { AutoHealer } from './auto-healer.js';
 import { McpClient } from '@anx/mcp-client';
@@ -157,6 +158,7 @@ export class GatewayRuntime {
     autoHealer: AutoHealer;
     localAgentBridge: LocalAgentBridge;
     agentOrchestrator: AgentOrchestrator;
+    missionOrchestrator: MissionOrchestrator;
   }) {
     Object.assign(this, opts);
   }
@@ -740,6 +742,11 @@ export class GatewayRuntime {
       events,
     });
 
+    const missionOrchestrator = new MissionOrchestrator({
+      agentOrchestrator,
+      events,
+    });
+
     const server = new HttpServer({
       config,
       routing,
@@ -785,6 +792,7 @@ export class GatewayRuntime {
       costPredictor,
       localAgentBridge,
       agentOrchestrator,
+      missionOrchestrator,
     });
 
     return new GatewayRuntime({
@@ -826,6 +834,7 @@ export class GatewayRuntime {
       sessions: new SessionManager(new InMemorySessionStore(), events),
       localAgentBridge,
       agentOrchestrator,
+      missionOrchestrator,
       // Phase 5
       budgetManager,
       promptCompressor,

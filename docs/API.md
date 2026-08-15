@@ -181,6 +181,46 @@ JSON-RPC 2.0 endpoint for MCP. Methods:
 - `resources/read` — read a resource
 - `ping` — keepalive
 
+### `POST /v1/missions`
+
+Create and auto-plan a new autonomous mission.
+
+```jsonc
+{
+  "objective": "Build a REST API for managing customer accounts",
+  "workspace": "C:\\Projects\\customers",
+  "policy": "nexus/best-coding"
+}
+```
+
+### `POST /v1/missions/:id/plan`
+
+Decompose an objective into a dependency-directed DAG of tasks.
+
+### `POST /v1/missions/:id/approve`
+
+Approve a high/critical risk mission awaiting execution.
+
+### `POST /v1/missions/:id/execute`
+
+Execute a planned mission DAG with multi-agent delegation, parallel scheduling, and self-healing repair loops.
+
+### `POST /v1/missions/:id/pause` / `POST /v1/missions/:id/resume` / `POST /v1/missions/:id/cancel`
+
+Control active mission lifecycle states and recursively terminate subordinate agent processes on cancellation.
+
+### `GET /v1/missions/:id/events`
+
+Server-Sent Events (SSE) stream for live mission progress, task state transitions, and repair loops.
+
+### `GET /v1/missions/:id/checkpoints`
+
+Retrieve persisted mission state checkpoints for crash recovery.
+
+### `GET /v1/debug/missions`
+
+Retrieve global telemetry, active missions, token consumption, and cost aggregates.
+
 ### `POST /v1/a2a/message`
 
 Send an A2A message between agents.

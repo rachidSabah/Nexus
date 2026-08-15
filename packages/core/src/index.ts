@@ -111,5 +111,12 @@ export { AgentScoringEngine, KNOWN_AGENT_CAPABILITIES, type AgentRuntimeMetricsS
 export { AgentPool } from './application/orchestrator/agent-pool.js';
 export { AgentOrchestrator, type AgentOrchestratorOptions } from './application/orchestrator/agent-orchestrator.js';
 
+// ── Phase 29: Unified Agent Mission Orchestration & Autonomous Execution ────
+export * from './domain/mission.js';
+export { MissionPlanner } from './application/mission/mission-planner.js';
+export { MissionVerifier } from './application/mission/mission-verifier.js';
+export { MissionStore } from './application/mission/mission-store.js';
+export { MissionOrchestrator, type MissionOrchestratorOptions } from './application/mission/mission-orchestrator.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';

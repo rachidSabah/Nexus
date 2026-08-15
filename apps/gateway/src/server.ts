@@ -6,7 +6,7 @@ import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
 import type { AIServiceMesh } from '@agent-nexus/service-mesh';
 import type { A2ACoordinator, AgentRegistry as A2AAgentRegistry, TeamManager } from '@anx/a2a';
 import type { AgentRegistry } from '@anx/agents';
-import { ChatCompletionUseCase, TaskOrchestrator, InMemoryTaskStore, SubprocessAgentExecutor, ConcurrencyManager, WorkflowOrchestrator, DAGEngine, AutonomousPlanner, ApplicationEngine, AgyBuilderAdapter, BUILT_IN_WORKFLOWS, SessionManager } from '@anx/core';
+import { ChatCompletionUseCase, TaskOrchestrator, InMemoryTaskStore, SubprocessAgentExecutor, ConcurrencyManager, WorkflowOrchestrator, DAGEngine, AutonomousPlanner, ApplicationEngine, AgyBuilderAdapter, BUILT_IN_WORKFLOWS, SessionManager, MissionOrchestrator, type MissionSpecification, type MissionEvent, type MissionStatus } from '@anx/core';
 import { AgentRuntimeManager } from './agent-runtime-manager.js';
 import { UnifiedAgentRegistry } from './unified-agent-registry.js';
 import { IntegrationBuildingAgentAdapter, type BuildingAgentPort } from './building-agent-port.js';
@@ -153,6 +153,7 @@ export interface HttpServerDeps {
   readonly costPredictor: CostPredictor;
   readonly localAgentBridge?: LocalAgentBridge;
   readonly agentOrchestrator?: AgentOrchestrator;
+  readonly missionOrchestrator?: MissionOrchestrator;
 }
 
 // ── Token-economics accumulator (§30) — real measurements only, capped ring. ──
@@ -215,6 +216,7 @@ export class HttpServer {
   private readonly fastify;
   private readonly localAgentBridge: LocalAgentBridge;
   private readonly agentOrchestrator: AgentOrchestrator;
+  private readonly missionOrchestrator: MissionOrchestrator;
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
@@ -226,6 +228,10 @@ export class HttpServer {
     });
     this.agentOrchestrator = deps.agentOrchestrator ?? new AgentOrchestrator({
       bridge: this.localAgentBridge,
+      events: deps.events,
+    });
+    this.missionOrchestrator = deps.missionOrchestrator ?? new MissionOrchestrator({
+      agentOrchestrator: this.agentOrchestrator,
       events: deps.events,
     });
 
@@ -1065,6 +1071,159 @@ export class HttpServer {
       return {
         metrics: this.agentOrchestrator.getMetrics(),
         recentExecutions: this.agentOrchestrator.listExecutions(20),
+      };
+    });
+
+    // ── Phase 29: Unified Agent Mission Orchestration Fabric ───────────
+    // POST /v1/missions — Create a new mission from specification
+    this.fastify.post('/v1/missions', async (request, reply) => {
+      const body = request.body as MissionSpecification;
+      if (!body?.objective?.trim()) {
+        return reply.code(400).send({ error: { message: 'objective is required to create a mission' } });
+      }
+
+      if (body.workspace && (!isAbsolute(body.workspace) || body.workspace.includes('..'))) {
+        return reply.code(400).send({ error: { message: `Workspace path must be an absolute path without traversal: '${body.workspace}'` } });
+      }
+
+      try {
+        const mission = await this.missionOrchestrator.createMission(body);
+        return reply.code(201).send(mission);
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // GET /v1/missions — List missions with optional status filter
+    this.fastify.get('/v1/missions', async (request) => {
+      const { status, limit } = (request.query as { status?: MissionStatus; limit?: string }) ?? {};
+      const lim = limit ? parseInt(limit, 10) : 50;
+      return { missions: this.missionOrchestrator.listMissions({ status, limit: lim }) };
+    });
+
+    // GET /v1/missions/:id — Get mission details
+    this.fastify.get('/v1/missions/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const mission = this.missionOrchestrator.getMission(id);
+      if (!mission) {
+        return reply.code(404).send({ error: { message: `Mission '${id}' not found` } });
+      }
+      return mission;
+    });
+
+    // POST /v1/missions/:id/plan — Generate or regenerate mission execution DAG
+    this.fastify.post('/v1/missions/:id/plan', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const plan = await this.missionOrchestrator.planMission(id);
+        return plan;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/missions/:id/approve — Explicit operator approval for high/critical risk mission
+    this.fastify.post('/v1/missions/:id/approve', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { approvedBy?: string } | undefined) ?? {};
+      try {
+        const mission = await this.missionOrchestrator.approveMission(id, body.approvedBy ?? 'operator');
+        return mission;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/missions/:id/execute — Execute ready mission DAG
+    this.fastify.post('/v1/missions/:id/execute', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { autoApprove?: boolean } | undefined) ?? {};
+      try {
+        const mission = await this.missionOrchestrator.executeMission(id, { autoApprove: body.autoApprove });
+        return mission;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/missions/:id/pause — Pause active mission
+    this.fastify.post('/v1/missions/:id/pause', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const mission = await this.missionOrchestrator.pauseMission(id);
+        return mission;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/missions/:id/resume — Resume paused mission
+    this.fastify.post('/v1/missions/:id/resume', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const mission = await this.missionOrchestrator.resumeMission(id);
+        return mission;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/missions/:id/cancel — Cancel active mission and abort all subprocesses
+    this.fastify.post('/v1/missions/:id/cancel', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const mission = await this.missionOrchestrator.cancelMission(id);
+        return mission;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // GET /v1/missions/:id/events — Live SSE event stream for mission progress
+    this.fastify.get('/v1/missions/:id/events', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const mission = this.missionOrchestrator.getMission(id);
+      if (!mission) {
+        return reply.code(404).send({ error: { message: `Mission '${id}' not found` } });
+      }
+
+      reply.raw.setHeader('Content-Type', 'text/event-stream');
+      reply.raw.setHeader('Cache-Control', 'no-cache');
+      reply.raw.setHeader('Connection', 'keep-alive');
+      reply.raw.flushHeaders?.();
+
+      // Send existing past events first
+      const pastEvents = this.missionOrchestrator.getEvents(id);
+      for (const ev of pastEvents) {
+        reply.raw.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+      }
+
+      const unsubscribe = this.missionOrchestrator.subscribeEvents(id, (ev: MissionEvent) => {
+        try {
+          reply.raw.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+        } catch {
+          // connection dropped
+        }
+      });
+
+      request.raw.on('close', () => {
+        unsubscribe();
+      });
+    });
+
+    // GET /v1/missions/:id/checkpoints — List checkpoints
+    this.fastify.get('/v1/missions/:id/checkpoints', async (request) => {
+      const { id } = request.params as { id: string };
+      const checkpoints = this.missionOrchestrator.getCheckpoints(id);
+      return { checkpoints };
+    });
+
+    // GET /v1/debug/missions — Telemetry, counts, token & duration aggregates
+    this.fastify.get('/v1/debug/missions', async () => {
+      return {
+        metrics: this.missionOrchestrator.getMetrics(),
+        activeMissions: this.missionOrchestrator.listMissions({ status: 'EXECUTING' as any }),
+        recentMissions: this.missionOrchestrator.listMissions({ limit: 10 }),
       };
     });
 

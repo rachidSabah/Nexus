@@ -1,4 +1,4 @@
-﻿# Nexus Architecture & System Design
+# Nexus Architecture & System Design
 
 Nexus is a **local-first Universal AI Coding-Agent Gateway and Autonomous Control Plane**. It serves as the intelligent infrastructure layer between developer coding agents (Claude Code, Codex, OpenCode, Gemini CLI, Cursor, AGY) and multi-provider model APIs (OpenAI, Anthropic, DeepSeek, Google, Groq, Mistral, xAI, OpenRouter, Cerebras, Together, Fireworks, NVIDIA NIM).
 
@@ -136,3 +136,35 @@ sequenceDiagram
 - **Credential Vault**: Keys are encrypted at rest in `~/.agent-nexus/vault.json` using AES-256-GCM. Keys are never logged or echoed back.
 - **Workspace Isolation**: AGY execution tasks operate within sandbox paths with explicit forbidden path guards preventing modification of the Nexus repository or system roots.
 - **Security Fabric**: Strips authentication headers from outgoing responses and applies `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`.
+
+---
+
+## 6. Phase 29: Unified Agent Mission Orchestration Fabric
+
+Phase 29 introduces autonomous mission decomposition and DAG orchestration above individual coding agents:
+
+```mermaid
+flowchart TD
+    User([User Objective]) --> MissionCtrl[Mission Control API]
+    MissionCtrl --> Planner[Mission Planner]
+    Planner --> RiskEngine{Risk Gate}
+    RiskEngine -->|High/Critical| Approval[Awaiting Operator Approval]
+    RiskEngine -->|Low/Medium| DAG[Mission Task DAG]
+    Approval -->|Approved| DAG
+    
+    DAG --> T1[Task 1: Analysis]
+    DAG --> T2[Task 2: Architecture]
+    DAG --> T3[Task 3: Backend Coding]
+    DAG --> T4[Task 4: Test Suite Gen]
+    
+    T1 & T2 & T3 & T4 --> Orch[Agent Orchestrator]
+    Orch --> MultiAgent[Claude Code / Codex / Hermes / OpenCode / AGY / Gemini]
+    MultiAgent --> ModelFabric[Nexus Model Fabric & Provider Routing]
+    
+    T3 & T4 --> RepairLoop{Test Failure?}
+    RepairLoop -->|Yes (<= 3 attempts)| AutoRepair[Autonomous Repair Loop]
+    AutoRepair --> Orch
+    RepairLoop -->|No| Verifier[Mission Verifier]
+    Verifier --> Result([Mission Completed & Checkpointed])
+```
+
