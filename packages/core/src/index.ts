@@ -118,5 +118,10 @@ export { MissionVerifier } from './application/mission/mission-verifier.js';
 export { MissionStore } from './application/mission/mission-store.js';
 export { MissionOrchestrator, type MissionOrchestratorOptions } from './application/mission/mission-orchestrator.js';
 
+// ── Phase 31: Operations, Observability & Control Plane ─────────────────────
+export * from './domain/system-health.js';
+export { SystemHealthAggregator, type SystemHealthAggregatorDeps } from './application/system-health-aggregator.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';
+

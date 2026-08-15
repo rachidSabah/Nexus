@@ -1,9 +1,34 @@
 'use client';
 
-import { Activity, Zap, Cpu, RefreshCw, BarChart2, ShieldCheck } from 'lucide-react';
+import { Activity, Zap, Cpu, RefreshCw, BarChart2, ShieldCheck, Wrench } from 'lucide-react';
 import useSWR from 'swr';
 
 import { etagFetcher } from '@/lib/etagFetcher';
+
+interface SubsystemReport {
+  subsystem: string;
+  status: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' | 'ERROR' | 'NOT_CONFIGURED' | 'UNKNOWN';
+  healthy: boolean;
+  message: string;
+  metrics: Record<string, unknown>;
+  remediation?: string;
+}
+
+interface UnifiedHealthReport {
+  status: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' | 'ERROR' | 'NOT_CONFIGURED' | 'UNKNOWN';
+  healthy: boolean;
+  version: string;
+  uptimeSeconds: number;
+  timestamp: string;
+  subsystems: Record<string, SubsystemReport>;
+  summary: {
+    totalSubsystems: number;
+    healthySubsystems: number;
+    degradedSubsystems: number;
+    unavailableSubsystems: number;
+    errorSubsystems: number;
+  };
+}
 
 interface ObservabilitySnapshot {
   requestsTotal: number;
@@ -59,6 +84,12 @@ function formatUptime(seconds: number): string {
 }
 
 export default function ObservabilityPage() {
+  const { data: health, mutate: mutateHealth } = useSWR<UnifiedHealthReport>(
+    '/api/v1/system/health',
+    etagFetcher,
+    { refreshInterval: 5000 }
+  );
+
   const { data: obs, mutate: mutateObs } = useSWR<ObservabilitySnapshot>(
     '/api/v1/debug/observability',
     etagFetcher,
@@ -78,6 +109,7 @@ export default function ObservabilityPage() {
   );
 
   const refreshAll = () => {
+    void mutateHealth();
     void mutateObs();
     void mutateProviders();
     void mutateAgents();
@@ -85,6 +117,7 @@ export default function ObservabilityPage() {
 
   const providers = providersData?.providers ?? [];
   const agents = Object.entries(agentHealth ?? {});
+  const subsystems = Object.values(health?.subsystems ?? {});
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
@@ -201,6 +234,52 @@ export default function ObservabilityPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      {/* Unified 14-Pillar Subsystem Health Grid */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold tracking-tight text-white flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-sky-400" /> Unified Subsystem Health Model (14 Pillars)
+          </h2>
+          {health && (
+            <span className={
+              health.status === 'HEALTHY' ? 'pill pill-healthy' :
+              health.status === 'DEGRADED' ? 'pill pill-degraded' :
+              'pill pill-unhealthy'
+            }>
+              Overall: {health.status} ({health.summary?.healthySubsystems ?? 0}/{health.summary?.totalSubsystems ?? 14} Healthy)
+            </span>
+          )}
+        </div>
+        {subsystems.length === 0 ? (
+          <p className="text-sm text-white/40">Aggregating subsystem health telemetry...</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            {subsystems.map((sub, idx) => (
+              <div key={`${idx}-${sub.subsystem}`} className="rounded-lg border border-white/5 bg-white/[0.02] p-3 flex flex-col justify-between gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-xs font-semibold text-white uppercase">{sub.subsystem}</span>
+                  <span className={
+                    sub.status === 'HEALTHY' ? 'pill pill-healthy text-[10px] py-0.5' :
+                    sub.status === 'DEGRADED' ? 'pill pill-degraded text-[10px] py-0.5' :
+                    sub.status === 'NOT_CONFIGURED' ? 'pill bg-sky-500/10 text-sky-400 ring-1 ring-sky-500/30 text-[10px] py-0.5' :
+                    'pill pill-unhealthy text-[10px] py-0.5'
+                  }>
+                    {sub.status}
+                  </span>
+                </div>
+                <div className="text-[11px] text-white/60 line-clamp-2">{sub.message}</div>
+                {sub.remediation && (
+                  <div className="text-[10px] text-amber-400/80 bg-amber-500/10 rounded px-2 py-1 flex items-start gap-1">
+                    <Wrench className="h-3 w-3 shrink-0 mt-0.5" />
+                    <span>{sub.remediation}</span>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>

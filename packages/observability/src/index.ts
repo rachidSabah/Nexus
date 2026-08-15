@@ -362,3 +362,126 @@ export function computeSuccessRate(telemetry: InProcessTelemetry): number {
   const total = succeeded + failed;
   return total === 0 ? 1 : succeeded / total;
 }
+
+/**
+ * Phase 31 Bounded Ring Buffer for in-memory Domain Events.
+ * Keeps memory strictly bounded while allowing live SSE replay and querying.
+ */
+export class BoundedEventBuffer {
+  private readonly buffer: DomainEvent[] = [];
+
+  constructor(private readonly maxCapacity: number = 500) {}
+
+  push(event: DomainEvent): void {
+    if (this.buffer.length >= this.maxCapacity) {
+      this.buffer.shift();
+    }
+    this.buffer.push(event);
+  }
+
+  list(options?: { limit?: number; type?: string; correlationId?: string; since?: number }): DomainEvent[] {
+    let result = this.buffer;
+    if (options?.type) {
+      result = result.filter((e) => e.type === options.type || e.type.startsWith(options.type + '.'));
+    }
+    if (options?.correlationId) {
+      result = result.filter((e) => e.correlationId === options.correlationId);
+    }
+    if (options?.since) {
+      result = result.filter((e) => new Date(e.occurredAt).getTime() >= options.since!);
+    }
+    const limit = options?.limit ?? 100;
+    return result.slice(-limit);
+  }
+
+  clear(): void {
+    this.buffer.length = 0;
+  }
+
+  size(): number {
+    return this.buffer.length;
+  }
+}
+
+/**
+ * Phase 31 Production Operations Metrics Tracker with accurate percentile calculation.
+ */
+export class OperationsMetricsTracker {
+  private readonly latencies: number[] = [];
+  private totalRequests = 0;
+  private successCount = 0;
+  private errorCount = 0;
+  private tokensProcessed = 0;
+
+  constructor(private readonly maxSamples: number = 2000) {}
+
+  recordRequest(latencyMs: number, success: boolean, tokens: number = 0): void {
+    this.totalRequests++;
+    if (success) {
+      this.successCount++;
+    } else {
+      this.errorCount++;
+    }
+    this.tokensProcessed += tokens;
+
+    if (this.latencies.length >= this.maxSamples) {
+      this.latencies.shift();
+    }
+    this.latencies.push(latencyMs);
+  }
+
+  getMetrics(): {
+    totalRequests: number;
+    successCount: number;
+    errorCount: number;
+    errorRatePct: number;
+    tokensProcessed: number;
+    latency: {
+      avgMs: number;
+      p50Ms: number;
+      p95Ms: number;
+      p99Ms: number;
+      minMs: number;
+      maxMs: number;
+    };
+  } {
+    const sorted = [...this.latencies].sort((a, b) => a - b);
+    const count = sorted.length;
+
+    const percentile = (p: number): number => {
+      if (count === 0) return 0;
+      const idx = Math.min(count - 1, Math.floor((p / 100) * count));
+      return sorted[idx] ?? 0;
+    };
+
+    const avgMs = count > 0 ? Math.round(sorted.reduce((s, v) => s + v, 0) / count) : 0;
+    const minMs = count > 0 ? (sorted[0] ?? 0) : 0;
+    const maxMs = count > 0 ? (sorted[count - 1] ?? 0) : 0;
+    const errorRatePct = this.totalRequests > 0 ? Math.round((this.errorCount / this.totalRequests) * 1000) / 10 : 0;
+
+    return {
+      totalRequests: this.totalRequests,
+      successCount: this.successCount,
+      errorCount: this.errorCount,
+      errorRatePct,
+      tokensProcessed: this.tokensProcessed,
+      latency: {
+        avgMs,
+        p50Ms: percentile(50),
+        p95Ms: percentile(95),
+        p99Ms: percentile(99),
+        minMs,
+        maxMs,
+      },
+    };
+  }
+
+  reset(): void {
+    this.latencies.length = 0;
+    this.totalRequests = 0;
+    this.successCount = 0;
+    this.errorCount = 0;
+    this.tokensProcessed = 0;
+  }
+}
+

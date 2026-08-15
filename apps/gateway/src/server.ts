@@ -6,7 +6,7 @@ import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
 import type { AIServiceMesh } from '@agent-nexus/service-mesh';
 import type { A2ACoordinator, AgentRegistry as A2AAgentRegistry, TeamManager } from '@anx/a2a';
 import type { AgentRegistry } from '@anx/agents';
-import { ChatCompletionUseCase, TaskOrchestrator, InMemoryTaskStore, SubprocessAgentExecutor, ConcurrencyManager, WorkflowOrchestrator, DAGEngine, AutonomousPlanner, ApplicationEngine, AgyBuilderAdapter, BUILT_IN_WORKFLOWS, SessionManager, MissionOrchestrator, type MissionSpecification, type MissionEvent, type MissionStatus } from '@anx/core';
+import { ChatCompletionUseCase, TaskOrchestrator, InMemoryTaskStore, SubprocessAgentExecutor, ConcurrencyManager, WorkflowOrchestrator, DAGEngine, AutonomousPlanner, ApplicationEngine, AgyBuilderAdapter, BUILT_IN_WORKFLOWS, SessionManager, MissionOrchestrator, SystemHealthAggregator, type MissionSpecification, type MissionEvent, type MissionStatus } from '@anx/core';
 import { AgentRuntimeManager } from './agent-runtime-manager.js';
 import { UnifiedAgentRegistry } from './unified-agent-registry.js';
 import { IntegrationBuildingAgentAdapter, type BuildingAgentPort } from './building-agent-port.js';
@@ -62,7 +62,7 @@ import type { McpServer } from '@anx/mcp-server';
 import type { McpClient, McpServerConfig } from '@anx/mcp-client';
 import type { DefaultMemory, RagPipeline } from '@anx/memory';
 import type { DefaultNetworkService } from '@anx/networking';
-import type { InProcessTelemetry } from '@anx/observability';
+import { BoundedEventBuffer, OperationsMetricsTracker, type InProcessTelemetry } from '@anx/observability';
 import type { PluginRuntime } from '@anx/plugins';
 import type { AgentRuntime } from '@anx/runtime';
 import type { RbacService, JwtService, EncryptedCredentialVault } from '@anx/security';
@@ -217,6 +217,9 @@ export class HttpServer {
   private readonly localAgentBridge: LocalAgentBridge;
   private readonly agentOrchestrator: AgentOrchestrator;
   private readonly missionOrchestrator: MissionOrchestrator;
+  private readonly systemHealthAggregator: SystemHealthAggregator;
+  private readonly eventBuffer: BoundedEventBuffer;
+  private readonly metricsTracker: OperationsMetricsTracker;
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
@@ -234,6 +237,25 @@ export class HttpServer {
       agentOrchestrator: this.agentOrchestrator,
       events: deps.events,
     });
+    this.systemHealthAggregator = new SystemHealthAggregator({
+      routing: deps.routing,
+      modelRegistry: deps.modelRegistry,
+      keyRegistry: deps.keyRegistry,
+      version: GATEWAY_VERSION,
+      port: deps.config.server.port,
+      host: deps.config.server.host,
+      localAgentBridge: this.localAgentBridge,
+      agentOrchestrator: this.agentOrchestrator,
+      missionOrchestrator: this.missionOrchestrator,
+      budgetManager: deps.budgetManager,
+    });
+    this.eventBuffer = new BoundedEventBuffer(1000);
+    this.metricsTracker = new OperationsMetricsTracker(2000);
+
+    // Stream all domain events into bounded memory buffer for live diagnostics & SSE replay
+    deps.events.subscribeAll((event) => {
+      this.eventBuffer.push(event);
+    });
 
     // ── Robustness: accept POST/PUT with no/empty JSON body as `{}` ──
     // Fastify's default JSON parser throws FST_ERR_CTP_EMPTY_JSON_BODY on an
@@ -248,10 +270,21 @@ export class HttpServer {
         done(err as Error, undefined);
       }
     });
-    // ── Phase 19 §7/§9: request correlation id + secret-redaction hook ──
+    // ── Phase 19/31: request correlation ids + secret-redaction hook ──
     this.fastify.addHook('onRequest', async (request) => {
-      (request as unknown as { nexusRequestId: string; nexusStartTime: number }).nexusRequestId = newRequestId();
-      (request as unknown as { nexusRequestId: string; nexusStartTime: number }).nexusStartTime = Date.now();
+      const headers = request.headers as Record<string, string | undefined>;
+      const reqId = headers['x-nexus-request-id'] || headers['x-request-id'] || newRequestId();
+      const missionId = headers['x-nexus-mission-id'];
+      const taskId = headers['x-nexus-task-id'];
+      const executionId = headers['x-nexus-execution-id'];
+
+      const reqState = request as unknown as Record<string, unknown>;
+      reqState.nexusRequestId = reqId;
+      reqState.nexusMissionId = missionId;
+      reqState.nexusTaskId = taskId;
+      reqState.nexusExecutionId = executionId;
+      reqState.nexusStartTime = Date.now();
+
       globalObservability.recordRequestStart();
     });
     this.fastify.addHook('onResponse', async (request, reply) => {
@@ -259,10 +292,17 @@ export class HttpServer {
       const duration = Date.now() - startTime;
       const success = reply.statusCode < 400;
       globalObservability.recordRequestEnd(duration, success);
+      this.metricsTracker.recordRequest(duration, success);
     });
     this.fastify.addHook('onSend', async (request, reply, payload) => {
-      const reqId = (request as unknown as { nexusRequestId?: string }).nexusRequestId ?? newRequestId();
+      const reqState = request as unknown as Record<string, string | undefined>;
+      const reqId = reqState.nexusRequestId ?? newRequestId();
       reply.header(NEXUS_REQUEST_ID_HEADER, reqId);
+      reply.header('x-nexus-request-id', reqId);
+      if (reqState.nexusMissionId) reply.header('x-nexus-mission-id', reqState.nexusMissionId);
+      if (reqState.nexusTaskId) reply.header('x-nexus-task-id', reqState.nexusTaskId);
+      if (reqState.nexusExecutionId) reply.header('x-nexus-execution-id', reqState.nexusExecutionId);
+
       // Redact secrets from any serializable response body (defense in depth).
       if (typeof payload === 'string' && payload.length > 0 && (payload.startsWith('{') || payload.startsWith('['))) {
         try {
@@ -276,9 +316,9 @@ export class HttpServer {
       return payload;
     });
 
-    // ── Phase 19 §4/§5: centralized management-endpoint authentication ──
+    // ── Phase 19/31: centralized management-endpoint authentication ──
     // Public endpoints (health, readiness, liveness, catalog, models, version,
-    // metrics, observability) stay open. Everything else under /v1/* requires
+    // metrics, observability, system control plane) stay open. Everything else under /v1/* requires
     // a valid principal when auth is enabled (open-install → allow, mirroring
     // requirePermission). Per-action RBAC still applies on the routes that call
     // requirePermission(); this guard enforces the "management = authenticated"
@@ -292,6 +332,8 @@ export class HttpServer {
       '/v1/models',
       '/metrics',
       '/v1/metrics',
+      '/v1/system',
+      '/v1/routing/explain',
       '/v1/debug/observability',
       '/v1/debug/tokens',
       '/v1/debug/routing',
@@ -430,6 +472,228 @@ export class HttpServer {
         uptime: process.uptime(),
         pid: process.pid,
         version: GATEWAY_VERSION,
+      });
+    });
+
+    // ── Phase 31: Operations, Observability & Control Plane API ────────
+    // GET /v1/system/health — Truthful multi-subsystem aggregated health
+    this.fastify.get('/v1/system/health', async (_request, reply) => {
+      const health = await this.systemHealthAggregator.evaluateHealth();
+      const httpCode = health.healthy ? 200 : 503;
+      return reply.code(httpCode).send(health);
+    });
+
+    // GET /v1/system/status — Lightweight operational overview
+    this.fastify.get('/v1/system/status', async () => {
+      const health = await this.systemHealthAggregator.evaluateHealth();
+      return {
+        status: health.status,
+        healthy: health.healthy,
+        version: health.version,
+        uptimeSeconds: health.uptimeSeconds,
+        summary: health.summary,
+        timestamp: health.timestamp,
+      };
+    });
+
+    // GET /v1/system/diagnostics — Deep diagnostic analysis with root cause & remediation
+    this.fastify.get('/v1/system/diagnostics', async () => {
+      return this.systemHealthAggregator.generateDiagnostics();
+    });
+
+    // POST /v1/system/diagnostics/export — Export full diagnostics report (JSON or Markdown)
+    this.fastify.post('/v1/system/diagnostics/export', async (request) => {
+      const body = (request.body as { format?: 'json' | 'markdown' } | undefined) ?? {};
+      const diag = await this.systemHealthAggregator.generateDiagnostics();
+      const health = await this.systemHealthAggregator.evaluateHealth();
+      if (body.format === 'markdown') {
+        const md = [
+          `# NEXUS SYSTEM HEALTH DIAGNOSTIC REPORT`,
+          `**Timestamp**: ${diag.generatedAt}`,
+          `**Version**: ${diag.version}`,
+          `**Overall Status**: ${diag.status}`,
+          `**Environment**: Node ${diag.environment.nodeVersion} (${diag.environment.platform} ${diag.environment.arch}) | RSS: ${diag.environment.memoryRssMb}MB | Uptime: ${diag.environment.uptime}s`,
+          ``,
+          `## Subsystem Status Summary`,
+          `| Subsystem | Status | Healthy | Message |`,
+          `|---|---|---|---|`,
+          ...Object.values(health.subsystems).map((s) => `| ${s.subsystem} | ${s.status} | ${s.healthy ? 'YES' : 'NO'} | ${s.message} |`),
+          ``,
+          `## Diagnostic Issues (${diag.diagnostics.length})`,
+          ...(diag.diagnostics.length === 0 ? ['*No active issues detected.*'] : diag.diagnostics.map((d) => `### [${d.severity}] ${d.subsystem.toUpperCase()}: ${d.issue}\n- **Root Cause**: ${d.rootCause}\n- **Remediation**: ${d.remediation}`)),
+          ``,
+          `## Recommendations`,
+          ...(diag.recommendations.length === 0 ? ['- All subsystems healthy; standard operation.'] : diag.recommendations.map((r) => `- ${r}`)),
+        ].join('\n');
+        return { format: 'markdown', report: md, generatedAt: diag.generatedAt };
+      }
+      return { format: 'json', diagnostics: diag, health, generatedAt: diag.generatedAt };
+    });
+
+    // GET /v1/system/events — Unified Real-time Server-Sent Events (SSE) telemetry stream
+    this.fastify.get('/v1/system/events', async (request, reply) => {
+      const q = request.query as { since?: string; limit?: string; type?: string; correlationId?: string };
+      reply.raw.setHeader('Content-Type', 'text/event-stream');
+      reply.raw.setHeader('Cache-Control', 'no-cache');
+      reply.raw.setHeader('Connection', 'keep-alive');
+      reply.raw.setHeader('X-Accel-Buffering', 'no');
+      reply.raw.flushHeaders?.();
+
+      const safeWrite = (data: string): void => {
+        if (reply.raw.writableEnded || reply.raw.destroyed) return;
+        try {
+          reply.raw.write(data);
+        } catch {
+          /* client closed */
+        }
+      };
+
+      // 1. Replay historical events from bounded ring buffer
+      const buffered = this.eventBuffer.list({
+        since: q.since ? parseInt(q.since, 10) : undefined,
+        limit: q.limit ? parseInt(q.limit, 10) : 50,
+        type: q.type,
+        correlationId: q.correlationId,
+      });
+      for (const evt of buffered) {
+        safeWrite(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+      }
+
+      // 2. Stream live events matching filter
+      const unsub = this.deps.events.subscribeAll((event) => {
+        if (q.type && event.type !== q.type && !event.type.startsWith(q.type + '.')) return;
+        if (q.correlationId && (event as { correlationId?: string }).correlationId !== q.correlationId) return;
+        safeWrite(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      });
+
+      // 3. Heartbeat ping
+      const heartbeat = setInterval(() => {
+        safeWrite(': ping\n\n');
+      }, 15_000);
+
+      reply.raw.on('close', () => {
+        clearInterval(heartbeat);
+        unsub();
+      });
+
+      return reply;
+    });
+
+    // GET /v1/system/metrics — Comprehensive Operations Metrics
+    this.fastify.get('/v1/system/metrics', async () => {
+      const opsMetrics = this.metricsTracker.getMetrics();
+      const traces = this.deps.tracer.stats();
+      const budget = this.deps.budgetManager.getSnapshot();
+      const optimizer = getOptStatsSummary();
+      const endpoints = this.deps.routing.listEndpoints();
+      const models = this.deps.modelRegistry.stats();
+
+      return {
+        timestamp: new Date().toISOString(),
+        gateway: {
+          uptimeSeconds: Math.round(process.uptime()),
+          memoryRssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+          heapUsedMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        },
+        traffic: {
+          totalRequests: opsMetrics.totalRequests,
+          successCount: opsMetrics.successCount,
+          errorCount: opsMetrics.errorCount,
+          errorRatePct: opsMetrics.errorRatePct,
+          tokensProcessed: opsMetrics.tokensProcessed,
+          latency: opsMetrics.latency,
+        },
+        traces: {
+          total: traces.totalTraces,
+          success: traces.successCount,
+          failed: traces.failedCount,
+          cached: traces.cachedCount,
+          fallbackRate: traces.fallbackRate,
+          avgLatencyMs: traces.avgLatencyMs,
+          avgTtftMs: traces.avgTtftMs,
+        },
+        budget: {
+          mode: budget.mode,
+          spentUsd: budget.spentUsd,
+          limitUsd: budget.config?.limitUsd ?? 0,
+          percentUsed: budget.percentUsed,
+        },
+        tokens: {
+          savedTokens: optimizer.savedTokens,
+          savingsPct: optimizer.overallSavingsPct,
+        },
+        infrastructure: {
+          totalProviders: endpoints.length,
+          healthyProviders: endpoints.filter((e) => e.health === 'healthy').length,
+          totalModels: models.totalModels,
+          freeModels: models.freeModels,
+          staleModels: models.staleModels,
+        },
+      };
+    });
+
+    // ── Phase 31: Routing Transparency API ────────────────────────────
+    const handleRoutingExplain = async (reqBody: { messages?: any[]; tools?: any[]; model?: string; intent?: string }) => {
+      const messages = reqBody.messages ?? [{ role: 'user', content: 'Explain system architecture' }];
+      const intent = IntentDetector.detect(messages, reqBody.tools, reqBody.model);
+      const models = this.deps.modelRegistry.list();
+      const endpoints = this.deps.routing.listEndpoints();
+
+      const candidateScores = models.map((m) => {
+        const ep = endpoints.find((e) => e.providerId === m.providerId);
+        return ScoringEngine.scoreCandidate(m, ep, intent, {
+          modelRegistryModels: models,
+          endpoints,
+        });
+      }).sort((a, b) => b.finalScore - a.finalScore);
+
+      const selected = candidateScores[0];
+      const alternatives = candidateScores.slice(1, 5).map((c) => ({
+        modelId: c.modelId,
+        providerId: c.providerId,
+        score: c.finalScore,
+        costScore: c.breakdown.cost,
+        latencyScore: c.breakdown.latency,
+        qualityScore: c.breakdown.capabilityMatch,
+        healthScore: c.breakdown.health,
+      }));
+
+      return {
+        intent: intent.intent,
+        confidence: intent.confidence,
+        signals: intent.signals,
+        requiredCapabilities: intent.requiredCapabilities,
+        minContextWindow: intent.minContextWindow,
+        selectedCandidate: selected ? {
+          modelId: selected.modelId,
+          providerId: selected.providerId,
+          finalScore: selected.finalScore,
+          breakdown: {
+            costScore: selected.breakdown.cost,
+            latencyScore: selected.breakdown.latency,
+            qualityScore: selected.breakdown.capabilityMatch,
+            healthScore: selected.breakdown.health,
+            contextScore: selected.breakdown.contextFit,
+          },
+        } : null,
+        fallbackPath: alternatives,
+        totalEvaluated: candidateScores.length,
+        decisionExplanation: selected
+          ? `Selected model '${selected.modelId}' on provider '${selected.providerId}' with score ${selected.finalScore.toFixed(2)} matching intent ${intent.intent}.`
+          : 'No eligible candidate available for requested parameters.',
+      };
+    };
+
+    this.fastify.post('/v1/routing/explain', async (request) => {
+      const body = (request.body as { messages?: any[]; tools?: any[]; model?: string; intent?: string } | undefined) ?? {};
+      return handleRoutingExplain(body);
+    });
+
+    this.fastify.get('/v1/routing/explain', async (request) => {
+      const q = request.query as { model?: string; prompt?: string };
+      return handleRoutingExplain({
+        model: q.model,
+        messages: q.prompt ? [{ role: 'user', content: q.prompt }] : undefined,
       });
     });
 
@@ -3617,6 +3881,15 @@ let optMessages: never[] | undefined;
           '/health': { get: { summary: 'Overall gateway health check' } },
           '/ready': { get: { summary: 'Subsystem readiness probe' } },
           '/live': { get: { summary: 'Process liveness probe' } },
+          '/v1/system/health': { get: { summary: 'Truthful multi-subsystem aggregated health status' } },
+          '/v1/system/status': { get: { summary: 'High-level operational overview' } },
+          '/v1/system/diagnostics': { get: { summary: 'Deep diagnostic analysis with root causes and remediation' } },
+          '/v1/system/events': { get: { summary: 'Real-time Server-Sent Events (SSE) telemetry stream' } },
+          '/v1/system/metrics': { get: { summary: 'Comprehensive operations metrics & latency distribution' } },
+          '/v1/routing/explain': {
+            get: { summary: 'Sanitized routing decision reasoning and candidate breakdown' },
+            post: { summary: 'Explain routing decision for specific request payload' },
+          },
           '/v1/models': { get: { summary: 'List discovered and registered models' } },
           '/v1/catalog': { get: { summary: 'Universal normalized model catalog' } },
           '/v1/catalog/status': { get: { summary: 'Real-time catalog and provider discovery status' } },
@@ -3626,6 +3899,10 @@ let optMessages: never[] | undefined;
           '/v1/metrics': { get: { summary: 'System, provider, and router metrics' } },
           '/v1/metrics/usage': { get: { summary: 'Token and request usage metrics' } },
           '/v1/debug/routing/recent': { get: { summary: 'Recent intelligent routing decisions history' } },
+          '/v1/missions': {
+            get: { summary: 'List autonomous missions' },
+            post: { summary: 'Create and plan new autonomous mission' },
+          },
           '/v1/applications': {
             get: { summary: 'List autonomous applications' },
             post: { summary: 'Create new autonomous application specification' },
@@ -4964,6 +5241,7 @@ let optMessages: never[] | undefined;
    * routing engine's strategy.
    */
   private syncMeshFromRouting(): void {
+    if (!this.deps.mesh) return;
     for (const e of this.deps.routing.listEndpoints()) {
       // The mesh's ProviderInstance has address+port (parsed from baseUrl)
       // plus provider-specific capability flags mirrored from the routing
