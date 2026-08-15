@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 
 import type {
   LocalAgent,
@@ -272,6 +273,12 @@ export class LocalAgentBridge implements LocalAgentRegistryPort {
     const adapter = this.adapters.get(request.agentId);
     if (!adapter) {
       throw new Error(`No adapter registered for agent '${request.agentId}'`);
+    }
+
+    if (request.workspace) {
+      if (!isAbsolute(request.workspace) || request.workspace.includes('..')) {
+        throw new Error(`Workspace path must be an absolute path without traversal: '${request.workspace}'`);
+      }
     }
 
     const gwUrl = opts.gatewayUrl ?? this.gatewayUrl;

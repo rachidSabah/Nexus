@@ -1,5 +1,6 @@
 /* eslint-disable import/order */
 import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 
 import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
 import type { AIServiceMesh } from '@agent-nexus/service-mesh';
@@ -904,6 +905,10 @@ export class HttpServer {
         return reply.code(400).send({ error: { message: 'prompt is required for agent execution' } });
       }
 
+      if (body.workspace && (!isAbsolute(body.workspace) || body.workspace.includes('..'))) {
+        return reply.code(400).send({ error: { message: `Workspace path must be an absolute path without traversal: '${body.workspace}'` } });
+      }
+
       try {
         const result = await this.localAgentBridge.execute({
           agentId: id,
@@ -995,6 +1000,10 @@ export class HttpServer {
       const body = request.body as OrchestratedExecutionRequest;
       if (!body?.prompt?.trim()) {
         return reply.code(400).send({ error: { message: 'prompt is required for orchestrated execution' } });
+      }
+
+      if (body.workspace && (!isAbsolute(body.workspace) || body.workspace.includes('..'))) {
+        return reply.code(400).send({ error: { message: `Workspace path must be an absolute path without traversal: '${body.workspace}'` } });
       }
 
       // Check risk approval if high risk task

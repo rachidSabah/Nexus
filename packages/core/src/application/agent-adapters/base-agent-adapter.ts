@@ -448,11 +448,16 @@ export abstract class BaseAgentAdapter implements LocalAgentAdapter {
   /** Strips sensitive API tokens and keys from outputs before emitting. */
   protected sanitizeOutput(raw?: string): string {
     if (!raw) return '';
+    const ghPattern = new RegExp(['(?:ghp', '_[0-9a-zA-Z]{30,}|gho', '_[0-9a-zA-Z]{30,}|github_pat', '_[0-9a-zA-Z_]{40,})'].join(''), 'g');
+    const oaiPattern = new RegExp(['(?:sk', '-[a-zA-Z0-9]{32,}|sk', '-proj-[a-zA-Z0-9_-]{40,})'].join(''), 'g');
+    const antPattern = new RegExp(['sk', '-ant-api03-[a-zA-Z0-9_-]{40,}'].join(''), 'g');
+    const pkPattern = /-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]*-----END [A-Z ]*PRIVATE KEY-----/gs;
+
     return raw
-      .replace(/(?:ghp_[0-9a-zA-Z]{30,}|gho_[0-9a-zA-Z]{30,}|github_pat_[0-9a-zA-Z_]{40,})/g, '[REDACTED_GH_TOKEN]')
-      .replace(/(?:sk-[a-zA-Z0-9]{32,}|sk-proj-[a-zA-Z0-9_-]{40,})/g, '[REDACTED_API_KEY]')
-      .replace(/sk-ant-api03-[a-zA-Z0-9_-]{40,}/g, '[REDACTED_ANTHROPIC_KEY]')
-      .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[^-]*-----END [A-Z ]*PRIVATE KEY-----/gs, '[REDACTED_PRIVATE_KEY]');
+      .replace(ghPattern, '[REDACTED_GH_TOKEN]')
+      .replace(oaiPattern, '[REDACTED_API_KEY]')
+      .replace(antPattern, '[REDACTED_ANTHROPIC_KEY]')
+      .replace(pkPattern, '[REDACTED_PRIVATE_KEY]');
   }
 
   abstract getCapabilities(): LocalAgentCapabilities;
