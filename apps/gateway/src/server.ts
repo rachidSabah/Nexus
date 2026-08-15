@@ -1,12 +1,34 @@
 /* eslint-disable import/order */
 import { randomUUID } from 'node:crypto';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { homedir } from 'node:os';
 
 import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
 import type { AIServiceMesh } from '@agent-nexus/service-mesh';
 import type { A2ACoordinator, AgentRegistry as A2AAgentRegistry, TeamManager } from '@anx/a2a';
 import type { AgentRegistry } from '@anx/agents';
-import { ChatCompletionUseCase, TaskOrchestrator, InMemoryTaskStore, SubprocessAgentExecutor, ConcurrencyManager, WorkflowOrchestrator, DAGEngine, AutonomousPlanner, ApplicationEngine, AgyBuilderAdapter, BUILT_IN_WORKFLOWS, SessionManager, MissionOrchestrator, SystemHealthAggregator, type MissionSpecification, type MissionEvent, type MissionStatus } from '@anx/core';
+import {
+  ChatCompletionUseCase,
+  TaskOrchestrator,
+  InMemoryTaskStore,
+  SubprocessAgentExecutor,
+  ConcurrencyManager,
+  WorkflowOrchestrator,
+  DAGEngine,
+  AutonomousPlanner,
+  ApplicationEngine,
+  AgyBuilderAdapter,
+  BUILT_IN_WORKFLOWS,
+  SessionManager,
+  MissionOrchestrator,
+  SystemHealthAggregator,
+  CrashRecoveryEngine,
+  type RecoveryAction,
+  type MissionSpecification,
+  type MissionEvent,
+  type MissionStatus,
+} from '@anx/core';
+import { DurableIdempotencyStore, BackupRestoreEngine } from '@anx/persistence';
 import { AgentRuntimeManager } from './agent-runtime-manager.js';
 import { UnifiedAgentRegistry } from './unified-agent-registry.js';
 import { IntegrationBuildingAgentAdapter, type BuildingAgentPort } from './building-agent-port.js';
@@ -220,6 +242,9 @@ export class HttpServer {
   private readonly systemHealthAggregator: SystemHealthAggregator;
   private readonly eventBuffer: BoundedEventBuffer;
   private readonly metricsTracker: OperationsMetricsTracker;
+  private readonly crashRecoveryEngine: CrashRecoveryEngine;
+  private readonly idempotencyStore: DurableIdempotencyStore;
+  private readonly backupRestoreEngine: BackupRestoreEngine;
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
@@ -251,6 +276,20 @@ export class HttpServer {
     });
     this.eventBuffer = new BoundedEventBuffer(1000);
     this.metricsTracker = new OperationsMetricsTracker(2000);
+
+    const dbPath = process.env['NEXUS_DB_PATH'] ?? join(homedir(), '.agent-nexus', 'nexus.db');
+    this.crashRecoveryEngine = new CrashRecoveryEngine({
+      missionOrchestrator: this.missionOrchestrator,
+      missionStore: (this.missionOrchestrator as any)['store'],
+      modelRegistry: deps.modelRegistry,
+      keyRegistry: deps.keyRegistry,
+      routing: deps.routing,
+      localAgentBridge: this.localAgentBridge,
+      events: deps.events,
+      autoResumeEligible: true,
+    });
+    this.idempotencyStore = new DurableIdempotencyStore({ path: dbPath });
+    this.backupRestoreEngine = new BackupRestoreEngine(dbPath);
 
     // Stream all domain events into bounded memory buffer for live diagnostics & SSE replay
     deps.events.subscribeAll((event) => {
@@ -417,6 +456,9 @@ export class HttpServer {
     await this.fastify.register(fastifyWebsocket);
 
     this.registerRoutes();
+
+    // Phase 32: Run startup reconciliation & rehydration
+    await this.crashRecoveryEngine.runStartupReconciliation().catch(() => {});
 
     await this.fastify.listen({ port, host });
   }
@@ -630,6 +672,44 @@ export class HttpServer {
           staleModels: models.staleModels,
         },
       };
+    });
+
+    // ── Phase 32: Durable Runtime, Crash Recovery & Backup Control Plane ─
+    // GET /v1/system/recovery — Inspect startup reconciliation and crash recovery status
+    this.fastify.get('/v1/system/recovery', async () => {
+      return this.crashRecoveryEngine.getRecoveryReport();
+    });
+
+    // POST /v1/system/recovery/reconcile — Operator reconciliation actions (RESUME, RETRY, CANCEL, REPAIR, DISCARD)
+    this.fastify.post('/v1/system/recovery/reconcile', async (request, reply) => {
+      const body = request.body as { missionId?: string; action?: RecoveryAction };
+      if (!body?.missionId || !body?.action) {
+        return reply.code(400).send({ error: { message: 'missionId and action are required' } });
+      }
+      const result = await this.crashRecoveryEngine.executeRecoveryAction(body.missionId, body.action);
+      const statusCode = result.success ? 200 : 400;
+      return reply.code(statusCode).send(result);
+    });
+
+    // POST /v1/system/backup — Generate full sanitized backup bundle with SHA-256 integrity checksum
+    this.fastify.post('/v1/system/backup', async () => {
+      return this.backupRestoreEngine.createBackup(GATEWAY_VERSION);
+    });
+
+    // POST /v1/system/restore — Restore state from backup bundle
+    this.fastify.post('/v1/system/restore', async (request, reply) => {
+      const body = request.body as import('@anx/persistence').BackupBundle;
+      if (!body?.data || !body?.checksum) {
+        return reply.code(400).send({ error: { message: 'Valid backup bundle is required' } });
+      }
+      try {
+        const result = await this.backupRestoreEngine.restoreBackup(body);
+        // Re-run reconciliation on newly restored state
+        await this.crashRecoveryEngine.runStartupReconciliation().catch(() => {});
+        return reply.code(200).send({ ok: true, result });
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
     });
 
     // ── Phase 31: Routing Transparency API ────────────────────────────
@@ -1350,8 +1430,23 @@ export class HttpServer {
         return reply.code(400).send({ error: { message: `Workspace path must be an absolute path without traversal: '${body.workspace}'` } });
       }
 
+      const idempotencyKey = (request.headers['idempotency-key'] ?? request.headers['x-idempotency-key']) as string | undefined;
+      if (idempotencyKey) {
+        const reservation = await this.idempotencyStore.reserve(idempotencyKey, body);
+        if (!reservation.isNew && reservation.existingRecord?.status === 'COMPLETED' && reservation.existingRecord.responseBody) {
+          try {
+            return reply.code(reservation.existingRecord.responseStatus ?? 200).send(JSON.parse(reservation.existingRecord.responseBody));
+          } catch {
+            return reply.code(reservation.existingRecord.responseStatus ?? 200).send(reservation.existingRecord.responseBody);
+          }
+        }
+      }
+
       try {
         const mission = await this.missionOrchestrator.createMission(body);
+        if (idempotencyKey) {
+          await this.idempotencyStore.complete(idempotencyKey, 201, mission);
+        }
         return reply.code(201).send(mission);
       } catch (err) {
         return reply.code(400).send({ error: { message: (err as Error).message } });

@@ -122,6 +122,11 @@ export { MissionOrchestrator, type MissionOrchestratorOptions } from './applicat
 export * from './domain/system-health.js';
 export { SystemHealthAggregator, type SystemHealthAggregatorDeps } from './application/system-health-aggregator.js';
 
+// ── Phase 32: Durable Runtime & Crash Recovery ──────────────────────────────
+export * from './domain/crash-recovery.js';
+export { CrashRecoveryEngine, type CrashRecoveryEngineOptions } from './application/crash-recovery-engine.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';
+
 

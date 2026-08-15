@@ -177,6 +177,18 @@ Nexus provides drop-in compatibility for all major coding agents:
 > **Tip:** You can also auto-configure detected agents with one command:  
 > `node apps/gateway/dist/bin.js integrations install --all`
 
+## One-Minute Automated Install
+
+### Windows (PowerShell)
+```powershell
+irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/install.ps1 | iex
+```
+
+### Linux & macOS (Bash)
+```bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/install.sh | bash
+```
+
 ---
 
 ## Routing Policy Aliases
@@ -196,32 +208,14 @@ Instead of hardcoding a specific provider model, point your agent at Nexus polic
 
 ---
 
-## AGY Application Builder
+## Durable Runtime & Crash Recovery (Phase 32)
 
-Nexus includes an **Autonomous Application Builder** that executes end-to-end software construction in isolated workspaces:
-
-```
-USER ──► NEXUS ──► APPLICATION ENGINE ──► PLANNER ──► RISK ENGINE ──► WORKFLOW ──► AGY ──► NEXUS ROUTING ──► MODELS
-```
-
-- **AGY is the Building Agent:** Responsible for project scaffolding, code implementation, test execution, inspection, and repair.
-- **Nexus is the Control Plane:** Responsible for specification generation, DAG planning, approval gate enforcement, model routing, API key rotation, artifact verification, and telemetry.
-
-To create an application:
-```bash
-curl -X POST http://127.0.0.1:8787/v1/applications \
-  -H "Content-Type: application/json" \
-  -d '{"objective": "Build a high-performance URL shortener with SQLite and Fastify"}'
-```
-
----
-
-## Supported Providers & Generic Endpoints
-
-Nexus supports all major providers natively plus any custom OpenAI-compatible endpoint:
-
-- **Native Providers:** OpenAI, Anthropic, DeepSeek, Google Gemini, Groq, Mistral, xAI (Grok), Together AI, Fireworks AI, Cerebras, NVIDIA NIM, Azure OpenAI, Cloudflare AI, OpenRouter.
-- **Generic OpenAI-Compatible Endpoints:** Any standard API exposing `/v1/models` and `/v1/chat/completions` (e.g., LocalAI, vLLM, Ollama, LM Studio) can be connected through the dashboard or `.env`.
+Nexus v0.5.0 features a local-first **Durable Persistence & Recovery Engine**:
+- **ACID Durability**: Schema-versioned SQLite database with atomic JSON write boundaries.
+- **Interrupted Mission Recovery**: Auto-reconciles in-flight DAG tasks upon process reboot or crash.
+- **Orphan Subprocess Reconciliation**: Detects dead agent PIDs and cleans up abandoned execution leases.
+- **Idempotency Protection**: SHA-256 request hashing prevents duplicate executions during network retries.
+- **Cryptographic Backups**: Portable backup bundles validated by SHA-256 integrity checksums.
 
 ---
 
@@ -232,35 +226,59 @@ Nexus supports all major providers natively plus any custom OpenAI-compatible en
 | `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions with routing extensions |
 | `POST` | `/v1/messages` | Anthropic-compatible Messages API |
 | `GET` | `/v1/models` | All discovered models across all healthy providers |
-| `GET` | `/v1/catalog/status` | Model/provider counts and active catalog version |
-| `GET` | `/v1/catalog/delta` | Delta synchronization (`ETag` / `304 Not Modified`) |
 | `GET` | `/v1/providers` | Configured provider health, models, and latency |
-| `GET` | `/v1/runtime-agents` | Detected coding agent status on the host system |
-| `POST` | `/v1/applications` | Create a new autonomous software build project |
-| `GET` | `/v1/debug/observability` | Real-time p50/p95/p99 latencies, token savings, and routing history |
-| `GET` | `/v1/doctor` | Gateway diagnostic summary |
+| `POST` | `/v1/missions` | Dispatch autonomous multi-agent engineering missions (Idempotent) |
+| `GET` | `/v1/missions/:id/checkpoints` | Inspect immutable DAG execution checkpoints |
+| `GET` | `/v1/system/health` | Truthful 14-subsystem health matrix |
+| `GET` | `/v1/system/diagnostics` | Deep system diagnostics with automated root-cause analysis |
+| `GET` | `/v1/system/recovery` | Crash recovery status & in-flight interrupted missions |
+| `POST` | `/v1/system/recovery/reconcile` | Operator mission recovery actions (RESUME, RETRY, CANCEL) |
+| `POST` | `/v1/system/backup` | Generate verified system backup snapshot bundle |
+| `POST` | `/v1/system/restore` | Restore platform state from backup bundle |
+| `GET` | `/v1/system/events` | Real-time Server-Sent Events (SSE) telemetry stream |
 
 Full API reference: [`docs/API.md`](docs/API.md)
 
 ---
 
-## Documentation Index
+## Official 32-Topic Wiki Documentation
 
-| Document | Description |
-|---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Hexagonal architecture, ports, adapters, and data flows |
-| [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Adding and configuring providers |
-| [`docs/API.md`](docs/API.md) | Full REST API reference |
-| [`docs/ROUTING.md`](docs/ROUTING.md) | Routing algorithms, scoring engine, and failover |
-| [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md) | In-depth agent configuration guides |
-| [`docs/WORKFLOW.md`](docs/WORKFLOW.md) | Workflow DAG engine and tasks |
-| [`docs/AGENT_DEV.md`](docs/AGENT_DEV.md) | Developing custom agent adapters |
-| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Plugin runtime and lifecycle hooks |
-| [`NEXUS_PUBLIC_SECURITY_AUDIT.md`](NEXUS_PUBLIC_SECURITY_AUDIT.md) | Security audit and zero-secret guarantee |
-| [`SECURITY.md`](SECURITY.md) | Vulnerability disclosure policy |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Developer guide and quality gates |
-| [`RELEASE_NOTES.md`](RELEASE_NOTES.md) | Release notes for v0.4.0 |
-| [`CHANGELOG.md`](CHANGELOG.md) | Changelog history |
+The complete, in-depth documentation is available in [`docs/wiki/`](docs/wiki/):
+
+| Chapter | Topic | Link |
+|---|---|---|
+| 01 | Introduction & Overview | [`01-introduction-and-overview.md`](docs/wiki/01-introduction-and-overview.md) |
+| 02 | Architecture & Mental Model | [`02-architecture-and-mental-model.md`](docs/wiki/02-architecture-and-mental-model.md) |
+| 03 | Quickstart & Installation | [`03-quickstart-and-installation.md`](docs/wiki/03-quickstart-and-installation.md) |
+| 04 | Universal Provider Fabric | [`04-universal-provider-fabric.md`](docs/wiki/04-universal-provider-fabric.md) |
+| 05 | Dynamic Model Discovery | [`05-dynamic-model-discovery.md`](docs/wiki/05-dynamic-model-discovery.md) |
+| 06 | Autonomous Intelligent Routing | [`06-autonomous-intelligent-routing.md`](docs/wiki/06-autonomous-intelligent-routing.md) |
+| 07 | Smart Model Aliasing | [`07-smart-model-aliasing.md`](docs/wiki/07-smart-model-aliasing.md) |
+| 08 | Key Rotation & Cooldown | [`08-key-rotation-and-cooldown.md`](docs/wiki/08-key-rotation-and-cooldown.md) |
+| 09 | Encrypted Credential Vault | [`09-encrypted-credential-vault.md`](docs/wiki/09-encrypted-credential-vault.md) |
+| 10 | Universal Local Agent Bridge | [`10-universal-local-agent-bridge.md`](docs/wiki/10-universal-local-agent-bridge.md) |
+| 11 | Agent Orchestrator & Pool | [`11-agent-orchestrator-and-pool.md`](docs/wiki/11-agent-orchestrator-and-pool.md) |
+| 12 | Unified Mission Orchestration | [`12-unified-mission-orchestration.md`](docs/wiki/12-unified-mission-orchestration.md) |
+| 13 | Mission DAG & Parallel Execution | [`13-mission-dag-and-parallel-execution.md`](docs/wiki/13-mission-dag-and-parallel-execution.md) |
+| 14 | Autonomous Verification & Repair | [`14-autonomous-verification-and-repair.md`](docs/wiki/14-autonomous-verification-and-repair.md) |
+| 15 | Durable Runtime & Persistence | [`15-durable-runtime-and-persistence.md`](docs/wiki/15-durable-runtime-and-persistence.md) |
+| 16 | Crash Recovery & Reconciliation | [`16-crash-recovery-and-reconciliation.md`](docs/wiki/16-crash-recovery-and-reconciliation.md) |
+| 17 | Idempotency & Side-Effect Safety | [`17-idempotency-and-side-effect-safety.md`](docs/wiki/17-idempotency-and-side-effect-safety.md) |
+| 18 | Backup & Disaster Recovery | [`18-backup-and-disaster-recovery.md`](docs/wiki/18-backup-and-disaster-recovery.md) |
+| 19 | Operations Control Plane | [`19-operations-control-plane.md`](docs/wiki/19-operations-control-plane.md) |
+| 20 | Observability, Metrics & Traces | [`20-observability-metrics-and-traces.md`](docs/wiki/20-observability-metrics-and-traces.md) |
+| 21 | Realtime Events & Telemetry Streaming | [`21-realtime-events-and-telemetry-streaming.md`](docs/wiki/21-realtime-events-and-telemetry-streaming.md) |
+| 22 | Production Operations Dashboard | [`22-production-operations-dashboard.md`](docs/wiki/22-production-operations-dashboard.md) |
+| 23 | Security, RBAC & Isolation | [`23-security-rbac-and-isolation.md`](docs/wiki/23-security-rbac-and-isolation.md) |
+| 24 | Token Efficiency & Prompt Compression | [`24-token-efficiency-and-prompt-compression.md`](docs/wiki/24-token-efficiency-and-prompt-compression.md) |
+| 25 | RAG & Long-Term Memory | [`25-rag-and-long-term-memory.md`](docs/wiki/25-rag-and-long-term-memory.md) |
+| 26 | Tool Runtime & MCP Integration | [`26-tool-runtime-and-mcp-integration.md`](docs/wiki/26-tool-runtime-and-mcp-integration.md) |
+| 27 | Agent Teams & Collaboration | [`27-agent-teams-and-collaboration.md`](docs/wiki/27-agent-teams-and-collaboration.md) |
+| 28 | Service Mesh & Traffic Shaping | [`28-service-mesh-and-traffic-shaping.md`](docs/wiki/28-service-mesh-and-traffic-shaping.md) |
+| 29 | CLI Reference & Automation | [`29-cli-reference-and-automation.md`](docs/wiki/29-cli-reference-and-automation.md) |
+| 30 | Configuration & Environment Variables | [`30-configuration-and-environment-variables.md`](docs/wiki/30-configuration-and-environment-variables.md) |
+| 31 | Troubleshooting & Runbooks | [`31-troubleshooting-and-runbooks.md`](docs/wiki/31-troubleshooting-and-runbooks.md) |
+| 32 | Contributing & Plugin Development | [`32-contributing-and-plugin-development.md`](docs/wiki/32-contributing-and-plugin-development.md) |
 
 ---
 
@@ -275,3 +293,4 @@ Full API reference: [`docs/API.md`](docs/API.md)
 ## License
 
 [Apache-2.0](LICENSE) © Nexus Contributors
+
