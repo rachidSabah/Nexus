@@ -18,12 +18,13 @@ import type {
   RecoveryAction,
 } from '../domain/crash-recovery.js';
 import type { Mission, MissionStatus, MissionTask } from '../domain/mission.js';
-import type { EventBusPort, RoutingEnginePort } from './ports.js';
+
+import type { KeyRegistry } from './key-registry.js';
+import type { LocalAgentBridge } from './local-agent-bridge.js';
 import type { MissionOrchestrator } from './mission/mission-orchestrator.js';
 import type { MissionStore } from './mission/mission-store.js';
 import type { ModelRegistry } from './model-registry.js';
-import type { KeyRegistry } from './key-registry.js';
-import type { LocalAgentBridge } from './local-agent-bridge.js';
+import type { EventBusPort, RoutingEnginePort } from './ports.js';
 
 export interface CrashRecoveryEngineOptions {
   missionOrchestrator?: MissionOrchestrator;
@@ -66,8 +67,8 @@ export class CrashRecoveryEngine {
     const interruptedDiagnostics: InterruptedMissionDiagnostic[] = [];
     const abandonedExecs: AbandonedExecutionDiagnostic[] = [];
     let autoResumedCount = 0;
-    let abandonedMissionsCount = 0;
-    let quarantinedCheckpoints = 0;
+    const abandonedMissionsCount = 0;
+    const quarantinedCheckpoints = 0;
 
     // 1. Reconcile Interrupted Missions
     if (this.opts.missionStore) {

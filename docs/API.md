@@ -197,6 +197,155 @@ Create and auto-plan a new autonomous mission.
 
 Decompose an objective into a dependency-directed DAG of tasks.
 
+### `POST /v1/messages`
+
+Anthropic-compatible Messages API with full streaming support.
+
+```jsonc
+{
+  "model": "claude-3-7-sonnet-20250219",
+  "max_tokens": 4096,
+  "messages": [
+    { "role": "user", "content": "Explain raft consensus algorithm" }
+  ]
+}
+```
+
+---
+
+## Operations Control Plane & Recovery
+
+### `GET /v1/system/health`
+
+Evaluates and returns the truthful 14-subsystem health status matrix.
+
+```jsonc
+{
+  "status": "healthy",
+  "healthyCount": 14,
+  "degradedCount": 0,
+  "unhealthyCount": 0,
+  "subsystems": {
+    "gateway": { "status": "healthy", "latencyMs": 1.2 },
+    "routingEngine": { "status": "healthy" },
+    "modelRegistry": { "status": "healthy" },
+    "keyRegistry": { "status": "healthy" },
+    "credentialVault": { "status": "healthy" },
+    "localAgentBridge": { "status": "healthy" },
+    "agentOrchestrator": { "status": "healthy" },
+    "missionOrchestrator": { "status": "healthy" },
+    "persistence": { "status": "healthy" },
+    "crashRecovery": { "status": "healthy" },
+    "observability": { "status": "healthy" },
+    "tokenEfficiency": { "status": "healthy" },
+    "serviceMesh": { "status": "healthy" },
+    "securityFabric": { "status": "healthy" }
+  }
+}
+```
+
+### `GET /v1/system/diagnostics`
+
+Returns automated system diagnostics, failure detections, and actionable operator remediation steps.
+
+### `GET /v1/system/recovery`
+
+Returns crash recovery diagnostics, including startup duration and list of interrupted missions or abandoned executions detected at boot.
+
+### `POST /v1/system/recovery/reconcile`
+
+Trigger operator-directed recovery actions on interrupted missions.
+- **Actions**: `RESUME`, `RETRY`, `CANCEL`, `REPAIR`, `DISCARD`.
+
+```jsonc
+{
+  "missionId": "mission-123",
+  "action": "RESUME"
+}
+```
+
+### `POST /v1/system/backup`
+
+Generates an encrypted/sanitized system snapshot bundle validated by a SHA-256 integrity checksum.
+
+### `POST /v1/system/restore`
+
+Restores system state from a backup bundle with cryptographic checksum verification.
+
+### `GET /v1/system/events`
+
+Real-time Server-Sent Events (SSE) stream for operational telemetry, routing decisions, agent execution, and error events.
+
+---
+
+## Universal Provider Fabric & Discovery
+
+### `POST /v1/providers/onboard`
+
+Dynamically onboard any OpenAI-compatible provider at runtime without restart.
+
+```jsonc
+{
+  "providerId": "vllm-local",
+  "displayName": "Local vLLM",
+  "baseUrl": "http://localhost:8000/v1",
+  "apiKey": "optional-key",
+  "priority": 10
+}
+```
+
+### `POST /v1/models/refresh`
+
+Triggers an immediate dynamic model discovery synchronization across all healthy registered providers.
+
+---
+
+## Smart Model Aliasing
+
+### `GET /v1/aliases`
+
+List all virtual policy aliases (`nexus/best-coding`, `nexus/free`, `nexus/fast`, `nexus/cheap`, `nexus/best`).
+
+### `POST /v1/aliases`
+
+Register a custom team virtual alias.
+
+### `GET /v1/aliases/:alias/resolve`
+
+Resolve an alias to its top-scoring underlying provider model in real-time.
+
+---
+
+## Universal Local Agent Bridge
+
+### `GET /v1/agents/health`
+
+Returns detection and health status of local coding agents (`claude-code`, `codex`, `hermes`, `opencode`, `agy-builder`, `gemini`).
+
+### `POST /v1/agents/execute`
+
+Dispatches an isolated task execution to a local coding agent.
+
+### `POST /v1/agents/executions/:id/cancel`
+
+Cancels an in-flight execution and cleanly reaps child subprocesses.
+
+---
+
+## Mission Orchestration (Phases 29-32)
+
+### `POST /v1/missions`
+
+Create and plan an autonomous multi-agent engineering mission. Supports `Idempotency-Key` header for safe retries.
+
+```jsonc
+{
+  "objective": "Build REST API in TypeScript with SQLite",
+  "maxCostUsd": 10.0,
+  "autoApprove": true
+}
+```
+
 ### `POST /v1/missions/:id/approve`
 
 Approve a high/critical risk mission awaiting execution.

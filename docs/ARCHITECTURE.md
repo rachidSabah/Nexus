@@ -165,6 +165,70 @@ flowchart TD
     RepairLoop -->|Yes (<= 3 attempts)| AutoRepair[Autonomous Repair Loop]
     AutoRepair --> Orch
     RepairLoop -->|No| Verifier[Mission Verifier]
-    Verifier --> Result([Mission Completed & Checkpointed])
+## 7. Phase 32: Durable Persistence, Crash Recovery & 14-Subsystem Health Hierarchy
+
+Phase 32 transforms Nexus into an ACID-compliant, crash-recoverable AI control plane:
+
+```mermaid
+flowchart TD
+    subgraph INGRESS ["Ingress & Fastify Server"]
+        HTTP["HTTP / SSE Ingress (Port 8787)"]
+        HealthAgg["14-Subsystem Health Aggregator"]
+    end
+    
+    subgraph DURABLE ["Durable Persistence & Recovery Engine (@anx/persistence & @anx/core)"]
+        SQLite["ACID SQLite WAL Store / AtomicJsonStore"]
+        Migrations["SchemaMigrationManager (v1 -> v2)"]
+        Idempotency["DurableIdempotencyStore (SHA-256 Hashing)"]
+        Recovery["CrashRecoveryEngine (Startup Reconciler)"]
+        Checkpoints["Mission Checkpoints & Task Recovery"]
+        Backup["BackupRestoreEngine (Cryptographic Bundles)"]
+    end
+    
+    subgraph AGENTS ["Universal Local Agent Bridge"]
+        Pool["Agent Pool & Lease Manager"]
+        ProcessGuard["Subprocess PID Liveness & Orphan Reaper"]
+    end
+    
+    HTTP --> Idempotency
+    HTTP --> Recovery
+    Recovery --> SQLite
+    Recovery --> Checkpoints
+    Recovery --> ProcessGuard
+    ProcessGuard --> Pool
+    Migrations --> SQLite
+    Backup --> SQLite
+```
+
+### Complete End-to-End Data Flow
+
+```
+Provider
+ ↓
+Encrypted Credential Vault (AES-256-GCM)
+ ↓
+Provider Discovery (Dynamic API Sync)
+ ↓
+Model Discovery & Normalization
+ ↓
+Model Registry (Dynamic Catalog)
+ ↓
+Capability Index (Tool, Vision, Reasoning)
+ ↓
+Routing Engine (5-Dimension Multi-Factor Scoring)
+ ↓
+Failover & Key Rotation (429 Cooldown)
+ ↓
+Universal Local Agent Bridge (Claude Code, Codex, Hermes, OpenCode, AGY, Gemini)
+ ↓
+Mission Orchestrator (Topological DAG Scheduling)
+ ↓
+Agent Execution (Subprocess & Workspace Sandbox)
+ ↓
+Verification (Syntax, Lint, Unit Tests)
+ ↓
+Durable Persistence (SQLite ACID & Checkpoints)
+ ↓
+Recovery & Observability (Startup Reconciler & Telemetry Ring Buffer)
 ```
 
