@@ -35,5 +35,5 @@ regexes = [
 [[rules]]
 id = "anx-placeholder-key"
 description = "Placeholder key assignment, not a real secret"
-regex = '''(?i)(sk-|AKIA|ghp_|xox[bp]-)[A-Za-z0-9]{4,}\b'''
+regex = '''(?i)\b(sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,}|xox[bp]-[A-Za-z0-9-]{16,})\b'''
 allowlist = { regexes = [ '''(?i)(sk-|AKIA|ghp_)-YOUR|YOUR-[A-Z]+|xxxx|example|dummy|placeholder''' ] }

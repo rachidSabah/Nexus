@@ -2,7 +2,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * MissionPlanner — Phase 29 Autonomous Mission Decomposition & DAG Planning.
  *
- * Translates high-level user objectives into topologically sound, risk-scored,
+ * Translates high-level user objectives into topologically sound, risk-evaluated,
  * capability-annotated DAGs of executable subtasks.
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -166,7 +166,7 @@ export class MissionPlanner {
 
     // 1. Requirements & Analysis
     const taskAnalysis = this.createTask(
-      'task-req',
+      't-req',
       'ANALYSIS',
       'Analyze API requirements and domain entities',
       `Analyze requirements for "${spec.objective}" and formulate API schema & contracts.`,
@@ -181,7 +181,7 @@ export class MissionPlanner {
 
     // 2. Architecture & Data Model
     const taskArch = this.createTask(
-      'task-arch',
+      't-arch',
       'PLANNING',
       'Design REST API architecture and endpoints',
       'Specify API routes, request/response DTOs, data persistence strategy, and error handling.',
@@ -197,7 +197,7 @@ export class MissionPlanner {
 
     // 3. Project Scaffolding
     const taskScaffold = this.createTask(
-      'task-scaffold',
+      't-scaffold',
       'BUILD',
       'Scaffold project structure and dependencies',
       'Create folder structure, package.json, TypeScript configuration, and server boilerplate.',
@@ -213,7 +213,7 @@ export class MissionPlanner {
 
     // 4. Implement Controllers and Services (parallel branch A)
     const taskImpl = this.createTask(
-      'task-impl',
+      't-impl',
       'CODING',
       'Implement API controllers, routes, and business logic',
       'Write the complete implementation for routes, request validation, domain logic, and error handlers.',
@@ -229,7 +229,7 @@ export class MissionPlanner {
 
     // 5. Test Suite Construction (parallel branch B)
     const taskTests = this.createTask(
-      'task-test-gen',
+      't-test-gen',
       'TESTING',
       'Author automated unit and integration tests',
       'Create comprehensive test suites verifying all status codes, happy paths, edge cases, and validation rules.',
@@ -245,7 +245,7 @@ export class MissionPlanner {
 
     // 6. Test Execution & Assertion
     const taskTestExec = this.createTask(
-      'task-test-exec',
+      't-test-exec',
       'TESTING',
       'Execute test suite and evaluate coverage',
       'Run the test suite against the API implementation and report test results.',
@@ -262,7 +262,7 @@ export class MissionPlanner {
 
     // 7. Final Verification
     const taskVerify = this.createTask(
-      'task-verify',
+      't-verify',
       'VERIFICATION',
       'Verify API integrity, typecheck, and documentation',
       'Perform final linting, typecheck, OpenAPI documentation generation, and artifact verification.',
@@ -286,7 +286,7 @@ export class MissionPlanner {
     const ws = spec.workspace;
 
     const tSpec = this.createTask(
-      'task-app-spec',
+      't-app-spec',
       'APPLICATION_BUILD',
       'Analyze application requirements & architecture spec',
       `Generate full application spec and schema for "${spec.objective}".`,
@@ -300,7 +300,7 @@ export class MissionPlanner {
     tasks.push(tSpec);
 
     const tScaffold = this.createTask(
-      'task-app-scaffold',
+      't-app-scaffold',
       'APPLICATION_BUILD',
       'Scaffold full-stack application workspace',
       'Initialize Vite/Next.js workspace, Tailwind configuration, component architecture.',
@@ -315,7 +315,7 @@ export class MissionPlanner {
     dependencies.push({ fromTaskId: tSpec.taskId, toTaskId: tScaffold.taskId });
 
     const tComponents = this.createTask(
-      'task-app-components',
+      't-app-components',
       'CODING',
       'Implement UI components and state management',
       'Build responsive, accessible, interactive UI components and client state.',
@@ -330,7 +330,7 @@ export class MissionPlanner {
     dependencies.push({ fromTaskId: tScaffold.taskId, toTaskId: tComponents.taskId });
 
     const tRoutes = this.createTask(
-      'task-app-routes',
+      't-app-routes',
       'CODING',
       'Implement API endpoints and data layer',
       'Build backend routes, data layer persistence, and business logic.',
@@ -345,7 +345,7 @@ export class MissionPlanner {
     dependencies.push({ fromTaskId: tScaffold.taskId, toTaskId: tRoutes.taskId });
 
     const tVerify = this.createTask(
-      'task-app-verify',
+      't-app-verify',
       'VERIFICATION',
       'Build and verify application production bundle',
       'Verify zero build errors, clean types, working bundle output.',
@@ -371,7 +371,7 @@ export class MissionPlanner {
     const policy = spec.policy ?? 'nexus/best-coding';
 
     const tInspect = this.createTask(
-      'task-inspect',
+      't-inspect',
       'ANALYSIS',
       'Inspect codebase and isolate root causes',
       `Diagnose issues and plan surgical changes for: "${spec.objective}".`,
@@ -385,7 +385,7 @@ export class MissionPlanner {
     tasks.push(tInspect);
 
     const tPatch = this.createTask(
-      'task-patch',
+      't-patch',
       'REFACTORING',
       'Apply surgical refactor and patch',
       'Execute clean code modifications, maintaining backwards compatibility and invariants.',
@@ -400,7 +400,7 @@ export class MissionPlanner {
     dependencies.push({ fromTaskId: tInspect.taskId, toTaskId: tPatch.taskId });
 
     const tVerify = this.createTask(
-      'task-verify',
+      't-verify',
       'VERIFICATION',
       'Run verification and regression checks',
       'Validate that tests pass and no regression was introduced.',
@@ -425,7 +425,7 @@ export class MissionPlanner {
     const policy = spec.policy ?? 'nexus/best-coding';
 
     const tAudit = this.createTask(
-      'task-test-audit',
+      't-test-audit',
       'ANALYSIS',
       'Audit existing tests and coverage gaps',
       `Identify untested paths, edge cases, and flakiness for: "${spec.objective}".`,
@@ -439,7 +439,7 @@ export class MissionPlanner {
     tasks.push(tAudit);
 
     const tWrite = this.createTask(
-      'task-test-write',
+      't-test-write',
       'TESTING',
       'Generate robust unit and integration tests',
       'Author test suites covering critical branches, assertions, and mock boundaries.',
@@ -454,7 +454,7 @@ export class MissionPlanner {
     dependencies.push({ fromTaskId: tAudit.taskId, toTaskId: tWrite.taskId });
 
     const tRun = this.createTask(
-      'task-test-run',
+      't-test-run',
       'VERIFICATION',
       'Execute all tests and verify coverage threshold',
       'Run test suite runner, verify exit code 0, and output test summary report.',
@@ -479,7 +479,7 @@ export class MissionPlanner {
     const policy = spec.policy ?? 'nexus/best-coding';
 
     const tPlan = this.createTask(
-      'task-plan',
+      't-plan',
       'PLANNING',
       'Formulate execution strategy and task breakdown',
       `Analyze objective: "${spec.objective}" and plan execution steps.`,
@@ -493,7 +493,7 @@ export class MissionPlanner {
     tasks.push(tPlan);
 
     const tExec = this.createTask(
-      'task-exec',
+      't-exec',
       'CODING',
       'Execute implementation according to plan',
       `Implement requirements for "${spec.objective}".`,
@@ -508,7 +508,7 @@ export class MissionPlanner {
     dependencies.push({ fromTaskId: tPlan.taskId, toTaskId: tExec.taskId });
 
     const tVerify = this.createTask(
-      'task-verify',
+      't-verify',
       'VERIFICATION',
       'Verify results and ensure task correctness',
       'Validate output, verify artifacts exist, and ensure correctness.',
