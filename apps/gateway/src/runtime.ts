@@ -34,6 +34,7 @@ import {
   type RoutingDecision,
   SessionManager,
   InMemorySessionStore,
+  LocalAgentBridge,
 } from '@anx/core';
 import { AutoHealer } from './auto-healer.js';
 import { McpClient } from '@anx/mcp-client';
@@ -106,6 +107,7 @@ export class GatewayRuntime {
   readonly contextWindowManager!: ContextWindowManager;
   readonly costPredictor!: CostPredictor;
   readonly autoHealer!: AutoHealer;
+  readonly localAgentBridge!: LocalAgentBridge;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -151,6 +153,7 @@ export class GatewayRuntime {
     contextWindowManager: ContextWindowManager;
     costPredictor: CostPredictor;
     autoHealer: AutoHealer;
+    localAgentBridge: LocalAgentBridge;
   }) {
     Object.assign(this, opts);
   }
@@ -722,6 +725,13 @@ export class GatewayRuntime {
 
     const mcpClient = new McpClient(config.mcp.servers ?? []);
 
+    const localAgentBridge = new LocalAgentBridge({
+      gatewayUrl: `http://${config.server.host}:${config.server.port}`,
+      routing,
+      modelRegistry,
+      events,
+    });
+
     const server = new HttpServer({
       config,
       routing,
@@ -765,6 +775,7 @@ export class GatewayRuntime {
       taskClassifier,
       contextWindowManager,
       costPredictor,
+      localAgentBridge,
     });
 
     return new GatewayRuntime({
@@ -804,6 +815,7 @@ export class GatewayRuntime {
       privacy,
       agentDetector,
       sessions: new SessionManager(new InMemorySessionStore(), events),
+      localAgentBridge,
       // Phase 5
       budgetManager,
       promptCompressor,
@@ -819,6 +831,7 @@ export class GatewayRuntime {
     await this.mcpClient.connect();
     await this.modelRegistry.start();
     this.autoHealer.start();
+    await this.localAgentBridge.discoverAll();
     await this.server.listen(this.config.server.port, this.config.server.host);
     this.logger.info('gateway started', {
       port: this.config.server.port,

@@ -92,5 +92,17 @@ export {
   type RuntimeOptions,
 } from './application/session-runtime.js';
 
+// ── Phase 27: Local Agent Bridge & Universal Agent Connector ────────────────
+export * from './domain/local-agent.js';
+export * from './application/local-agent-port.js';
+export { BaseAgentAdapter } from './application/agent-adapters/base-agent-adapter.js';
+export { ClaudeCodeAdapter } from './application/agent-adapters/claude-code-adapter.js';
+export { CodexAdapter } from './application/agent-adapters/codex-adapter.js';
+export { HermesAdapter } from './application/agent-adapters/hermes-adapter.js';
+export { OpenCodeAdapter } from './application/agent-adapters/opencode-adapter.js';
+export { AgyAdapter } from './application/agent-adapters/agy-adapter.js';
+export { GeminiAdapter } from './application/agent-adapters/gemini-adapter.js';
+export { LocalAgentBridge, type LocalAgentBridgeMetrics, type LocalAgentBridgeOptions } from './application/local-agent-bridge.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';

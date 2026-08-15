@@ -41,8 +41,9 @@ import type {
   CachePort,
   KeyRegistry,
   ModelDescriptor,
+  LocalAgentExecutionRequest,
 } from '@anx/core';
-import { isSsrfSafe } from '@anx/core';
+import { LocalAgentBridge, isSsrfSafe } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
 import {
@@ -147,6 +148,7 @@ export interface HttpServerDeps {
   readonly taskClassifier: TaskClassifier;
   readonly contextWindowManager: ContextWindowManager;
   readonly costPredictor: CostPredictor;
+  readonly localAgentBridge?: LocalAgentBridge;
 }
 
 // ── Token-economics accumulator (§30) — real measurements only, capped ring. ──
@@ -199,9 +201,16 @@ export function recordOptStats(entry: Omit<OptStatEntry, 'ts'>) {
 
 export class HttpServer {
   private readonly fastify;
+  private readonly localAgentBridge: LocalAgentBridge;
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
+    this.localAgentBridge = deps.localAgentBridge ?? new LocalAgentBridge({
+      gatewayUrl: `http://${deps.config.server.host}:${deps.config.server.port}`,
+      routing: deps.routing,
+      modelRegistry: deps.modelRegistry,
+      events: deps.events,
+    });
 
     // ── Robustness: accept POST/PUT with no/empty JSON body as `{}` ──
     // Fastify's default JSON parser throws FST_ERR_CTP_EMPTY_JSON_BODY on an
@@ -794,10 +803,12 @@ export class HttpServer {
       return she.diagnostics();
     });
 
-    // ── Agent Runtime Management API (§2) ─────────────────────────────
+    // ── Phase 27: Local Agent Bridge & Universal Agent Connector ──────
     this.fastify.get('/v1/runtime-agents', async () => {
-      const manager = new AgentRuntimeManager();
-      const agents = await manager.getTruthfulStates();
+      let agents = this.localAgentBridge.list();
+      if (agents.length === 0) {
+        agents = await this.localAgentBridge.discoverAll();
+      }
       return { agents };
     });
 
@@ -809,78 +820,115 @@ export class HttpServer {
         windows: isWin,
         wsl: isWsl,
         linux: process.platform === 'linux' && !isWsl,
-        gatewayReachability: 'http://127.0.0.1:8787',
-        recommendedBaseUrl: 'http://127.0.0.1:8787',
+        gatewayReachability: `http://127.0.0.1:${this.deps.config.server.port}`,
+        recommendedBaseUrl: `http://127.0.0.1:${this.deps.config.server.port}`,
       };
     });
 
-    // ── Universal Agent Proxy Health (Phase 20 §4 & Phase 23-PRE §13) ──
+    // Universal Agent Proxy Health
     this.fastify.get('/v1/runtime-agents/health', async () => {
-      const manager = new AgentRuntimeManager();
-      const states = await manager.getTruthfulStates();
-      const models = this.deps.modelRegistry.list();
-      const healthMap: Record<string, {
-        status: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' | 'NOT_INSTALLED' | 'NOT_CONFIGURED';
-        gateway: 'reachable' | 'unreachable';
-        models: number;
-        detected: boolean;
-        configured: boolean;
-        runnable: boolean;
-        gatewayReachable: boolean;
-        catalogReachable: boolean;
-        inferenceVerified: boolean;
-        streamingVerified: boolean;
-        toolCallingVerified: boolean;
-        protocol: string;
-        lastVerification: string | null;
-        failureReason: string | null;
-        lastCheck: string;
-      }> = {};
-
-      for (const a of states) {
-        let status: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' | 'NOT_INSTALLED' | 'NOT_CONFIGURED' = 'NOT_INSTALLED';
-        if (a.inferenceVerified) {
-          status = 'HEALTHY';
-        } else if (a.runnable && a.configured) {
-          status = 'HEALTHY';
-        } else if (a.runnable && !a.configured) {
-          status = 'NOT_CONFIGURED';
-        } else if (a.detected) {
-          status = 'DEGRADED';
-        }
-
-        healthMap[a.id] = {
-          status,
-          gateway: a.gatewayReachable ? 'reachable' : 'unreachable',
-          models: models.length,
-          detected: a.detected,
-          configured: a.configured,
-          runnable: a.runnable,
-          gatewayReachable: a.gatewayReachable,
-          catalogReachable: a.catalogReachable,
-          inferenceVerified: a.inferenceVerified,
-          streamingVerified: a.streamingVerified,
-          toolCallingVerified: a.toolCallingVerified,
-          protocol: a.protocol,
-          lastVerification: a.lastVerification,
-          failureReason: a.failureReason,
-          lastCheck: new Date().toISOString(),
-        };
-      }
-
+      const healthMap = await this.localAgentBridge.healthCheckAll();
       return healthMap;
     });
 
     this.fastify.get('/v1/runtime-agents/:id', async (request, reply) => {
       const { id } = request.params as { id: string };
-      const manager = new AgentRuntimeManager();
-      const agent = await manager.getTruthfulState(id);
+      const agent = this.localAgentBridge.get(id) ?? (await this.localAgentBridge.getAdapter(id)?.discover());
       if (!agent) {
         return reply.code(404).send({ error: { message: `Agent '${id}' not found` } });
       }
       return agent;
     });
 
+    // POST /v1/runtime-agents/:id/health — force live multi-stage health check
+    this.fastify.post('/v1/runtime-agents/:id/health', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const health = await this.localAgentBridge.healthCheck(id);
+        return health;
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // GET /v1/runtime-agents/:id/chain — 7-step diagnostic chain
+    this.fastify.get('/v1/runtime-agents/:id/chain', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const { modelPolicy } = (request.query as { modelPolicy?: string }) ?? {};
+      try {
+        const chain = await this.localAgentBridge.getDiagnosticChain(id, modelPolicy);
+        return chain;
+      } catch (err) {
+        return reply.code(404).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/runtime-agents/:id/test — run quick connection test prompt
+    this.fastify.post('/v1/runtime-agents/:id/test', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { prompt?: string; modelPolicy?: string } | undefined) ?? {};
+      try {
+        const result = await this.localAgentBridge.execute({
+          agentId: id,
+          prompt: body.prompt ?? "Say 'Nexus Local Agent Bridge Connected'",
+          modelPolicy: body.modelPolicy ?? 'nexus/best-coding',
+          timeoutMs: 25000,
+        });
+        return result;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/runtime-agents/:id/execute — full execution with workspace & model policy
+    this.fastify.post('/v1/runtime-agents/:id/execute', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as LocalAgentExecutionRequest;
+      if (!body?.prompt?.trim()) {
+        return reply.code(400).send({ error: { message: 'prompt is required for agent execution' } });
+      }
+
+      try {
+        const result = await this.localAgentBridge.execute({
+          agentId: id,
+          prompt: body.prompt.trim(),
+          workspace: body.workspace,
+          modelPolicy: body.modelPolicy ?? 'nexus/best-coding',
+          timeoutMs: body.timeoutMs ?? 120_000,
+          env: body.env,
+        });
+        return result;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/runtime-agents/:id/cancel & POST /v1/runtime-agents/cancel/:executionId
+    this.fastify.post('/v1/runtime-agents/:id/cancel', async (request, reply) => {
+      const body = (request.body as { executionId?: string } | undefined) ?? {};
+      if (!body.executionId) {
+        return reply.code(400).send({ error: { message: 'executionId is required for cancellation' } });
+      }
+      const cancelled = this.localAgentBridge.cancelExecution(body.executionId);
+      return { ok: cancelled, executionId: body.executionId };
+    });
+
+    this.fastify.post('/v1/runtime-agents/cancel/:executionId', async (request) => {
+      const { executionId } = request.params as { executionId: string };
+      const cancelled = this.localAgentBridge.cancelExecution(executionId);
+      return { ok: cancelled, executionId };
+    });
+
+    // GET /v1/debug/runtime-agents — metrics, execution history, diagnostics
+    this.fastify.get('/v1/debug/runtime-agents', async () => {
+      return {
+        metrics: this.localAgentBridge.getMetrics(),
+        recentExecutions: this.localAgentBridge.getExecutionHistory().slice(0, 20),
+        agents: this.localAgentBridge.list(),
+      };
+    });
+
+    // Backward-compat routes for integrations package
     this.fastify.post('/v1/runtime-agents/:id/verify', async (request) => {
       const { id } = request.params as { id: string };
       const manager = new AgentRuntimeManager();
