@@ -411,6 +411,10 @@ export class ModelAliasRegistry {
     const registeredEndpoints: readonly ProviderEndpoint[] = this.routing ? this.routing.listEndpoints() : [];
     let candidates = this.modelRegistry.list().filter((m) => {
       if (m.stale) return false;
+      // Embedding-only models cannot perform chat completions / responses
+      if (m.capabilities?.embeddings && !m.capabilities?.streaming && !m.capabilities?.toolCalling && !m.capabilities?.reasoning && !m.capabilities?.vision) {
+        return false;
+      }
       const cooldownUntil = this.modelCooldowns.get(m.id);
       if (cooldownUntil && now < cooldownUntil) return false;
       const ep = registeredEndpoints.find((e: ProviderEndpoint) => e.providerId === m.providerId || e.id === `auto-${m.providerId}`);
@@ -634,6 +638,10 @@ export class ModelAliasRegistry {
     const now = Date.now();
     let candidates = this.modelRegistry.list().filter((m) => {
       if (m.stale) return false;
+      // Embedding-only models cannot perform chat completions / responses
+      if (m.capabilities?.embeddings && !m.capabilities?.streaming && !m.capabilities?.toolCalling && !m.capabilities?.reasoning && !m.capabilities?.vision) {
+        return false;
+      }
       const cooldownUntil = this.modelCooldowns.get(m.id);
       if (cooldownUntil && now < cooldownUntil) return false;
       if (this.keyRegistry && !this.keyRegistry.select(m.providerId)) return false;
@@ -740,6 +748,8 @@ export class ModelAliasRegistry {
 
   private capabilityCount(m: ModelDescriptor): number {
     if (!m.capabilities) return 0;
-    return Object.values(m.capabilities).filter(Boolean).length;
+    // Embeddings capability is not a text generation capability
+    const { embeddings: _emb, ...textCaps } = m.capabilities;
+    return Object.values(textCaps).filter(Boolean).length;
   }
 }

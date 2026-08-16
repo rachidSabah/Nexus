@@ -207,6 +207,7 @@ export function toResponsesResponse(
 // ── Streaming translation ──────────────────────────────────────────────
 
 export interface ResponsesStreamState {
+  responseId: string;
   preEmitted: boolean;
   messageItemId?: string;
   messageAdded: boolean;
@@ -219,6 +220,7 @@ export interface ResponsesStreamState {
 
 export function newResponsesStreamState(model: string): ResponsesStreamState {
   return {
+    responseId: rid('resp'),
     preEmitted: false,
     messageAdded: false,
     content: '',
@@ -229,7 +231,7 @@ export function newResponsesStreamState(model: string): ResponsesStreamState {
 }
 
 const responseMeta = (state: ResponsesStreamState, status: string) => ({
-  id: rid('resp'),
+  id: state.responseId,
   object: 'response',
   created_at: now(),
   status,
@@ -384,7 +386,7 @@ export function* finalizeResponsesEvents(
   yield {
     type: 'response.completed',
     response: {
-      id: rid('resp'),
+      id: state.responseId,
       object: 'response',
       created_at: now(),
       status: 'completed',
@@ -405,3 +407,32 @@ export function* finalizeResponsesEvents(
     },
   };
 }
+
+/** Emit terminal failure Responses events when upstream fails mid-stream. */
+export function* failResponsesEvents(
+  state: ResponsesStreamState,
+  errorMessage: string,
+): Generator<Record<string, unknown>> {
+  yield {
+    type: 'response.failed',
+    response: {
+      id: state.responseId,
+      object: 'response',
+      created_at: now(),
+      status: 'failed',
+      model: state.model,
+      output: [],
+      parallel_tool_calls: true,
+      tool_choice: 'auto',
+      tools: [],
+      usage: null,
+      error: {
+        type: 'api_error',
+        code: 'server_error',
+        message: errorMessage,
+      },
+      metadata: {},
+    },
+  };
+}
+

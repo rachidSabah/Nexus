@@ -55,7 +55,7 @@ import {
   type SecurityContext,
 } from './security-fabric.js';
 import { globalObservability } from './observability.js';
-import { finalizeResponsesEvents, newResponsesStreamState, toChatRequest, toResponsesResponse, translateChunkToResponsesEvents, type ResponsesRequest } from './responses-compat.js';
+import { failResponsesEvents, finalizeResponsesEvents, newResponsesStreamState, toChatRequest, toResponsesResponse, translateChunkToResponsesEvents, type ResponsesRequest } from './responses-compat.js';
 import type {
   BudgetManager,
   ChatCompletionChunk,
@@ -3625,6 +3625,14 @@ export class HttpServer {
             }
           },
           error: async (error: Error) => {
+            const errMsg = (error as Error).message ?? '';
+            if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('404')) {
+              this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
+            }
+            this.reportUpstreamModelError(effectiveBody.model, error as Error);
+            for (const event of failResponsesEvents(state, this.httpErrorFor(error).message)) {
+              safeWrite(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+            }
             safeWrite(`event: error\ndata: ${JSON.stringify({ type: 'error', code: 'api_error', message: this.httpErrorFor(error).message })}\n\n`);
             safeEnd();
           },
@@ -3638,9 +3646,17 @@ export class HttpServer {
         try {
           await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), sink, new AbortController().signal);
         } catch (error) {
+          const errMsg = (error as Error).message ?? '';
+          if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('404')) {
+            this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
+          }
+          this.reportUpstreamModelError(effectiveBody.model, error as Error);
           const http = this.httpErrorFor(error as Error);
           if (!reply.raw.headersSent) {
             return reply.code(http.status).send({ error: { message: http.message } });
+          }
+          for (const event of failResponsesEvents(state, http.message)) {
+            safeWrite(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
           }
           safeWrite(`event: error\ndata: ${JSON.stringify({ type: 'error', code: 'api_error', message: http.message })}\n\n`);
           safeEnd();
