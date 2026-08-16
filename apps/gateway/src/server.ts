@@ -27,8 +27,20 @@ import {
   type MissionSpecification,
   type MissionEvent,
   type MissionStatus,
+  SignalCollector,
+  AnomalyDetector,
+  DiagnosisEngine,
+  RemediationPolicyEngine,
+  RemediationVerifier,
+  RemediationEngine,
+  IncidentManager,
+  SelfHealingOrchestrator,
+  type RemediationActionType,
+  type IncidentStatus,
+  type SubsystemName,
+  type RemediationPolicyRule,
 } from '@anx/core';
-import { DurableIdempotencyStore, BackupRestoreEngine } from '@anx/persistence';
+import { DurableIdempotencyStore, BackupRestoreEngine, DurableIncidentStore } from '@anx/persistence';
 import { AgentRuntimeManager } from './agent-runtime-manager.js';
 import { UnifiedAgentRegistry } from './unified-agent-registry.js';
 import { IntegrationBuildingAgentAdapter, type BuildingAgentPort } from './building-agent-port.js';
@@ -245,6 +257,14 @@ export class HttpServer {
   private readonly crashRecoveryEngine: CrashRecoveryEngine;
   private readonly idempotencyStore: DurableIdempotencyStore;
   private readonly backupRestoreEngine: BackupRestoreEngine;
+  readonly signalCollector: SignalCollector;
+  readonly anomalyDetector: AnomalyDetector;
+  readonly diagnosisEngine: DiagnosisEngine;
+  readonly remediationPolicyEngine: RemediationPolicyEngine;
+  readonly remediationVerifier: RemediationVerifier;
+  readonly remediationEngine: RemediationEngine;
+  readonly incidentManager: IncidentManager;
+  readonly selfHealingOrchestrator: SelfHealingOrchestrator;
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
@@ -290,6 +310,50 @@ export class HttpServer {
     });
     this.idempotencyStore = new DurableIdempotencyStore({ path: dbPath });
     this.backupRestoreEngine = new BackupRestoreEngine(dbPath);
+
+    // Phase 34: Runtime Intelligence & Bounded Autonomous Self-Healing
+    this.signalCollector = new SignalCollector();
+    this.signalCollector.wireToEventBus(deps.events);
+    this.anomalyDetector = new AnomalyDetector(this.signalCollector);
+    this.diagnosisEngine = new DiagnosisEngine();
+    this.remediationPolicyEngine = new RemediationPolicyEngine();
+    this.remediationVerifier = new RemediationVerifier();
+    this.remediationEngine = new RemediationEngine({
+      routing: deps.routing,
+      keyRegistry: deps.keyRegistry,
+      modelRegistry: deps.modelRegistry,
+      agentBridge: this.localAgentBridge,
+      crashRecovery: this.crashRecoveryEngine,
+      cache: deps.cache,
+      events: deps.events,
+      policyEngine: this.remediationPolicyEngine,
+      verifier: this.remediationVerifier,
+      providerProbeCallback: async (target) => {
+        const ep = this.deps.routing.listEndpoints().find((e) => e.providerId === target || e.id === target);
+        if (!ep?.baseUrl) return false;
+        try {
+          const r = await fetch(`${ep.baseUrl.replace(/\/+$/, '')}/models`, {
+            signal: AbortSignal.timeout(4000),
+          });
+          return r.status < 500;
+        } catch {
+          return false;
+        }
+      },
+    });
+    const incidentRepo = new DurableIncidentStore({ path: dbPath });
+    this.incidentManager = new IncidentManager(incidentRepo, deps.events);
+    this.selfHealingOrchestrator = new SelfHealingOrchestrator(
+      this.signalCollector,
+      this.anomalyDetector,
+      this.diagnosisEngine,
+      this.remediationPolicyEngine,
+      this.remediationEngine,
+      this.incidentManager,
+      deps.events,
+      { intervalMs: 15_000, autoStart: true },
+    );
+    this.selfHealingOrchestrator.start();
 
     // Stream all domain events into bounded memory buffer for live diagnostics & SSE replay
     deps.events.subscribeAll((event) => {
@@ -464,6 +528,7 @@ export class HttpServer {
   }
 
   async close(): Promise<void> {
+    this.selfHealingOrchestrator.stop();
     await this.fastify.close();
   }
 
@@ -712,18 +777,165 @@ export class HttpServer {
       }
     });
 
-    // ── Phase 31: Routing Transparency API ────────────────────────────
+    // ── Phase 34: Runtime Intelligence, Anomaly Detection & Self-Healing ──
+    // GET /v1/system/intelligence — Unified Runtime Intelligence & Self-Healing State
+    this.fastify.get('/v1/system/intelligence', async () => {
+      return this.selfHealingOrchestrator.getOverview();
+    });
+
+    // GET /v1/system/intelligence/signals — Telemetry signals across 14 subsystems
+    this.fastify.get('/v1/system/intelligence/signals', async (request) => {
+      const q = request.query as { subsystem?: SubsystemName; limit?: string; since?: string };
+      const limit = q.limit ? parseInt(q.limit, 10) : 100;
+      const since = q.since ? parseInt(q.since, 10) : undefined;
+      return {
+        signals: this.signalCollector.getSignals(q.subsystem, { limit, since }),
+      };
+    });
+
+    // GET /v1/system/intelligence/anomalies — Current statistical anomalies
+    this.fastify.get('/v1/system/intelligence/anomalies', async () => {
+      const anomalies = this.anomalyDetector.detectAnomalies();
+      return { anomalies };
+    });
+
+    // GET /v1/system/intelligence/remediations — Executed remediation history
+    this.fastify.get('/v1/system/intelligence/remediations', async () => {
+      const incidents = await this.incidentManager.listIncidents({ limit: 200 });
+      const remediations: any[] = [];
+      for (const inc of incidents) {
+        for (const rem of inc.remediationHistory) {
+          const { incidentId: _remIncidentId, ...remRest } = rem as any;
+          remediations.push({
+            incidentId: inc.id,
+            subsystem: inc.subsystem,
+            anomalyType: inc.anomalyType,
+            ...remRest,
+          });
+        }
+      }
+      return { remediations };
+    });
+
+    // GET /v1/system/intelligence/policies — Remediation policy matrix (AUTO_SAFE, APPROVAL_REQUIRED, NEVER_AUTOMATE)
+    this.fastify.get('/v1/system/intelligence/policies', async () => {
+      return { policies: this.remediationPolicyEngine.listPolicies() };
+    });
+
+    // POST /v1/system/intelligence/policies — Update / Toggle remediation policy rule
+    this.fastify.post('/v1/system/intelligence/policies', async (request, reply) => {
+      const body = request.body as { actionType?: RemediationActionType; patch?: Partial<RemediationPolicyRule> };
+      if (!body?.actionType || !body?.patch) {
+        return reply.code(400).send({ error: { message: 'actionType and patch object required' } });
+      }
+      try {
+        const updated = this.remediationPolicyEngine.updatePolicy(body.actionType, body.patch);
+        return reply.code(200).send({ ok: true, policy: updated });
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // GET /v1/system/incidents — List durable runtime incidents
+    this.fastify.get('/v1/system/incidents', async (request) => {
+      const q = request.query as { status?: IncidentStatus; subsystem?: SubsystemName; limit?: string };
+      const limit = q.limit ? parseInt(q.limit, 10) : 100;
+      const incidents = await this.incidentManager.listIncidents({
+        status: q.status,
+        subsystem: q.subsystem,
+        limit,
+      });
+      return { incidents };
+    });
+
+    // GET /v1/system/incidents/:id — Inspect single incident details & remediation trace
+    this.fastify.get('/v1/system/incidents/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const incident = await this.incidentManager.getIncident(id);
+      if (!incident) {
+        return reply.code(404).send({ error: { message: `Incident [${id}] not found`, code: 'NOT_FOUND' } });
+      }
+      return incident;
+    });
+
+    // POST /v1/system/incidents/:id/acknowledge — Acknowledge incident
+    this.fastify.post('/v1/system/incidents/:id/acknowledge', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { operatorNotes?: string } | undefined) ?? {};
+      try {
+        const updated = await this.incidentManager.acknowledgeIncident(id, body.operatorNotes);
+        return reply.code(200).send({ ok: true, incident: updated });
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/system/incidents/:id/approve — Operator approve and execute remediation
+    this.fastify.post('/v1/system/incidents/:id/approve', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { operatorNotes?: string } | undefined) ?? {};
+      try {
+        const result = await this.selfHealingOrchestrator.operatorApproveAndRemediate(id, body.operatorNotes);
+        const code = result.success ? 200 : 400;
+        return reply.code(code).send(result);
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/system/incidents/:id/remediate — Manually trigger safe remediation for incident
+    this.fastify.post('/v1/system/incidents/:id/remediate', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const incident = await this.incidentManager.getIncident(id);
+      if (!incident) {
+        return reply.code(404).send({ error: { message: `Incident [${id}] not found` } });
+      }
+      const body = (request.body as { actionType?: RemediationActionType; targetId?: string; parameters?: Record<string, unknown> } | undefined) ?? {};
+      const actionType = body.actionType ?? incident.diagnosis.recommendedRemediation;
+      const targetId = body.targetId ?? incident.subsystem;
+
+      try {
+        const result = await this.selfHealingOrchestrator.operatorTriggerRemediation(
+          actionType,
+          incident.subsystem,
+          targetId,
+          body.parameters,
+        );
+        return reply.code(result.success ? 200 : 400).send(result);
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // POST /v1/system/incidents/:id/resolve — Manually resolve incident
+    this.fastify.post('/v1/system/incidents/:id/resolve', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { verificationEvidence?: string } | undefined) ?? {};
+      try {
+        const updated = await this.incidentManager.resolveIncident(
+          id,
+          body.verificationEvidence ?? 'Manually resolved and verified by operator',
+        );
+        return reply.code(200).send({ ok: true, incident: updated });
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // ── Phase 31/34: Routing Transparency & Adaptive Routing API ────────────
     const handleRoutingExplain = async (reqBody: { messages?: any[]; tools?: any[]; model?: string; intent?: string }) => {
       const messages = reqBody.messages ?? [{ role: 'user', content: 'Explain system architecture' }];
       const intent = IntentDetector.detect(messages, reqBody.tools, reqBody.model);
       const models = this.deps.modelRegistry.list();
       const endpoints = this.deps.routing.listEndpoints();
+      const deprioritized = new Set(this.remediationEngine.getDeprioritizedProviders());
 
       const candidateScores = models.map((m) => {
         const ep = endpoints.find((e) => e.providerId === m.providerId);
         return ScoringEngine.scoreCandidate(m, ep, intent, {
           modelRegistryModels: models,
           endpoints,
+          deprioritizedProviders: deprioritized,
         });
       }).sort((a, b) => b.finalScore - a.finalScore);
 
@@ -736,6 +948,8 @@ export class HttpServer {
         latencyScore: c.breakdown.latency,
         qualityScore: c.breakdown.capabilityMatch,
         healthScore: c.breakdown.health,
+        reasons: c.reasons,
+        explainability: c.explainability,
       }));
 
       return {
@@ -755,6 +969,8 @@ export class HttpServer {
             healthScore: selected.breakdown.health,
             contextScore: selected.breakdown.contextFit,
           },
+          reasons: selected.reasons,
+          explainability: selected.explainability,
         } : null,
         fallbackPath: alternatives,
         totalEvaluated: candidateScores.length,
@@ -765,8 +981,9 @@ export class HttpServer {
     };
 
     this.fastify.post('/v1/routing/explain', async (request) => {
-      const body = (request.body as { messages?: any[]; tools?: any[]; model?: string; intent?: string } | undefined) ?? {};
-      return handleRoutingExplain(body);
+      const body = (request.body as { messages?: any[]; tools?: any[]; model?: string; intent?: string; prompt?: string } | undefined) ?? {};
+      const msgs = body.messages ?? (body.prompt ? [{ role: 'user', content: body.prompt }] : [{ role: 'user', content: 'Explain system architecture' }]);
+      return handleRoutingExplain({ ...body, messages: msgs });
     });
 
     this.fastify.get('/v1/routing/explain', async (request) => {

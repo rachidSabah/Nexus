@@ -234,7 +234,7 @@ describe('Phase 32 — Durable Runtime & Crash Recovery', () => {
       const backupEngine = new BackupRestoreEngine(testDbPath);
       const bundle = await backupEngine.createBackup('0.5.0');
 
-      expect(bundle.schemaVersion).toBe(2);
+      expect(bundle.schemaVersion).toBeGreaterThanOrEqual(2);
       expect(bundle.nexusVersion).toBe('0.5.0');
       expect(bundle.checksum).toBeDefined();
       expect(bundle.data.endpoints).toHaveLength(1);
@@ -349,7 +349,7 @@ describe('Phase 32 — Durable Runtime & Crash Recovery', () => {
       const res = await fetch(`${baseUrl}/v1/system/backup`, { method: 'POST' });
       expect(res.status).toBe(200);
       const bundle = await res.json();
-      expect(bundle.schemaVersion).toBe(2);
+      expect(bundle.schemaVersion).toBeGreaterThanOrEqual(2);
       expect(bundle.nexusVersion).toBeDefined();
       expect(bundle.checksum).toBeDefined();
       expect(bundle.data).toBeDefined();

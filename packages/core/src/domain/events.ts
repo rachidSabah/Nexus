@@ -548,7 +548,18 @@ export type AllDomainEvents =
   | AgyTestStartedEvent
   | AgyTestCompletedEvent
   | AgyRepairStartedEvent
-  | AgyRepairCompletedEvent;
+  | AgyRepairCompletedEvent
+  // Phase 34: Runtime Intelligence & Bounded Self-Healing
+  | RuntimeSignalEvent
+  | RuntimeAnomalyDetectedEvent
+  | RuntimeDiagnosisCreatedEvent
+  | RuntimeRemediationStartedEvent
+  | RuntimeRemediationCompletedEvent
+  | RuntimeRemediationFailedEvent
+  | RuntimeIncidentCreatedEvent
+  | RuntimeIncidentResolvedEvent
+  | RuntimeIncidentAcknowledgedEvent
+  | RuntimeIncidentEscalatedEvent;
 
 // Model Fabric (kept for backward compat location)
 export interface TaskCreatedEvent extends DomainEvent {
@@ -620,6 +631,129 @@ export interface TaskCancelledEvent extends DomainEvent {
   readonly payload: {
     readonly taskId: string;
     readonly timestamp: number;
+  };
+}
+
+// ── Phase 34: Runtime Intelligence & Bounded Self-Healing Events ────────────
+
+export interface RuntimeSignalEvent extends DomainEvent {
+  readonly type: 'runtime.signal';
+  readonly payload: {
+    readonly id: string;
+    readonly timestamp: number;
+    readonly subsystem: string;
+    readonly signalType: string;
+    readonly value: number;
+    readonly metadata?: Record<string, unknown>;
+  };
+}
+
+export interface RuntimeAnomalyDetectedEvent extends DomainEvent {
+  readonly type: 'runtime.anomaly.detected';
+  readonly payload: {
+    readonly id: string;
+    readonly anomalyType: string;
+    readonly subsystem: string;
+    readonly severity: string;
+    readonly detectedAt: number;
+    readonly evidence: string;
+    readonly threshold: number;
+    readonly observedValue: number;
+    readonly targetId?: string;
+  };
+}
+
+export interface RuntimeDiagnosisCreatedEvent extends DomainEvent {
+  readonly type: 'runtime.diagnosis.created';
+  readonly payload: {
+    readonly incidentId: string;
+    readonly subsystem: string;
+    readonly signal: string;
+    readonly severity: string;
+    readonly probableCause: string;
+    readonly confidence: number;
+    readonly recommendedRemediation: string;
+    readonly autoRemediationPermitted: boolean;
+  };
+}
+
+export interface RuntimeRemediationStartedEvent extends DomainEvent {
+  readonly type: 'runtime.remediation.started';
+  readonly payload: {
+    readonly executionId: string;
+    readonly incidentId: string;
+    readonly actionType: string;
+    readonly targetSubsystem: string;
+    readonly targetId?: string;
+    readonly policyTier: string;
+    readonly attemptNumber: number;
+    readonly initiatedBy: 'AUTONOMOUS' | 'OPERATOR';
+  };
+}
+
+export interface RuntimeRemediationCompletedEvent extends DomainEvent {
+  readonly type: 'runtime.remediation.completed';
+  readonly payload: {
+    readonly executionId: string;
+    readonly incidentId: string;
+    readonly actionType: string;
+    readonly targetSubsystem: string;
+    readonly targetId?: string;
+    readonly verified: boolean;
+    readonly message: string;
+  };
+}
+
+export interface RuntimeRemediationFailedEvent extends DomainEvent {
+  readonly type: 'runtime.remediation.failed';
+  readonly payload: {
+    readonly executionId: string;
+    readonly incidentId: string;
+    readonly actionType: string;
+    readonly targetSubsystem: string;
+    readonly targetId?: string;
+    readonly attemptNumber: number;
+    readonly error: string;
+  };
+}
+
+export interface RuntimeIncidentCreatedEvent extends DomainEvent {
+  readonly type: 'runtime.incident.created';
+  readonly payload: {
+    readonly incidentId: string;
+    readonly subsystem: string;
+    readonly severity: string;
+    readonly anomalyType: string;
+    readonly diagnosis: string;
+  };
+}
+
+export interface RuntimeIncidentResolvedEvent extends DomainEvent {
+  readonly type: 'runtime.incident.resolved';
+  readonly payload: {
+    readonly incidentId: string;
+    readonly subsystem: string;
+    readonly resolvedAt: number;
+    readonly verificationEvidence: string;
+  };
+}
+
+export interface RuntimeIncidentAcknowledgedEvent extends DomainEvent {
+  readonly type: 'runtime.incident.acknowledged';
+  readonly payload: {
+    readonly incidentId: string;
+    readonly acknowledgedAt: number;
+    readonly operatorNotes?: string;
+  };
+}
+
+export interface RuntimeIncidentEscalatedEvent extends DomainEvent {
+  readonly type: 'runtime.incident.escalated';
+  readonly payload: {
+    readonly incidentId: string;
+    readonly subsystem: string;
+    readonly reason: string;
+    readonly escalatedAt: number;
   };
 }
 

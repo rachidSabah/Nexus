@@ -598,12 +598,11 @@ export class ModelRegistry {
    * are automatically dropped from the routable set without waiting for the
    * provider to stop listing them.
    */
-  markModelUnhealthy(providerId: string, modelId: string, reason: string): void {
+  markModelUnhealthy(providerId: string, modelId: string, reason: string, force = false): void {
     // Explicit models are operator-pinned and must not be auto-retired by a
-    // transient upstream failure (they may not even be served by the provider's
-    // API yet). Leave them available for manual routing/testing.
+    // transient upstream failure unless forced (e.g. by remediation engine).
     const explicitKey = `${providerId}:${modelId}`;
-    if (this.explicit.has(explicitKey)) return;
+    if (!force && this.explicit.has(explicitKey)) return;
     const key = `${providerId}:${modelId}`;
     const existing = this.models.get(key);
     if (!existing) return;

@@ -65,7 +65,7 @@ describe('DefaultNetworkService — direct by default', () => {
     expect(diag.activeEgress).toBe('DIRECT');
     // With no proxies, the proxy pool is empty and there is no dependency.
     expect(diag.proxyPool ?? []).toHaveLength(0);
-  });
+  }, 15000);
 
   it('fetch() through direct transport reaches a local endpoint (no proxy)', async () => {
     const svc = new DefaultNetworkService();

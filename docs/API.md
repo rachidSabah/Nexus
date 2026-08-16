@@ -529,3 +529,28 @@ Returns the status of all 19 integrations. Used by the dashboard.
 ### Manual configuration (advanced)
 
 If you prefer to edit config files by hand, see [INTEGRATIONS.md](./INTEGRATIONS.md) for the exact path and format each tool expects. The CLI installer writes the same files you would.
+
+---
+
+## Phase 34: Runtime Intelligence & Incidents Endpoints
+
+### `GET /v1/system/intelligence`
+Returns unified runtime state, active incidents, recent anomalies, and self-healing telemetry.
+
+### `GET /v1/system/incidents`
+Query active and historical system incidents with optional `status`, `subsystem`, and `limit` filters.
+
+### `POST /v1/system/incidents/:id/acknowledge`
+Acknowledge an open incident with optional operator notes.
+
+### `POST /v1/system/incidents/:id/approve`
+Approve a gated remediation action for execution.
+
+### `POST /v1/system/incidents/:id/remediate`
+Manually trigger a safe remediation action on an incident.
+
+### `POST /v1/system/incidents/:id/resolve`
+Manually resolve and audit an incident with verification evidence.
+
+### `POST /v1/routing/explain`
+Returns transparent reasoning for candidate scoring, explainability metadata (`whySelected`, `whyDeprioritized`, `whyRecovered`, `whyRejected`), and alternative fallbacks.

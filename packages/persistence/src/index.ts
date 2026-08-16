@@ -25,6 +25,10 @@ import type {
   Mission,
   MissionCheckpoint,
   MissionStatus,
+  RuntimeIncident,
+  IncidentRepositoryPort,
+  IncidentStatus,
+  SubsystemName,
 } from '@anx/core';
 
 // ─── Domain Models for Durable State ────────────────────────────────────────
@@ -99,6 +103,7 @@ export interface BackupBundle {
     missions: Mission[];
     checkpoints: MissionCheckpoint[];
     agentExecutions: DurableAgentExecution[];
+    incidents?: RuntimeIncident[];
     auditLogs: Array<{
       id: string;
       occurredAt: string;
@@ -277,6 +282,10 @@ function createSqliteEmulator(filePath: string): SqliteDB {
             if (rec && rec.expires_at > Date.now()) return rec;
             return undefined;
           }
+          if (normSql.includes('FROM runtime_incidents WHERE id = ?')) {
+            const rec = store.get('runtime_incidents')?.get(params[0] as string);
+            return rec ? { data: rec.data } : undefined;
+          }
           return undefined;
         },
         all: (...params: unknown[]) => {
@@ -306,6 +315,27 @@ function createSqliteEmulator(filePath: string): SqliteDB {
           }
           if (normSql.includes('FROM api_keys_metadata')) {
             return Array.from(store.get('api_keys_metadata')?.values() ?? []);
+          }
+          if (normSql.includes('FROM runtime_incidents')) {
+            let list = Array.from(store.get('runtime_incidents')?.values() ?? []);
+            // Apply WHERE conditions from params
+            let paramIdx = 0;
+            const statusMatch = normSql.match(/status\s*=\s*\?/);
+            const subsystemMatch = normSql.match(/subsystem\s*=\s*\?/);
+            if (statusMatch) {
+              const statusVal = params[paramIdx++] as string;
+              list = list.filter((r: any) => r.status === statusVal);
+            }
+            if (subsystemMatch) {
+              const subVal = params[paramIdx++] as string;
+              list = list.filter((r: any) => r.subsystem === subVal);
+            }
+            list.sort((a: any, b: any) => b.created_at - a.created_at);
+            const limitMatch = normSql.includes('LIMIT ?');
+            if (limitMatch && params[paramIdx] !== undefined) {
+              list = list.slice(0, params[paramIdx] as number);
+            }
+            return list.map((r: any) => ({ data: r.data }));
           }
           return [];
         },
@@ -408,6 +438,19 @@ function createSqliteEmulator(filePath: string): SqliteDB {
               metadata: params[7],
             });
             store.set('audit_log', tbl);
+          } else if (normSql.includes('INTO runtime_incidents')) {
+            const tbl = store.get('runtime_incidents') ?? new Map();
+            tbl.set(String(params[0]), {
+              id: params[0],
+              subsystem: params[1],
+              status: params[2],
+              severity: params[3],
+              anomaly_type: params[4],
+              data: params[5],
+              created_at: params[6],
+              updated_at: params[7],
+            });
+            store.set('runtime_incidents', tbl);
           }
           persist();
         },
@@ -422,7 +465,7 @@ function createSqliteEmulator(filePath: string): SqliteDB {
 // ─── Schema Migrator ────────────────────────────────────────────────────────
 
 export class SchemaMigrationManager {
-  static readonly CURRENT_SCHEMA_VERSION = 2;
+  static readonly CURRENT_SCHEMA_VERSION = 3;
 
   static async applyMigrations(db: SqliteDB): Promise<number> {
     db.exec(`
@@ -525,6 +568,27 @@ export class SchemaMigrationManager {
       db.prepare('INSERT OR REPLACE INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)')
         .run(2, 'Phase 32 Durable missions, checkpoints, agent leases, models, and idempotency', new Date().toISOString());
       current = 2;
+    }
+
+    if (current < 3) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS runtime_incidents (
+          id TEXT PRIMARY KEY,
+          subsystem TEXT NOT NULL,
+          status TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          anomaly_type TEXT NOT NULL,
+          data TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_incidents_status ON runtime_incidents(status);
+        CREATE INDEX IF NOT EXISTS idx_incidents_subsystem ON runtime_incidents(subsystem);
+        CREATE INDEX IF NOT EXISTS idx_incidents_created ON runtime_incidents(created_at);
+      `);
+      db.prepare('INSERT OR REPLACE INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)')
+        .run(3, 'Phase 34 Runtime Intelligence incidents, anomalies, and remediation history', new Date().toISOString());
+      current = 3;
     }
 
     return current;
@@ -867,6 +931,111 @@ export class DurableAgentExecutionStore {
   }
 }
 
+// ─── Durable Incident Store (Phase 34) ───────────────────────────────────────
+
+export class DurableIncidentStore implements IncidentRepositoryPort {
+  private dbPromise: Promise<SqliteDB> | undefined;
+  private readonly fallbackStore?: AtomicJsonStore<Record<string, RuntimeIncident>>;
+
+  constructor(private readonly opts?: SqliteAdapterOptions) {
+    if (opts?.path) {
+      const jsonPath = opts.path.replace(/\.db$/, '_incidents.json');
+      this.fallbackStore = new AtomicJsonStore<Record<string, RuntimeIncident>>(jsonPath, {});
+    }
+  }
+
+  private async db(): Promise<SqliteDB | undefined> {
+    if (!this.opts?.path) return undefined;
+    if (!this.dbPromise) {
+      this.dbPromise = openSqlite(this.opts.path).then(async (db) => {
+        await SchemaMigrationManager.applyMigrations(db);
+        return db;
+      });
+    }
+    return this.dbPromise;
+  }
+
+  async save(incident: RuntimeIncident): Promise<void> {
+    const db = await this.db();
+    if (db) {
+      db.prepare(
+        'INSERT OR REPLACE INTO runtime_incidents (id, subsystem, status, severity, anomaly_type, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(
+        incident.id,
+        incident.subsystem,
+        incident.status,
+        incident.severity,
+        incident.anomalyType,
+        JSON.stringify(incident),
+        incident.createdAt,
+        Date.now(),
+      );
+    }
+    if (this.fallbackStore) {
+      const data = this.fallbackStore.read();
+      data[incident.id] = incident;
+      this.fallbackStore.write(data);
+    }
+  }
+
+  async get(id: string): Promise<RuntimeIncident | undefined> {
+    const db = await this.db();
+    if (db) {
+      const row = db.prepare('SELECT data FROM runtime_incidents WHERE id = ?').get(id) as { data: string } | undefined;
+      if (row) return JSON.parse(row.data) as RuntimeIncident;
+    }
+    if (this.fallbackStore) {
+      const data = this.fallbackStore.read();
+      return data[id];
+    }
+    return undefined;
+  }
+
+  async list(options?: { status?: IncidentStatus; subsystem?: SubsystemName; limit?: number }): Promise<RuntimeIncident[]> {
+    const db = await this.db();
+    if (db) {
+      let sql = 'SELECT data FROM runtime_incidents';
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+
+      if (options?.status) {
+        conditions.push('status = ?');
+        params.push(options.status);
+      }
+      if (options?.subsystem) {
+        conditions.push('subsystem = ?');
+        params.push(options.subsystem);
+      }
+
+      if (conditions.length > 0) {
+        sql += ` WHERE ${conditions.join(' AND ')}`;
+      }
+
+      sql += ' ORDER BY created_at DESC';
+
+      if (options?.limit && options.limit > 0) {
+        sql += ' LIMIT ?';
+        params.push(options.limit);
+      }
+
+      const rows = db.prepare(sql).all(...params) as Array<{ data: string }>;
+      return rows.map((r) => JSON.parse(r.data) as RuntimeIncident);
+    }
+
+    if (this.fallbackStore) {
+      const data = this.fallbackStore.read();
+      let list = Object.values(data);
+      if (options?.status) list = list.filter((i) => i.status === options.status);
+      if (options?.subsystem) list = list.filter((i) => i.subsystem === options.subsystem);
+      list.sort((a, b) => b.createdAt - a.createdAt);
+      if (options?.limit) list = list.slice(0, options.limit);
+      return list;
+    }
+
+    return [];
+  }
+}
+
 // ─── Backup & Restore Engine ────────────────────────────────────────────────
 
 export class BackupRestoreEngine {
@@ -882,6 +1051,7 @@ export class BackupRestoreEngine {
     const missions = (db.prepare('SELECT data FROM missions').all() as any[]).map((r) => JSON.parse(r.data));
     const checkpoints = (db.prepare('SELECT data FROM mission_checkpoints').all() as any[]).map((r) => JSON.parse(r.data));
     const agentExecutions = (db.prepare('SELECT data FROM agent_executions').all() as any[]).map((r) => JSON.parse(r.data));
+    const incidents = (db.prepare('SELECT data FROM runtime_incidents').all() as any[]).map((r) => JSON.parse(r.data));
     const auditLogs = (db.prepare('SELECT * FROM audit_log ORDER BY occurred_at DESC LIMIT 5000').all() as any[]).map((r) => ({
       id: r.id,
       occurredAt: r.occurred_at,
@@ -900,6 +1070,7 @@ export class BackupRestoreEngine {
       missions,
       checkpoints,
       agentExecutions,
+      incidents,
       auditLogs,
     };
 
@@ -933,6 +1104,7 @@ export class BackupRestoreEngine {
       models: 0,
       missions: 0,
       checkpoints: 0,
+      incidents: 0,
     };
 
     for (const ep of bundle.data.endpoints ?? []) {
@@ -964,6 +1136,20 @@ export class BackupRestoreEngine {
       counts['checkpoints'] = (counts['checkpoints'] ?? 0) + 1;
     }
 
+    for (const inc of bundle.data.incidents ?? []) {
+      db.prepare('INSERT OR REPLACE INTO runtime_incidents (id, subsystem, status, severity, anomaly_type, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+        inc.id,
+        inc.subsystem,
+        inc.status,
+        inc.severity,
+        inc.anomalyType,
+        JSON.stringify(inc),
+        inc.createdAt,
+        Date.now(),
+      );
+      counts['incidents'] = (counts['incidents'] ?? 0) + 1;
+    }
+
     return { restoredCounts: counts };
   }
 }
@@ -983,6 +1169,7 @@ export interface PersistenceLayer {
   readonly missions?: DurableMissionStore;
   readonly idempotency?: DurableIdempotencyStore;
   readonly agentExecutions?: DurableAgentExecutionStore;
+  readonly incidents?: DurableIncidentStore;
   readonly backupRestore?: BackupRestoreEngine;
 }
 
@@ -992,6 +1179,7 @@ export function createPersistence(config: PersistenceConfig): PersistenceLayer {
       return {
         endpoints: new InMemoryEndpointRepository(),
         auditLog: new InMemoryAuditLogRepository(),
+        incidents: new DurableIncidentStore(),
       };
     case 'sqlite': {
       if (!config.sqlitePath) throw new Error('sqlitePath required for sqlite backend');
@@ -1002,6 +1190,7 @@ export function createPersistence(config: PersistenceConfig): PersistenceLayer {
         missions: new DurableMissionStore(opts),
         idempotency: new DurableIdempotencyStore(opts),
         agentExecutions: new DurableAgentExecutionStore(opts),
+        incidents: new DurableIncidentStore(opts),
         backupRestore: new BackupRestoreEngine(config.sqlitePath),
       };
     }

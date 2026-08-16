@@ -38,6 +38,12 @@ export interface CandidateScore {
     keyHealth: number;
   };
   reasons: string[];
+  explainability?: {
+    whySelected?: string;
+    whyRejected?: string;
+    whyDeprioritized?: string;
+    whyRecovered?: string;
+  };
 }
 
 export interface ScoringContext {
@@ -48,6 +54,7 @@ export interface ScoringContext {
   endpointLatencies?: Map<string, number>;
   endpointFailures?: Map<string, number>;
   modelRateLimitCooldowns?: Map<string, number>; // modelId -> timestamp until cooled down
+  deprioritizedProviders?: Set<string>; // Phase 34: runtime intelligence deprioritization
 }
 
 export class IntentDetector {
@@ -215,14 +222,17 @@ export class ScoringEngine {
       cost = Math.max(0.1, Math.min(1.0, 1.0 - (inputCost / 20)));
     }
 
-    // 8. Free Priority
+    // 9. Provider Reliability & Runtime Intelligence Deprioritization
+    let failures = endpoint ? (ctx.endpointFailures?.get(endpoint.id) ?? 0) : 0;
+    const isDeprioritized = ctx.deprioritizedProviders?.has(model.providerId) || (endpoint && ctx.deprioritizedProviders?.has(endpoint.id));
+    if (isDeprioritized) {
+      failures += 5;
+      reasons.push(`Provider [${model.providerId}] deprioritized by Runtime Intelligence self-healing`);
+    }
+    const providerReliability = Math.max(0.05, 1.0 - failures * 0.2);
+
+    // 10. Free Priority & Key Health
     const freePriority = isFree ? 1.0 : (isUnknown ? 0.4 : 0.2);
-
-    // 9. Provider Reliability
-    const failures = endpoint ? (ctx.endpointFailures?.get(endpoint.id) ?? 0) : 0;
-    const providerReliability = Math.max(0.1, 1.0 - failures * 0.2);
-
-    // 10. Key Health
     const keyHealth = 1.0;
 
     // Weighted final normalized score
@@ -236,10 +246,18 @@ export class ScoringEngine {
       latency * 0.10
     );
 
+    // Apply provider reliability multiplier
+    finalScore = finalScore * providerReliability;
+
     // Hard disqualifiers
     if (capabilityMatch === 0 || contextFit === 0 || health === 0 || availability === 0) {
       finalScore = 0.0;
     }
+
+    const whySelected = finalScore > 0.6 ? `High overall score (${Math.round(finalScore * 100)}%), capable, and healthy` : undefined;
+    const whyRejected = finalScore === 0.0 ? reasons.join('; ') : undefined;
+    const whyDeprioritized = isDeprioritized ? `Provider [${model.providerId}] temporarily degraded/rate-limited` : undefined;
+    const whyRecovered = (!isDeprioritized && endpoint?.health === 'healthy' && failures === 0) ? `Verified healthy with active key rotation` : undefined;
 
     return {
       modelId: model.id,
@@ -259,6 +277,12 @@ export class ScoringEngine {
         keyHealth,
       },
       reasons,
+      explainability: {
+        whySelected,
+        whyRejected,
+        whyDeprioritized,
+        whyRecovered,
+      },
     };
   }
 }

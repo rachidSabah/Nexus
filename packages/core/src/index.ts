@@ -126,7 +126,17 @@ export { SystemHealthAggregator, type SystemHealthAggregatorDeps } from './appli
 export * from './domain/crash-recovery.js';
 export { CrashRecoveryEngine, type CrashRecoveryEngineOptions } from './application/crash-recovery-engine.js';
 
+// ── Phase 34: Runtime Intelligence, Anomaly Detection & Self-Healing ─────────
+export * from './domain/runtime-intelligence.js';
+export { SignalCollector, type SignalCollectorOptions } from './application/runtime-intelligence/signal-collector.js';
+export { AnomalyDetector, type AnomalyThresholds } from './application/runtime-intelligence/anomaly-detector.js';
+export { DiagnosisEngine } from './application/runtime-intelligence/diagnosis-engine.js';
+export { RemediationPolicyEngine, DEFAULT_REMEDIATION_POLICIES } from './application/runtime-intelligence/remediation-policy-engine.js';
+export { RemediationVerifier, type VerificationResult } from './application/runtime-intelligence/remediation-verifier.js';
+export { RemediationEngine, type RemediationEngineDeps } from './application/runtime-intelligence/remediation-engine.js';
+export { IncidentManager, InMemoryIncidentRepository, type IncidentRepositoryPort } from './application/runtime-intelligence/incident-manager.js';
+export { SelfHealingOrchestrator, type SelfHealingOrchestratorOptions } from './application/runtime-intelligence/self-healing-orchestrator.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';
-
 

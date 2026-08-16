@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, Boxes, Brain, Blocks, Cpu, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Settings2, Store, Terminal, Users, Workflow } from 'lucide-react';
+import { Activity, Boxes, Brain, Blocks, Cpu, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Settings2, ShieldAlert, Store, Terminal, Users, Workflow } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -10,6 +10,7 @@ const NAV = [
   { href: '/models', label: 'Models', icon: Cpu },
   { href: '/keys', label: 'API Keys', icon: KeyRound },
   { href: '/observability', label: 'Observability', icon: Activity },
+  { href: '/intelligence', label: 'Intelligence', icon: ShieldAlert },
   { href: '/audit', label: 'Audit', icon: ScrollText },
   { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/agents', label: 'Agents', icon: Boxes },
