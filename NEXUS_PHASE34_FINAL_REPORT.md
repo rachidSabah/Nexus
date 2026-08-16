@@ -32,3 +32,12 @@ Phase 34 delivers **Runtime Intelligence, Statistical Anomaly Detection, and Bou
 
 5. **Mission Control Dashboard**:
    - Added `/intelligence` page featuring real-time incident tracking, anomaly stream, self-healing activity, and latency trends with full dark/light theme support.
+
+6. **Agent Buckle & Machine Agent Integration Truthfulness Hardening**:
+   - Eliminated hardcoded `localhost:3000` across all agent dashboard pages and command snippets; established `127.0.0.1:8787` (Anthropic root) and `127.0.0.1:8787/v1` (OpenAI proxy) as the canonical endpoints.
+   - Formalized multi-stage agent lifecycle: `DETECTED` → `CONFIGURED` → `BUCKLED` → `READY` without collapsing status assertions.
+   - Decoupled 18 supported integration adapters from filesystem-detected binaries.
+   - Dynamically generated cross-platform buckle snippets for PowerShell, CMD, and Bash/WSL.
+   - Refactored model push semantics and counters to distinguish active config pushes from dynamic gateway model availability.
+   - Certified via `apps/gateway/test/phase34-agent-buckle.test.ts`.
+

@@ -344,7 +344,7 @@ export default function ModelsPage() {
                 {[
                   {
                     name: 'Claude Code',
-                    snippet: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787/v1"\nexport ANTHROPIC_API_KEY="nexus"\nclaude --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                    snippet: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"\nexport ANTHROPIC_API_KEY="nexus"\nclaude --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
                   },
                   {
                     name: 'OpenAI Codex CLI',

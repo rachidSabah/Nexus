@@ -3404,7 +3404,7 @@ export class HttpServer {
         health: model.stale ? 'stale' : (endpoint?.health ?? 'healthy'),
         discoveredAt: model.discoveredAt,
         agentSnippets: {
-          claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787/v1"\nexport ANTHROPIC_API_KEY="nexus"\nclaude --model nexus/${model.providerId}/${model.id}`,
+          claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"\nexport ANTHROPIC_API_KEY="nexus"\nclaude --model nexus/${model.providerId}/${model.id}`,
           codexCli: `codex --model nexus/${model.providerId}/${model.id}`,
           hermesCli: `hermes -m nexus/${model.providerId}/${model.id}`,
           agy: `agy -m nexus/${model.providerId}/${model.id}`,

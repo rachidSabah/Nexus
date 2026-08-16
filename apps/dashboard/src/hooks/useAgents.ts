@@ -32,6 +32,27 @@ export interface AgentConfigurationResult {
   message: string;
 }
 
+export interface AgentVerificationResult {
+  id: string;
+  name: string;
+  detected: boolean;
+  configured: boolean;
+  runnable: boolean;
+  gatewayReachable: boolean;
+  catalogReachable: boolean;
+  inferenceVerified: boolean;
+  streamingVerified: boolean;
+  toolCallingVerified: boolean;
+  lastVerification: string | null;
+  failureReason: string | null;
+  executable?: string;
+  configLocation?: string;
+  protocol: string;
+  version?: string;
+  platform: string;
+  detectedVia: string;
+}
+
 export interface ConfigureAllResponse {
   configuredAgents: AgentConfigurationResult[];
 }
@@ -49,18 +70,8 @@ export function useAgents(refreshIntervalMs = 10000) {
 /**
  * Dynamic agent-model push.
  *
- * When models spin up (discovered/prefetched by the gateway), connected coding
- * agents must receive the refreshed catalog automatically. The gateway is the
- * model source of truth: every agent whose base URL points at the gateway sees
- * /v1/models live. `pushModelsToAgents` re-runs the gateway's per-agent
- * `configure` (idempotent per the integration contract) so each detected
- * agent's config is re-pointed at the gateway with the current default model
- * alias — guaranteeing newly-discovered models show up without the user
- * manually re-buckling each agent.
- *
- * The default model is left as the dynamic alias (nexus/auto) so the agent
- * always resolves to whatever the fabric currently considers best — free,
- * paid, or limit-usage models are all reachable through the gateway.
+ * Distinguishes pushable local file configurations from gateway-level dynamic availability.
+ * Computes truthful stats without collapsing detected into pushed.
  */
 export function usePushModelsToAgents() {
   const [pushing, setPushing] = useState(false);
@@ -102,10 +113,10 @@ export function usePushModelsToAgents() {
  * the gateway's integration install step.
  */
 export function useConfigureAgent() {
-  const [configuring, setConfiguring] = useState(false);
+  const [configuring, setConfiguring] = useState<Record<string, boolean>>({});
   const configure = useCallback(
     async (agentId: string, opts?: { gatewayUrl?: string; defaultModel?: string; dryRun?: boolean }) => {
-      setConfiguring(true);
+      setConfiguring((prev) => ({ ...prev, [agentId]: true }));
       try {
         const res = await fetch(`/api/v1/runtime-agents/${agentId}/configure`, {
           method: 'POST',
@@ -115,10 +126,31 @@ export function useConfigureAgent() {
         if (!res.ok) throw new Error(`configure ${agentId} failed: HTTP ${res.status}`);
         return (await res.json()) as AgentConfigurationResult;
       } finally {
-        setConfiguring(false);
+        setConfiguring((prev) => ({ ...prev, [agentId]: false }));
       }
     },
     [],
   );
   return { configure, configuring };
+}
+
+/**
+ * Run active multi-stage health & readiness verification on a specific agent.
+ */
+export function useVerifyAgent() {
+  const [verifying, setVerifying] = useState<Record<string, boolean>>({});
+  const verify = useCallback(async (agentId: string) => {
+    setVerifying((prev) => ({ ...prev, [agentId]: true }));
+    try {
+      const res = await fetch(`/api/v1/runtime-agents/${agentId}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error(`verify ${agentId} failed: HTTP ${res.status}`);
+      return (await res.json()) as AgentVerificationResult;
+    } finally {
+      setVerifying((prev) => ({ ...prev, [agentId]: false }));
+    }
+  }, []);
+  return { verify, verifying };
 }
