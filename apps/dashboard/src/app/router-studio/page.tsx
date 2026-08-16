@@ -47,6 +47,8 @@ export default function RouterStudioPage() {
   const { data: providers } = useSWR<Provider[]>('/api/v1/providers', fetcher, { refreshInterval: 10000 });
   const [resolveResult, setResolveResult] = useState<AliasResolution | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  const [resolvedAliasName, setResolvedAliasName] = useState<string | null>(null);
+  const [resolvingAlias, setResolvingAlias] = useState<string | null>(null);
   const [newAlias, setNewAlias] = useState({
     alias: '',
     description: '',
@@ -68,19 +70,23 @@ export default function RouterStudioPage() {
   }, {});
 
   async function resolveAlias(alias: string) {
+    setResolvingAlias(alias);
+    setResolvedAliasName(alias);
     setResolveResult(null);
     setResolveError(null);
     try {
       const r = await fetch(`/api/v1/aliases/${encodeURIComponent(alias)}/resolve`);
       if (!r.ok) {
-        const body = await r.json().catch(() => ({ error: { message: 'Resolution failed' } }));
-        setResolveError(body?.error?.message ?? r.statusText);
+        const body = await r.json().catch(() => ({ error: { message: `HTTP ${r.status} ${r.statusText}` } }));
+        setResolveError(body?.error?.message ?? `Resolution failed: HTTP ${r.status}`);
         return;
       }
       const body = (await r.json()) as AliasResolution;
       setResolveResult(body);
     } catch (err) {
-      setResolveError((err as Error).message);
+      setResolveError(`Network error: ${(err as Error).message || 'Gateway unreachable'}`);
+    } finally {
+      setResolvingAlias(null);
     }
   }
 
@@ -257,9 +263,21 @@ export default function RouterStudioPage() {
                 <div className="flex items-center gap-2 self-end sm:self-center">
                   <button
                     onClick={() => resolveAlias(a.alias)}
-                    className="rounded-lg bg-nexus-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-nexus-500 shadow-sm"
+                    disabled={resolvingAlias === a.alias}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition shadow-sm flex items-center gap-1.5 ${
+                      resolvingAlias === a.alias
+                        ? 'bg-nexus-700 opacity-80 cursor-wait'
+                        : 'bg-nexus-600 hover:bg-nexus-500 active:scale-95'
+                    }`}
                   >
-                    Test Resolve
+                    {resolvingAlias === a.alias ? (
+                      <>
+                        <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                        Resolving...
+                      </>
+                    ) : (
+                      'Test Resolve'
+                    )}
                   </button>
                   {!a.builtin && (
                     <button
@@ -279,9 +297,16 @@ export default function RouterStudioPage() {
       {/* Resolution result */}
       {resolveResult && (
         <div className="rounded-2xl border border-emerald-500/40 bg-gradient-to-b from-emerald-950/30 to-black/80 p-5 backdrop-blur-2xl shadow-xl">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
-            <Zap className="h-4 w-4" /> Live Resolution Result
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
+              <Zap className="h-4 w-4 text-emerald-400" /> Live Resolution Result
+            </h3>
+            {resolvedAliasName && (
+              <span className="font-mono text-xs text-nexus-300 bg-nexus-500/10 border border-nexus-500/20 px-2.5 py-0.5 rounded-full">
+                {resolvedAliasName}
+              </span>
+            )}
+          </div>
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono">
             <div className="rounded-lg bg-black/40 p-2.5 border border-emerald-500/20">
               <span className="text-white/40 block text-[10px]">Resolved Model:</span>
@@ -304,7 +329,9 @@ export default function RouterStudioPage() {
       )}
       {resolveError && (
         <div className="rounded-2xl border border-rose-500/40 bg-rose-950/20 p-4 backdrop-blur-xl">
-          <div className="text-xs text-rose-300 font-mono">Error resolving alias: {resolveError}</div>
+          <div className="text-xs text-rose-300 font-mono">
+            {resolvedAliasName ? `[${resolvedAliasName}] ` : ''}Error resolving alias: {resolveError}
+          </div>
         </div>
       )}
 
