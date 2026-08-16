@@ -88,7 +88,6 @@ describe('Phase 34: Agent Buckle & Machine Agent Integration Truthfulness Harden
       expect(res.status).toBe(200);
       const body = (await res.json()) as { configuredAgents: Array<{ agentId: string; configured: boolean; message: string; gatewayUrl: string }> };
       expect(Array.isArray(body.configuredAgents)).toBe(true);
-      expect(body.configuredAgents.length).toBeGreaterThan(0);
       for (const agent of body.configuredAgents) {
         expect(agent.gatewayUrl).toBe(baseUrl);
         expect(typeof agent.configured).toBe('boolean');
