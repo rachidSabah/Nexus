@@ -1,6 +1,8 @@
 'use client';
 
-import { Plug, ExternalLink, Sparkles, Terminal, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plug, ExternalLink, Sparkles, Terminal, CheckCircle2, AlertCircle, Boxes, Cpu, Copy, Check } from 'lucide-react';
+import Link from 'next/link';
+import { useState } from 'react';
 import useSWR from 'swr';
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
@@ -51,6 +53,20 @@ export default function IntegrationsPage() {
             Buckle Claude Code, Cursor, OpenCode, Aider, Codex, VS Code, and DeepSeek Code to your local proxy gateway in seconds.
           </p>
         </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Link
+            href="/agents"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/80 transition hover:bg-white/10 hover:text-white"
+          >
+            <Boxes className="h-3.5 w-3.5 text-nexus-400" /> Runtime Agent Matrix
+          </Link>
+          <Link
+            href="/router-studio"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-nexus-500/30 bg-nexus-500/10 px-3 py-1.5 text-xs font-semibold text-nexus-300 transition hover:bg-nexus-500/20"
+          >
+            <Cpu className="h-3.5 w-3.5 text-nexus-300" /> Router Studio
+          </Link>
+        </div>
       </div>
 
       {isLoading ? (
@@ -78,6 +94,17 @@ export default function IntegrationsPage() {
 }
 
 function IntegrationCard({ integration }: { integration: IntegrationStatus }) {
+  const [copied, setCopied] = useState(false);
+  const installCmd = `anx integrations install ${integration.id}`;
+
+  const copyToClipboard = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(installCmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   return (
     <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/40 p-5 backdrop-blur-xl transition hover:border-nexus-500/40 flex flex-col justify-between">
       <div>
@@ -91,7 +118,8 @@ function IntegrationCard({ integration }: { integration: IntegrationStatus }) {
               href={integration.homepage}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-white/40 transition hover:text-white"
+              className="text-white/40 transition hover:text-white flex items-center gap-1 text-[11px]"
+              title={`Visit official documentation for ${integration.displayName}`}
             >
               <ExternalLink className="h-4 w-4" />
             </a>
@@ -119,15 +147,26 @@ function IntegrationCard({ integration }: { integration: IntegrationStatus }) {
         </div>
 
         {integration.configPath && (
-          <div className="mt-2 truncate font-mono text-[10px] text-white/40">
+          <div className="mt-2 truncate font-mono text-[10px] text-white/40" title={integration.configPath}>
             Config: {integration.configPath}
           </div>
         )}
       </div>
 
-      <div className="mt-4 rounded-xl border border-white/5 bg-black/50 p-2.5 font-mono text-[11px] text-white/70">
-        <span className="text-nexus-400">$</span> anx integrations install {integration.id}
-      </div>
+      <button
+        type="button"
+        onClick={copyToClipboard}
+        className="mt-4 flex items-center justify-between rounded-xl border border-white/5 bg-black/50 p-2.5 font-mono text-[11px] text-white/70 hover:bg-black/70 hover:border-nexus-500/30 transition text-left cursor-pointer group"
+        title="Click to copy install command"
+      >
+        <span className="truncate">
+          <span className="text-nexus-400 mr-1.5">$</span>
+          {installCmd}
+        </span>
+        <span className="ml-2 shrink-0 text-white/40 group-hover:text-nexus-400 transition">
+          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+        </span>
+      </button>
     </div>
   );
 }

@@ -60,7 +60,7 @@ export default function RequestsPage() {
             <span className="text-xs font-semibold uppercase tracking-wider text-cyan-400/80">WebSocket Protocol</span>
             <Radio className="h-4 w-4 text-cyan-400" />
           </div>
-          <div className="mt-3 text-sm font-mono font-bold text-cyan-300">ws://localhost:8787/ws</div>
+          <div className="mt-3 text-sm font-mono font-bold text-cyan-300">ws://127.0.0.1:8787/ws</div>
           <div className="mt-1 text-[11px] text-cyan-400/60">Connected to local gateway</div>
         </div>
       </div>

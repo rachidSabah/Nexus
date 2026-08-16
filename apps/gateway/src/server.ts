@@ -439,6 +439,7 @@ export class HttpServer {
       '/v1/routing/explain',
       '/v1/aliases',
       '/v1/providers',
+      '/v1/integrations',
       '/v1/debug/observability',
       '/v1/debug/tokens',
       '/v1/debug/routing',
