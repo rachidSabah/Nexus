@@ -1,15 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-/**
- * Minimal Model Context Protocol (MCP) server implementation.
- *
- * Implements the JSON-RPC 2.0 protocol over stdio or HTTP+SSE transport.
- * Spec: https://modelcontextprotocol.io/specification
- *
- * The server exposes gateway tools to MCP-capable AI clients (Claude Code,
- * Continue, Cline, etc.). A "tool" in MCP is a named, schema-described
- * function the client can call.
- */
 export interface McpTool {
   readonly name: string;
   readonly description: string;
@@ -25,20 +15,30 @@ export interface McpResource {
   read(): Promise<string | Uint8Array>;
 }
 
+export interface McpPrompt {
+  readonly name: string;
+  readonly description?: string;
+  readonly arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+  render?(args: Record<string, string>): Promise<{ description?: string; messages: Array<{ role: 'user' | 'assistant'; content: { type: 'text'; text: string } }> }>;
+}
+
 export interface McpServerOptions {
   readonly name: string;
   readonly version: string;
   readonly tools?: McpTool[];
   readonly resources?: McpResource[];
+  readonly prompts?: McpPrompt[];
 }
 
 export class McpServer {
   private readonly tools = new Map<string, McpTool>();
   private readonly resources = new Map<string, McpResource>();
+  private readonly prompts = new Map<string, McpPrompt>();
 
   constructor(private readonly options: McpServerOptions) {
     for (const t of options.tools ?? []) this.tools.set(t.name, t);
     for (const r of options.resources ?? []) this.resources.set(r.uri, r);
+    for (const p of options.prompts ?? []) this.prompts.set(p.name, p);
   }
 
   registerTool(tool: McpTool): void {
@@ -47,6 +47,10 @@ export class McpServer {
 
   registerResource(resource: McpResource): void {
     this.resources.set(resource.uri, resource);
+  }
+
+  registerPrompt(prompt: McpPrompt): void {
+    this.prompts.set(prompt.name, prompt);
   }
 
   /**
@@ -65,6 +69,7 @@ export class McpServer {
           capabilities: {
             tools: { listChanged: true },
             resources: { listChanged: true },
+            prompts: { listChanged: true },
           },
         },
       };
@@ -155,6 +160,43 @@ export class McpServer {
             },
           ],
         },
+      };
+    }
+
+    if (req.method === 'prompts/list') {
+      return {
+        jsonrpc: '2.0',
+        id: req.id,
+        result: {
+          prompts: Array.from(this.prompts.values()).map((p) => ({
+            name: p.name,
+            description: p.description,
+            arguments: p.arguments,
+          })),
+        },
+      };
+    }
+
+    if (req.method === 'prompts/get') {
+      const params = req.params as { name: string; arguments?: Record<string, string> };
+      const prompt = this.prompts.get(params.name);
+      if (!prompt) {
+        return {
+          jsonrpc: '2.0',
+          id: req.id,
+          error: { code: -32601, message: `Unknown prompt: ${params.name}` },
+        };
+      }
+      const rendered = prompt.render
+        ? await prompt.render(params.arguments ?? {})
+        : {
+            description: prompt.description,
+            messages: [{ role: 'user' as const, content: { type: 'text' as const, text: `Prompt: ${prompt.name}` } }],
+          };
+      return {
+        jsonrpc: '2.0',
+        id: req.id,
+        result: rendered,
       };
     }
 
