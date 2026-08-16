@@ -117,8 +117,16 @@ export interface RoutingEnginePort {
 
   /**
    * Notify the engine that an endpoint has failed. Used for circuit breakers.
+   * `action` mirrors the failure classification's `endpointAction` so the
+   * engine can apply the correct health transition (e.g. `mark_unavailable`
+   * → circuit-open) instead of only counting retryable failures.
    */
-  recordFailure(endpointId: string, error: Error, retryable: boolean): void;
+  recordFailure(
+    endpointId: string,
+    error: Error,
+    retryable: boolean,
+    action?: 'mark_unavailable' | 'mark_degraded' | 'record_failure' | 'none',
+  ): void;
 
   /**
    * Register or update an endpoint at runtime.

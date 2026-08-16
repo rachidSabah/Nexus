@@ -86,7 +86,34 @@ export class RoutingEngine implements RoutingEnginePort {
     this.failures.set(endpointId, []);
   }
 
-  recordFailure(endpointId: string, _error: Error, retryable: boolean): void {
+  recordFailure(
+    endpointId: string,
+    _error: Error,
+    retryable: boolean,
+    action?: 'mark_unavailable' | 'mark_degraded' | 'record_failure' | 'none',
+  ): void {
+    // Honor an explicit endpoint action from the failure classification
+    // (e.g. a billing-dead endpoint should be removed from rotation
+    // immediately, not merely counted toward the failure threshold).
+    if (action === 'mark_unavailable') {
+      const endpoint = this.endpoints.get(endpointId);
+      if (endpoint && canTransition(endpoint.health, 'circuit_open')) {
+        const now = Date.now();
+        this.setHealth(endpoint, 'circuit_open', 'endpoint marked unavailable (billing/quota)');
+        this.cooldowns.set(endpointId, now + this.cooldownMs);
+        void this.events.publish(
+          buildEvent('circuit_breaker.tripped', {
+            endpointId,
+            failureCount: -1,
+            threshold: this.failureThreshold,
+            retryAfterMs: this.cooldownMs,
+          }),
+        );
+      }
+      // A billing-dead endpoint is excluded from selection regardless of
+      // retryability, so we never loop on it.
+      return;
+    }
     if (!retryable) return;
     const now = Date.now();
     const window = (this.failures.get(endpointId) ?? []).filter((t) => now - t < this.failureWindowMs);

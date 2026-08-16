@@ -20,6 +20,35 @@ describe('classifyFailure', () => {
     expect(c.keyAction).toBe('invalidate');
   });
 
+  it('classifies 402 Payment Required (CreditsError) as billing failure — retryable + mark_unavailable', () => {
+    const err = new ProviderResponseError('ep1', 402, 'CreditsError: No payment method');
+    const c = classifyFailure(err);
+    expect(c.status).toBe(402);
+    expect(c.retryable).toBe(true);
+    expect(c.keyAction).toBe('none');
+    expect(c.endpointAction).toBe('mark_unavailable');
+  });
+
+  it('classifies a 401 carrying a billing CreditsError body as billing failure — retryable + mark_unavailable', () => {
+    const err = new ProviderResponseError(
+      'ep1',
+      401,
+      '{"error":{"message":"CreditsError: Your credits have run out"}}',
+    );
+    const c = classifyFailure(err);
+    expect(c.status).toBe(401);
+    expect(c.retryable).toBe(true);
+    expect(c.keyAction).toBe('none');
+    expect(c.endpointAction).toBe('mark_unavailable');
+  });
+
+  it('classifies a 403 with a billing signal as billing (retryable), not auth', () => {
+    const err = new ProviderResponseError('ep1', 403, 'quota exceeded');
+    const c = classifyFailure(err);
+    expect(c.retryable).toBe(true);
+    expect(c.endpointAction).toBe('mark_unavailable');
+  });
+
   it('classifies 404 model-not-found as mark-unavailable + not-retryable', () => {
     const err = new ProviderResponseError('ep1', 404, 'model not found');
     const c = classifyFailure(err);

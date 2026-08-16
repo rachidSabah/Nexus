@@ -447,7 +447,7 @@ export class ChatCompletionUseCase {
         const error = err as Error;
         const classification = classifyFailure(error);
         const retryable = classification.retryable;
-        await this.routing.recordFailure(endpoint.id, error, retryable);
+        await this.routing.recordFailure(endpoint.id, error, retryable, classification.endpointAction);
 
         // Trace: record failed attempt.
         if (this.tracer) {
@@ -672,8 +672,30 @@ export function classifyFailure(error: Error): FailureClassification {
   // ProviderResponseError carries an HTTP status.
   if (error instanceof ProviderResponseError) {
     const status = error.status;
-    // 401 Unauthorized / 403 Forbidden — key is bad. Invalidate (don't
-    // retry on the same key). The endpoint itself is probably fine.
+    // Billing / quota errors (402 Payment Required, or a 401 whose body
+    // reports a billing problem such as "CreditsError" / "No payment method")
+    // are NOT an auth failure — the key is valid, the account simply has no
+    // remaining credit. These MUST fail over to the next endpoint (and the
+    // broke endpoint should be circuit-broken so we don't keep retrying it).
+    const billing =
+      status === 402 ||
+      ((status === 401 || status === 403) &&
+        /credits? ?error|no payment method|insufficient (credit|funds)|quota exceeded|billing/i.test(
+          error.message ?? '',
+        ));
+    if (billing) {
+      return {
+        status,
+        code: undefined,
+        retryable: true,
+        keyAction: 'none',
+        endpointAction: 'mark_unavailable',
+        reason: `HTTP ${status}: billing/quota exhausted — failing over, endpoint marked unavailable`,
+      };
+    }
+    // 401 Unauthorized / 403 Forbidden (without a billing signal) — key is
+    // bad. Invalidate (don't retry on the same key). The endpoint itself is
+    // probably fine.
     if (status === 401 || status === 403) {
       return {
         status, code: undefined,

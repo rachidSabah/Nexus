@@ -35,8 +35,13 @@ export class CompositeRoutingEngine implements RoutingEnginePort {
   recordSuccess(endpointId: string, latencyMs: number): void {
     for (const e of this.engines) e.recordSuccess(endpointId, latencyMs);
   }
-  recordFailure(endpointId: string, error: Error, retryable: boolean): void {
-    for (const e of this.engines) e.recordFailure(endpointId, error, retryable);
+  recordFailure(
+    endpointId: string,
+    error: Error,
+    retryable: boolean,
+    action?: 'mark_unavailable' | 'mark_degraded' | 'record_failure' | 'none',
+  ): void {
+    for (const e of this.engines) e.recordFailure(endpointId, error, retryable, action);
   }
   registerEndpoint(endpoint: ProviderEndpoint): void {
     for (const e of this.engines) e.registerEndpoint(endpoint);
@@ -91,8 +96,13 @@ export class AffinityRouter implements RoutingEnginePort {
   recordSuccess(endpointId: string, latencyMs: number): void {
     this.inner.recordSuccess(endpointId, latencyMs);
   }
-  recordFailure(endpointId: string, error: Error, retryable: boolean): void {
-    this.inner.recordFailure(endpointId, error, retryable);
+  recordFailure(
+    endpointId: string,
+    error: Error,
+    retryable: boolean,
+    action?: 'mark_unavailable' | 'mark_degraded' | 'record_failure' | 'none',
+  ): void {
+    this.inner.recordFailure(endpointId, error, retryable, action);
   }
   registerEndpoint(endpoint: ProviderEndpoint): void {
     this.inner.registerEndpoint(endpoint);

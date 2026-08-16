@@ -156,6 +156,33 @@ describe('RoutingEngine', () => {
     expect(openai?.health).toBe('circuit_open');
   });
 
+  it('immediately circuit-breaks an endpoint when action is mark_unavailable (e.g. billing CreditsError)', () => {
+    // A billing CreditsError is retryable but must also exclude the broke
+    // endpoint so we don't keep hammering it. One such failure with the
+    // explicit mark_unavailable action trips the breaker immediately.
+    engine.recordFailure(
+      'ep-openai',
+      Object.assign(new Error('CreditsError'), { status: 402 }),
+      true,
+      'mark_unavailable',
+    );
+    const endpoints = engine.listEndpoints();
+    const openai = endpoints.find((e) => e.id === 'ep-openai');
+    expect(openai?.health).toBe('circuit_open');
+  });
+
+  it('does NOT circuit-break a billing error when action is none (legacy path)', () => {
+    engine.recordFailure(
+      'ep-openai',
+      Object.assign(new Error('CreditsError'), { status: 402 }),
+      true,
+      'none',
+    );
+    const endpoints = engine.listEndpoints();
+    const openai = endpoints.find((e) => e.id === 'ep-openai');
+    expect(openai?.health).toBe('healthy');
+  });
+
   it('does NOT open circuit breaker for non-retryable errors', () => {
     for (let i = 0; i < 5; i++) {
       engine.recordFailure('ep-openai', new Error('bad request'), false);
