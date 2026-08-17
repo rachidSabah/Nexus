@@ -106,25 +106,112 @@ if (-not (Test-Path "$REPO_DIR\.env")) {
   Write-Host "  Created .env from .env.example — add your API keys."
 }
 
-# --- 7. start gateway ---
-Write-Step "Starting gateway (background)..."
-$binPath = "$REPO_DIR\apps\gateway\dist\bin.js"
-$proc = Start-Process -FilePath "node" `
-  -ArgumentList $binPath, "--config", "$INSTALL_DIR\config.json" `
-  -WorkingDirectory $REPO_DIR `
-  -WindowStyle Hidden -PassThru
-Start-Sleep -Seconds 4
+# --- 7. start gateway + dashboard (with real health verification) ---
+$DASHBOARD_PORT = 3000
+$binPath        = "$REPO_DIR\apps\gateway\dist\bin.js"
+$logDir         = "$INSTALL_DIR\logs"
+$pidFile        = "$INSTALL_DIR\nexus.pids"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
-# --- 8. report ---
+function Test-TcpPort($port) {
+  try { return ($null -ne (Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { $_.State -eq 'Listen' })) }
+  catch { return $false }
+}
+function Test-Http($url) {
+  try {
+    $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+    return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 500)
+  } catch { return $false }
+}
+function Wait-ForService($port, $url, $timeoutSec) {
+  $deadline = (Get-Date).AddSeconds($timeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    if (Test-TcpPort $port -and (Test-Http $url)) { return $true }
+    Start-Sleep -Seconds 1
+  }
+  # final attempt
+  return (Test-TcpPort $port -and (Test-Http $url))
+}
+
+$gatewayPid  = $null
+$dashboardPid = $null
+
+# Idempotency: reuse an already-listening service instead of spawning duplicates.
+$gatewayUp   = Test-TcpPort $GATEWAY_PORT
+$dashboardUp = Test-TcpPort $DASHBOARD_PORT
+
+if ($gatewayUp) {
+  Write-Host "  Gateway already listening on :$GATEWAY_PORT — reusing." -ForegroundColor Yellow
+} else {
+  Write-Step "Starting gateway (background)..."
+  $gwLog = "$logDir\gateway.log"
+  $proc = Start-Process -FilePath "node" `
+    -ArgumentList $binPath, "--config", "$INSTALL_DIR\config.json" `
+    -WorkingDirectory $REPO_DIR `
+    -WindowStyle Hidden -PassThru `
+    -RedirectStandardOutput $gwLog -RedirectStandardError "$logDir\gateway.err"
+  $gatewayPid = $proc.Id
+  Write-Host "  Gateway PID: $gatewayPid"
+}
+
+$gatewayOk = Wait-ForService $GATEWAY_PORT "http://127.0.0.1:$GATEWAY_PORT/health" 30
+if (-not $gatewayOk) {
+  Write-Host ""
+  Write-Host "  [FAILED] Gateway did not become healthy on :$GATEWAY_PORT." -ForegroundColor Red
+  if ($gatewayPid) { Write-Host "  Gateway PID: $gatewayPid" }
+  Write-Host "  Gateway log:" -ForegroundColor Red
+  if (Test-Path "$logDir\gateway.err") { Get-Content "$logDir\gateway.err" -Tail 20 | ForEach-Object { "    $_" } }
+  if (Test-Path "$logDir\gateway.log") { Get-Content "$logDir\gateway.log" -Tail 20 | ForEach-Object { "    $_" } }
+  Write-Host "  Installation incomplete — fix the above and re-run the installer." -ForegroundColor Red
+  exit 1
+}
+
+if ($dashboardUp) {
+  Write-Host "  Dashboard already listening on :$DASHBOARD_PORT — reusing." -ForegroundColor Yellow
+} else {
+  Write-Step "Starting dashboard (background)..."
+  $dashLog = "$logDir\dashboard.log"
+  # The dashboard is a separate Next.js app (apps/dashboard) that proxies API
+  # calls to the gateway via next.config.mjs rewrites. It is NOT served by the
+  # gateway, so it runs on its own port (:3000).
+  $dashProc = Start-Process -FilePath "pnpm" `
+    -ArgumentList "--filter", "@anx/dashboard", "start" `
+    -WorkingDirectory $REPO_DIR `
+    -WindowStyle Hidden -PassThru `
+    -RedirectStandardOutput $dashLog -RedirectStandardError "$logDir\dashboard.err"
+  $dashboardPid = $dashProc.Id
+  Write-Host "  Dashboard PID: $dashboardPid"
+}
+
+$dashboardOk = Wait-ForService $DASHBOARD_PORT "http://127.0.0.1:$DASHBOARD_PORT/" 45
+if (-not $dashboardOk) {
+  Write-Host ""
+  Write-Host "  [FAILED] Dashboard did not become reachable on :$DASHBOARD_PORT." -ForegroundColor Red
+  if ($dashboardPid) { Write-Host "  Dashboard PID: $dashboardPid" }
+  Write-Host "  Dashboard log:" -ForegroundColor Red
+  if (Test-Path "$logDir\dashboard.err") { Get-Content "$logDir\dashboard.err" -Tail 20 | ForEach-Object { "    $_" } }
+  if (Test-Path "$logDir\dashboard.log") { Get-Content "$logDir\dashboard.log" -Tail 20 | ForEach-Object { "    $_" } }
+  Write-Host "  Gateway is running; dashboard failed to start. Re-run the installer." -ForegroundColor Red
+  exit 1
+}
+
+# Persist PIDs for clean shutdown / idempotent restarts.
+@"
+gateway=$gatewayPid
+dashboard=$dashboardPid
+"@ | Set-Content -Path $pidFile
+
+# --- 8. report (only after real verification) ---
 Write-Step "Done."
 Write-Host ""
-Write-Host "  Gateway   : http://127.0.0.1:$GATEWAY_PORT" -ForegroundColor Green
-Write-Host "  Dashboard : http://127.0.0.1:$GATEWAY_PORT/dashboard" -ForegroundColor Green
+Write-Host "  Gateway   : http://127.0.0.1:$GATEWAY_PORT  (health: OK)" -ForegroundColor Green
+Write-Host "  Dashboard : http://127.0.0.1:$DASHBOARD_PORT  (HTTP: OK)" -ForegroundColor Green
 Write-Host "  Config    : $INSTALL_DIR\config.json"
+Write-Host "  Logs      : $logDir"
 Write-Host "  Repo      : $REPO_DIR"
 Write-Host ""
 Write-Host "  Next steps:"
-Write-Host "    1. Open the dashboard and add a provider API key."
+Write-Host "    1. Open the dashboard at http://127.0.0.1:$DASHBOARD_PORT and add a provider API key."
 Write-Host "    2. Point your coding agent at: http://127.0.0.1:$GATEWAY_PORT/v1"
 Write-Host "    3. Select a routing policy (e.g. nexus/best-coding) and start coding."
 Write-Host ""
