@@ -1102,7 +1102,35 @@ export class HttpServer {
       }
 
       reply.header('X-Nexus-Model-Catalog-Version', String(this.deps.modelRegistry.getCatalogVersion()));
-      return reply.send({ object: 'list', data: Array.from(byId.values()) });
+      // Virtual model aliases (e.g. nexus/auto, local/free, nexus/best) —
+      // project them as virtual routing models with valid metadata so clients
+      // (Codex, dashboards) that query /v1/models for an alias get a coherent
+      // record instead of "Model metadata not found". These are NOT concrete
+      // upstream models; they resolve dynamically at request time via the
+      // alias registry, which is exactly what the metadata advertises.
+      for (const a of this.deps.aliasRegistry.list()) {
+        if (models.has(a.alias)) continue;
+        models.set(a.alias, {
+          id: a.alias,
+          object: 'model',
+          owned_by: 'nexus',
+          pricing: {
+            isFree: a.filter.freeOnly === true,
+            currency: 'USD',
+            source: 'virtual-alias',
+          },
+          capabilities: {
+            streaming: true,
+            toolCalling: true,
+            jsonMode: true,
+            vision: false,
+            reasoning: true,
+          },
+          context_window: a.filter.minContextWindow ?? undefined,
+        });
+      }
+
+      return { object: 'list', data: Array.from(models.values()) };
     };
     this.fastify.get('/v1/models', handleModels);
     this.fastify.get('/models', handleModels);

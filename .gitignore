@@ -68,3 +68,10 @@ tmp/
 *.secret
 *.p12
 *.crt
+
+# Isolated test vault / scratch artifacts (NEVER commit; uses a COPY of the prod vault)
+.test-island/
+.tmp_*.json
+
+# User WIP backup (broken in-progress refactor, preserved not committed)
+server.ts.wip-backup
