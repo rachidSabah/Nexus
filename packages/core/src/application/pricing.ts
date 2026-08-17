@@ -52,6 +52,19 @@ export function classifyPricing(p: GatewayPricing | undefined): FreeClassificati
   // Provider/adapter explicitly marks free (id suffix `-free`/`:free`/`_free`,
   // per_request_rate = 0, zero pricing) — honor it before numeric logic.
   if (p.isFree === true) {
+    // A free model the provider exposes as a quota/rate-limited alias
+    // (OpenRouter `:free`, OpenCode Zen / NVIDIA `*-free` …) is classified
+    // as FREE_TIER, not plain FREE. Source of truth is the provider-
+    // enforced free alias signal, never an arbitrary name assumption.
+    // Genuinely unrestricted free models (pricing === '0', local Ollama)
+    // remain FREE.
+    if (p.quotaLimited === true) {
+      return {
+        freeTier: 'FREE_TIER',
+        isFree: true,
+        reason: 'provider marks model as quota-limited free tier',
+      };
+    }
     return {
       freeTier: 'FREE',
       isFree: true,

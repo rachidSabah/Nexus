@@ -171,12 +171,21 @@ export class OpenAIAdapter implements ProviderAdapter {
         //  1. Its id has a known free suffix (`:free` OpenRouter, `-free`
         //     OpenCode Zen / NVIDIA, `_free` …), OR
         //  2. The provider exposes per_request_rate = 0 / pricing.prompt = "0"
+        //
+        // Per the adapter contract (ports.ts "Detect free-tier models"),
+        // a provider-enforced free alias (suffix match) is a quota/rate-
+        // limited free tier, so it is flagged quotaLimited. A model that is
+        // free purely because of zero numeric pricing (per_request_rate = 0
+        // or pricing 0) is genuinely unrestricted and stays quotaLimited:
+        // false/absent (plain FREE).
+        const freeBySuffix = hasFreeSuffix(id);
         const livePricing = {
           inputPer1M,
           outputPer1M,
-          isFree: hasFreeSuffix(id)
+          isFree: freeBySuffix
             || (extra.pricing?.prompt === '0' && extra.pricing?.completion === '0')
             || extra.per_request_rate === 0,
+          quotaLimited: freeBySuffix,
           currency: 'USD',
           // Live provider API metadata wins only when it actually carried
           // pricing; otherwise the source is genuinely unknown.

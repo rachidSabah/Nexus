@@ -22,6 +22,27 @@ describe('Pricing Module', () => {
     expect(classifyPricing({}).freeTier).toBe('UNKNOWN');
   });
 
+  it('classifies quota-limited free models as FREE_TIER', () => {
+    // Provider-enforced free alias (e.g. OpenRouter `:free`, `*-free`) → FREE_TIER.
+    expect(classifyPricing({ isFree: true, quotaLimited: true }).freeTier).toBe('FREE_TIER');
+    expect(classifyPricing({ isFree: true, quotaLimited: true }).isFree).toBe(true);
+  });
+
+  it('keeps genuinely unrestricted free models as FREE (not FREE_TIER)', () => {
+    // Free by zero numeric pricing / local Ollama — no quota limitation signal.
+    expect(classifyPricing({ isFree: true, quotaLimited: false }).freeTier).toBe('FREE');
+    expect(classifyPricing({ isFree: true }).freeTier).toBe('FREE');
+  });
+
+  it('never fabricates FREE_TIER from a free suffix without quota signal', () => {
+    // A model whose id merely ends in `-free` is only FREE_TIER when the
+    // adapter actually sets quotaLimited. classifyPricing must not infer
+    // quota from the name alone.
+    const freeNoQuota = { isFree: true };
+    expect(freeNoQuota).not.toHaveProperty('quotaLimited');
+    expect(classifyPricing(freeNoQuota).freeTier).toBe('FREE');
+  });
+
   it('detects zero priced', () => {
     expect(isZeroPriced(0, 0)).toBe(true);
     expect(isZeroPriced(0, 1)).toBe(false);

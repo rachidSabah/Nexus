@@ -45,6 +45,17 @@ export interface GatewayPricing {
   cachedOutputPer1M?: number;
   /** True if the provider explicitly marks this as a free-tier model. */
   isFree?: boolean;
+  /**
+   * True when the provider exposes this model as a quota/rate-limited free
+   * tier (e.g. an OpenRouter `:free` alias, an OpenCode Zen / NVIDIA `*-free`
+   * alias). These are free but capacity-capped, distinct from genuinely
+   * unrestricted free models (e.g. `pricing.prompt === '0'`).
+   *
+   * Source of truth: `hasFreeSuffix(id)` at the provider-adapter discovery
+   * boundary (see `ports.ts` "Detect free-tier models" contract). Never
+   * inferred from arbitrary naming; only from provider-enforced free aliases.
+   */
+  quotaLimited?: boolean;
   currency?: string;
   /** Source hierarchy: live > provider_metadata > adapter_fallback > unknown. */
   source?: PricingSource;

@@ -151,6 +151,57 @@ describe('OpenAIAdapter', () => {
     expect(result.provider).toBe('openai');
   });
 
+  it('classifies quota-limited free aliases (suffix) as FREE_TIER through discovery', async () => {
+    // Representative free-suffixed catalog IDs observed in Nexus.
+    const modelsPayload = {
+      data: [
+        // OpenRouter `:free` alias → quota-limited free tier.
+        { id: 'meta-llama/llama-3.1-8b-instruct:free', object: 'model', owned_by: 'meta' },
+        // OpenCode Zen / NVIDIA `*-free` alias → quota-limited free tier.
+        { id: 'deepseek-v4-flash-free', object: 'model', owned_by: 'deepseek' },
+        { id: 'hy3-free', object: 'model', owned_by: 'opencode' },
+        { id: 'nemotron-3.5-lightning-free', object: 'model', owned_by: 'nvidia' },
+        // Genuinely paid model with numeric pricing (OpenRouter pricing table).
+        {
+          id: 'anthropic/claude-3.5-sonnet',
+          object: 'model',
+          owned_by: 'anthropic',
+          pricing: { prompt: '0.000003', completion: '0.000015' },
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => modelsPayload,
+      text: async () => JSON.stringify(modelsPayload),
+    }));
+
+    const adapter = new OpenAIAdapter();
+    const endpoint = makeEndpoint({ providerId: 'openrouter' });
+    const discovered = await adapter.discoverModels(endpoint, new AbortController().signal);
+
+    const byId = Object.fromEntries(discovered.map((m) => [m.id, m]));
+
+    // All suffix-free models that ARE free are quota-limited → FREE_TIER.
+    for (const id of [
+      'meta-llama/llama-3.1-8b-instruct:free',
+      'deepseek-v4-flash-free',
+      'hy3-free',
+      'nemotron-3.5-lightning-free',
+    ]) {
+      const m = byId[id];
+      expect(m, `model ${id} present`).toBeDefined();
+      expect(m.pricing?.isFree, `${id} isFree`).toBe(true);
+      expect(m.pricing?.quotaLimited, `${id} quotaLimited`).toBe(true);
+      expect(m.pricing?.freeTier, `${id} freeTier`).toBe('FREE_TIER');
+    }
+
+    // Paid model stays PAID with no quota flag.
+    const paid = byId['anthropic/claude-3.5-sonnet'];
+    expect(paid.pricing?.freeTier).toBe('PAID');
+    expect(paid.pricing?.quotaLimited).toBeFalsy();
+  });
+
   it('parses SSE stream correctly', async () => {
     const encoder = new TextEncoder();
     const sse = [
