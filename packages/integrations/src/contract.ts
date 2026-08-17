@@ -45,6 +45,18 @@ export interface IntegrationStatus {
   readonly configured: boolean;
   readonly configPath?: string;
   readonly details?: string;
+  /** Endpoint the agent's config currently points at (raw, e.g. http://localhost:8787/v1). */
+  readonly configuredEndpoint?: string;
+  /** The Nexus gateway endpoint the integration expects (ctx.gatewayUrl + /v1). */
+  readonly expectedEndpoint?: string;
+  /** True when configuredEndpoint differs from expectedEndpoint (normalized). Surfaces a CONFIGURATION MISMATCH in the UI. */
+  readonly mismatch?: boolean;
+  /** Resolved executable path (best-effort). */
+  readonly executable?: string;
+  /** Detected version (best-effort; may be undefined). */
+  readonly version?: string;
+  /** Coarse health for the control-center card. */
+  readonly health?: 'unknown' | 'healthy' | 'mismatch' | 'not-configured';
 }
 
 export interface IntegrationAdapter {
@@ -89,6 +101,50 @@ export interface IntegrationAdapter {
    * Return a human-readable status. Used by `anx integrations list`.
    */
   status(ctx: IntegrationContext): Promise<IntegrationStatus>;
+
+  /**
+   * Declare which lifecycle operations this adapter supports. Used by the
+   * dashboard to show only the buttons the backend can actually execute.
+   * Defaults are provided by `BaseIntegration` (start/stop/restart = false
+   * unless the adapter overrides `getLaunchSpec`).
+   */
+  capabilities(ctx: IntegrationContext): Promise<IntegrationCapabilities>;
+
+  /**
+   * Return the normalized launch specification for this agent, or `null` if
+   * the adapter does not (yet) support process management for it. The generic
+   * `IntegrationProcessManager` executes this spec — it never receives an
+   * executable/command/args from the dashboard request.
+   *
+   * Adapters with `getLaunchSpec` returning a non-null spec automatically
+   * advertise `supportsStart/Stop/Restart: true` via `BaseIntegration`.
+   */
+  getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null>;
+
+  /**
+   * Start the agent process using the adapter's launch spec. Delegates to the
+   * shared `IntegrationProcessManager`. A no-op (with a clear result) when the
+   * adapter does not provide a launch spec.
+   */
+  start(ctx: IntegrationContext): Promise<IntegrationResult>;
+
+  /**
+   * Stop the agent process. Only terminates a PID the manager itself launched
+   * for this integration id — never an unrelated process the user started.
+   */
+  stop(ctx: IntegrationContext): Promise<IntegrationResult>;
+
+  /**
+   * Restart the agent process: stop (if running) then start. Restarting one
+   * integration never affects any other integration's process.
+   */
+  restart(ctx: IntegrationContext): Promise<IntegrationResult>;
+
+  /**
+   * Return the current runtime state (pid, running, health) tracked by the
+   * manager for this integration, or a default "not running" state.
+   */
+  runtime(ctx: IntegrationContext): Promise<ProcessState>;
 }
 
 export interface IntegrationResult {
@@ -97,6 +153,88 @@ export interface IntegrationResult {
   readonly actions: readonly string[];
   readonly errors?: readonly string[];
 }
+
+// ─── Lifecycle / process-management extensions ──────────────────────────────
+//
+// The integration layer is also a UNIVERSAL CODING AGENT LIFECYCLE MANAGER.
+// Each adapter may declare how to launch its agent (a normalized `LaunchSpec`)
+// and which lifecycle operations it supports. The generic `IntegrationProcessManager`
+// owns start/stop/restart + per-agent PID tracking and knows NOTHING about any
+// specific agent executable — it only spawns the spec an adapter returns.
+
+/**
+ * Normalized launch specification. The adapter supplies this; the generic
+ * process manager executes it. Never constructed from untrusted request input
+ * (see security: the dashboard sends only `integrationId`).
+ */
+export interface LaunchSpec {
+  /** Absolute or PATH-resolvable executable, e.g. `claude` or `C:\...\claude.exe`. */
+  readonly executable: string;
+  /** Arguments passed to the executable. */
+  readonly args: readonly string[];
+  /** Working directory for the spawned process. */
+  readonly cwd?: string;
+  /** Environment variables for the spawned process (merged over process.env). */
+  readonly env: Readonly<Record<string, string>>;
+  /**
+   * When true, the manager spawns the executable inside a new interactive
+   * shell window (Windows `cmd /k`, macOS/Linux `xterm`/`gnome-terminal`).
+   * Used for interactive CLI agents that need a TTY. When false, the process
+   * is spawned headless/detached in the background.
+   */
+  readonly interactive: boolean;
+  /** Human-readable command, for logging/display only. */
+  readonly display?: string;
+}
+
+/**
+ * Per-agent runtime state tracked by the generic manager.
+ * `pid` is only ever a PID the manager itself launched (never an unrelated
+ * process the user started manually).
+ */
+export interface ProcessState {
+  readonly id: string;
+  readonly running: boolean;
+  readonly pid?: number;
+  readonly executable?: string;
+  readonly args?: readonly string[];
+  readonly startedAt?: string;
+  readonly gatewayTarget?: string;
+  readonly health: 'unknown' | 'healthy' | 'unhealthy' | 'exited';
+  readonly exitCode?: number;
+}
+
+/**
+ * Declares which lifecycle operations an adapter supports, so the UI can
+ * show only buttons the backend can actually execute (no dead buttons).
+ */
+export interface IntegrationCapabilities {
+  readonly supportsDetect: true;
+  readonly supportsInstall: boolean;
+  readonly supportsUninstall: boolean;
+  readonly supportsVerify: boolean;
+  readonly supportsStart: boolean;
+  readonly supportsStop: boolean;
+  readonly supportsRestart: boolean;
+  /** Whether this adapter can bind the agent's config to the gateway URL. */
+  readonly supportsGatewayBinding: boolean;
+  /** Whether the agent needs an interactive terminal window. */
+  readonly interactive: boolean;
+}
+
+export const DEFAULT_CAPABILITIES: IntegrationCapabilities = {
+  supportsDetect: true,
+  supportsInstall: true,
+  supportsUninstall: true,
+  supportsVerify: true,
+  supportsStart: false,
+  supportsStop: false,
+  supportsRestart: false,
+  supportsGatewayBinding: true,
+  interactive: false,
+};
+
+export type LifecycleAction = 'start' | 'stop' | 'restart';
 
 // ─── Helpers shared by all adapters ─────────────────────────────────────────
 

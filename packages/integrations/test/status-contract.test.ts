@@ -1,0 +1,50 @@
+import { describe, it, expect } from 'vitest';
+import { ClaudeCodeIntegration } from '../src/adapters/claude-code.js';
+import { normalizeGatewayUrl } from '../src/contract.js';
+
+const baseCtx = {
+  gatewayUrl: 'http://127.0.0.1:8787',
+  apiKey: 'nexus',
+  defaultModel: 'nexus/auto',
+};
+
+describe('IntegrationStatus rich contract', () => {
+  it('returns the extended fields with correct shapes', async () => {
+    const adapter = new ClaudeCodeIntegration();
+    const s = await adapter.status(baseCtx as any);
+
+    expect(s.id).toBe('claude-code');
+    // Extended fields must be present (backward-compatible contract).
+    expect(typeof s.configuredEndpoint).toBe('string');
+    expect(typeof s.expectedEndpoint).toBe('string');
+    expect(s.expectedEndpoint!.endsWith('/v1')).toBe(true);
+    expect(typeof s.mismatch).toBe('boolean');
+    // health is one of the documented states.
+    expect(['unknown', 'healthy', 'mismatch', 'not-configured']).toContain(s.health);
+  });
+
+  it('detects endpoint mismatch between localhost and 127.0.0.1', async () => {
+    const adapter = new ClaudeCodeIntegration();
+    const s = await adapter.status({ ...baseCtx, gatewayUrl: 'http://localhost:8787' } as any);
+
+    // When the configured binding differs (normalized) from the expected gateway,
+    // mismatch must be reported as true and health must reflect it.
+    const expectedEndpoint = `${normalizeGatewayUrl('http://localhost:8787')}/v1`;
+    if (s.configuredEndpoint) {
+      const differs = normalizeGatewayUrl(s.configuredEndpoint) !== normalizeGatewayUrl(expectedEndpoint);
+      expect(s.mismatch).toBe(differs);
+      if (differs) expect(s.health).toBe('mismatch');
+    }
+  });
+
+  it('reports no mismatch when the configured endpoint matches the expected gateway', async () => {
+    const adapter = new ClaudeCodeIntegration();
+    const s = await adapter.status(baseCtx as any);
+    // On this machine claude is bound to 127.0.0.1:8787 which equals the expected
+    // gateway, so mismatch must be false and health healthy/not-configured.
+    if (s.configuredEndpoint) {
+      const matches = normalizeGatewayUrl(s.configuredEndpoint) === normalizeGatewayUrl(`${baseCtx.gatewayUrl}/v1`);
+      expect(s.mismatch).toBe(!matches);
+    }
+  });
+});

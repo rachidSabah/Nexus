@@ -2,6 +2,10 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
+import { spawn as nodeSpawn } from 'node:child_process';
+/** Cast to any: this package's tsconfig resolves child_process.spawn overloads to `never`,
+ *  so we bypass overload checking for the detached self-respawn call. Runtime behavior is identical. */
+const spawnProcess = nodeSpawn as unknown as (cmd: string, args: string[], opts: Record<string, unknown>) => { unref: () => void; pid?: number; kill: (s?: string) => void };
 
 import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
 import type { AIServiceMesh } from '@agent-nexus/service-mesh';
@@ -82,7 +86,7 @@ import type {
 } from '@anx/core';
 import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
-import { BUILTIN_INTEGRATIONS, type IntegrationContext } from '@anx/integrations';
+import { BUILTIN_INTEGRATIONS, createIntegrationRegistry, type IntegrationContext } from '@anx/integrations';
 import {
   TokenOptimizer,
   OptimizationMode,
@@ -689,6 +693,38 @@ export class HttpServer {
         unsub();
       });
 
+      return reply;
+    });
+
+    // POST /v1/system/gateway/restart — Safe self-restart.
+    // Spawns a DETACHED copy of this gateway process (same argv/cwd/env) that
+    // takes over the port, then the current process exits. Because the child
+    // is detached and unref'd, the gateway never becomes permanently
+    // unavailable: the replacement is already starting when we exit. The
+    // dashboard handles the brief reconnect window gracefully.
+    this.fastify.post('/v1/system/gateway/restart', async (_request, reply) => {
+      try {
+        const child = spawnProcess(process.execPath, process.argv.slice(1), {
+          cwd: process.cwd(),
+          env: process.env,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false,
+        });
+        child.unref();
+        reply.code(202).send({
+          ok: true,
+          message: 'gateway restart initiated',
+          pid: child.pid,
+        });
+        // Give the child a moment to bind the port before we exit.
+        setTimeout(() => process.exit(0), 1200);
+      } catch (err) {
+        return reply.code(500).send({
+          ok: false,
+          message: `gateway restart failed: ${(err as Error).message}`,
+        });
+      }
       return reply;
     });
 
@@ -5505,6 +5541,87 @@ let optMessages: never[] | undefined;
         });
       }
       return { count: results.length, integrations: results };
+    });
+
+    // ── Integrations lifecycle (Universal Coding Agent Integration Manager) ─
+    // Generic, adapter-resolved. The dashboard sends ONLY `integrationId`;
+    // the adapter supplies the trusted launch spec. No executable/command/
+    // args are ever accepted from the request body (security: §21).
+    const integrationRegistry = createIntegrationRegistry();
+
+    const resolveIntegration = (id: string) => {
+      const adapter = integrationRegistry.get(id);
+      if (!adapter) {
+        const err = new Error(`unknown integration: ${id}`);
+        (err as Error & { statusCode?: number }).statusCode = 404;
+        throw err;
+      }
+      return adapter;
+    };
+
+    const integrationCtx = (request: any): IntegrationContext => {
+      const q = request.query ?? {};
+      return {
+        gatewayUrl: q.gatewayUrl ?? `http://${request.headers['host'] ?? 'localhost:8787'}`,
+        apiKey: q.apiKey ?? process.env.NEXUS_API_KEY ?? 'nexus',
+        defaultModel: q.defaultModel ?? 'gpt-4',
+      };
+    };
+
+    this.fastify.post('/v1/integrations/:id/start', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      return adapter.start(integrationCtx(request));
+    });
+
+    this.fastify.post('/v1/integrations/:id/stop', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      return adapter.stop(integrationCtx(request));
+    });
+
+    this.fastify.post('/v1/integrations/:id/restart', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      return adapter.restart(integrationCtx(request));
+    });
+
+    this.fastify.get('/v1/integrations/:id/runtime', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      const state = await adapter.runtime(integrationCtx(request));
+      const caps = await adapter.capabilities(integrationCtx(request));
+      return { ...state, capabilities: caps };
+    });
+
+    // Rich status (endpoint mismatch, version, executable, health) — used by
+    // the dashboard control center to render a CONFIGURATION MISMATCH banner.
+    this.fastify.get('/v1/integrations/:id/status', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      return adapter.status(integrationCtx(request));
+    });
+
+    // Install / (re)bind the agent to Nexus. `force:true` performs a rebind
+    // even when the agent is already bound to a different endpoint.
+    this.fastify.post('/v1/integrations/:id/install', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      const body = (request.body ?? {}) as { force?: boolean };
+      const ctx = integrationCtx(request);
+      return adapter.install({ ...ctx, force: body.force === true });
+    });
+
+    this.fastify.post('/v1/integrations/:id/verify', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      return adapter.verify(integrationCtx(request));
+    });
+
+    this.fastify.post('/v1/integrations/:id/uninstall', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      return adapter.uninstall(integrationCtx(request));
     });
 
     // ─── Phase 4: Agents ───────────────────────────────────────────────

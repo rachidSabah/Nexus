@@ -463,9 +463,11 @@ export class NexusCli {
         return this.integrationsVerify(rest);
       case 'info':
         return this.integrationsInfo(rest);
+      case 'status':
+        return this.integrationsStatus(rest);
       default:
         process.stderr.write(
-          'Usage: anx integrations <list|install|uninstall|verify|info> [id]\n',
+          'Usage: anx integrations <list|install|uninstall|verify|info|status> [id]\n',
         );
     }
   }
@@ -488,7 +490,7 @@ export class NexusCli {
   private async integrationsInstall(args: string[]): Promise<void> {
     const ctx = this.integrationContext(args);
     const registry = createIntegrationRegistry();
-    const ids = args.filter((a) => !a.startsWith('--'));
+    const ids = (this.parseFlags(args)['_'] ?? []).filter((a) => !a.startsWith('--'));
 
     if (ids.length === 0 || ids[0] === '--all') {
       process.stdout.write(`Installing all ${BUILTIN_INTEGRATIONS.length} integrations...\n\n`);
@@ -523,7 +525,7 @@ export class NexusCli {
   private async integrationsUninstall(args: string[]): Promise<void> {
     const ctx = this.integrationContext(args);
     const registry = createIntegrationRegistry();
-    const ids = args.filter((a) => !a.startsWith('--'));
+    const ids = (this.parseFlags(args)['_'] ?? []).filter((a) => !a.startsWith('--'));
     if (ids.length === 0) {
       process.stderr.write('Usage: anx integrations uninstall <id> [<id> ...]\n');
       return;
@@ -543,7 +545,7 @@ export class NexusCli {
   private async integrationsVerify(args: string[]): Promise<void> {
     const ctx = this.integrationContext(args);
     const registry = createIntegrationRegistry();
-    const ids = args.filter((a) => !a.startsWith('--'));
+    const ids = (this.parseFlags(args)['_'] ?? []).filter((a) => !a.startsWith('--'));
     if (ids.length === 0) {
       process.stderr.write('Usage: anx integrations verify <id> [<id> ...]\n');
       return;
@@ -579,6 +581,33 @@ export class NexusCli {
     process.stdout.write(`\nInstall with:\n  anx integrations install ${adapter.id}\n`);
   }
 
+  private async integrationsStatus(args: string[]): Promise<void> {
+    const ctx = this.integrationContext(args);
+    const registry = createIntegrationRegistry();
+    const flags = this.parseFlags(args);
+    const ids = (flags['_'] ?? []).filter((a) => !a.startsWith('--'));
+    const targets = ids.length === 0 ? BUILTIN_INTEGRATIONS : ids.map((id) => registry.get(id)).filter(Boolean);
+    if (ids.length > 0 && targets.length !== ids.length) {
+      for (const id of ids) if (!registry.get(id)) process.stderr.write(`Unknown integration: ${id}\n`);
+    }
+    for (const adapter of targets as typeof BUILTIN_INTEGRATIONS) {
+      const s = await adapter.status(ctx);
+      process.stdout.write(`${adapter.displayName}\n`);
+      process.stdout.write(`${'─'.repeat(adapter.displayName.length)}\n`);
+      process.stdout.write(`  ID:            ${s.id}\n`);
+      process.stdout.write(`  Installed:     ${s.installed ? 'yes' : 'no'}\n`);
+      process.stdout.write(`  Configured:    ${s.configured ? 'yes' : 'no'}\n`);
+      if (s.executable) process.stdout.write(`  Executable:    ${s.executable}\n`);
+      if (s.version) process.stdout.write(`  Version:       ${s.version}\n`);
+      if (s.configuredEndpoint) process.stdout.write(`  Current API:   ${s.configuredEndpoint}\n`);
+      if (s.expectedEndpoint) process.stdout.write(`  Nexus API:     ${s.expectedEndpoint}\n`);
+      if (s.mismatch) process.stdout.write(`  ⚠ Endpoint mismatch (agent not routed through Nexus)\n`);
+      if (s.configPath) process.stdout.write(`  Config:        ${s.configPath}\n`);
+      if (s.health) process.stdout.write(`  Health:        ${s.health.toUpperCase()}\n`);
+      process.stdout.write(`  ${s.details ?? ''}\n\n`);
+    }
+  }
+
   private integrationContext(args: string[] = []): IntegrationContext {
     const flags = this.parseFlags(args);
     return {
@@ -605,11 +634,12 @@ COMMANDS
   completion                 Alias for chat
   providers                  List configured providers
   integrations <subcmd>      Manage native tool integrations
-    list                     List all 19 supported integrations
+    list                     List all integrations
     install <id|--all>       Configure a tool to use the gateway
     uninstall <id>           Remove gateway config from a tool
     verify <id>              Test that a tool can reach the gateway
     info <id>                Show details about an integration
+    status [id]              Show detection/config/endpoint status (all if omitted)
   health                     Check gateway health
   cert                       Run the compatibility certification suite
                              (probes /v1/models, streaming, per-editor status)
@@ -666,9 +696,15 @@ EXAMPLES
       const a = args[i]!;
       if (a.startsWith('--')) {
         const key = a.slice(2);
-        const val = args[i + 1] ?? 'true';
-        if (!val.startsWith('--')) i++;
-        flags[key] = val;
+        const next = args[i + 1];
+        // Boolean flag when there is no following value, or the next token is
+        // itself a flag (e.g. `--force --gateway http://...`).
+        if (next === undefined || next.startsWith('--')) {
+          flags[key] = 'true';
+        } else {
+          flags[key] = next;
+          i++;
+        }
       } else {
         positional.push(a);
       }

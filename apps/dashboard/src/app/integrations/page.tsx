@@ -1,37 +1,403 @@
 'use client';
 
-import { Plug, ExternalLink, Sparkles, Terminal, CheckCircle2, AlertCircle, Boxes, Cpu, Copy, Check } from 'lucide-react';
+import {
+  Plug,
+  ExternalLink,
+  Sparkles,
+  Terminal,
+  CheckCircle2,
+  AlertCircle,
+  Boxes,
+  Cpu,
+  Copy,
+  Check,
+  Play,
+  Square,
+  RotateCw,
+  Settings2,
+  Circle,
+  Rocket,
+  ShieldAlert,
+  RefreshCw,
+  Server,
+} from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
-import useSWR from 'swr';
+import { useState, useCallback } from 'react';
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+import {
+  useIntegrationsList,
+  useIntegrationStatus,
+  useIntegrationRuntime,
+  useGatewayHealth,
+  useModelCount,
+  useIntegrationActions,
+  type IntegrationStatus,
+} from '@/hooks/integrations';
 
-interface IntegrationStatus {
-  id: string;
-  displayName: string;
-  description: string;
-  category: 'cli' | 'editor' | 'ide' | 'agent';
-  homepage?: string;
-  installed: boolean;
-  configured: boolean;
-  configPath?: string;
-  details?: string;
+function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMutate: () => void }) {
+  const { start, stop, restart, rebind, verify } = useIntegrationActions();
+  const detail = useIntegrationStatus(status.id).data;
+  const runtime = useIntegrationRuntime(status.id).data;
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<string | null>(null);
+
+  const caps = runtime?.capabilities;
+  const running = runtime?.running ?? false;
+  const mismatch = detail?.mismatch ?? false;
+  const installCmd = `anx integrations install ${status.id}`;
+
+  const copyToClipboard = useCallback(() => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(installCmd);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [installCmd]);
+
+  const run = useCallback(
+    async (key: string, fn: (id: string) => Promise<void>) => {
+      setBusy(key);
+      setError(null);
+      try {
+        await fn(status.id);
+        setTimeout(onMutate, 600);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(null);
+        setConfirm(null);
+      }
+    },
+    [status.id, onMutate],
+  );
+
+  const healthLabel = detail?.health ?? (running ? 'healthy' : 'exited');
+  const healthColor =
+    healthLabel === 'healthy'
+      ? 'text-emerald-400'
+      : healthLabel === 'mismatch' || healthLabel === 'not-configured'
+        ? 'text-amber-400'
+        : 'text-white/40';
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/40 p-5 backdrop-blur-xl transition hover:border-nexus-500/40 flex flex-col justify-between">
+      <div>
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="font-bold text-sm text-white">{status.displayName}</div>
+            <div className="text-xs text-white/50 mt-0.5">{status.description}</div>
+          </div>
+          {status.homepage && (
+            <a
+              href={status.homepage}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-white/40 transition hover:text-white flex items-center gap-1 text-[11px]"
+              title={`Visit official documentation for ${status.displayName}`}
+            >
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          )}
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          <code className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[11px] text-nexus-300">
+            {status.id}
+          </code>
+          {status.installed ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold text-emerald-400">
+              <CheckCircle2 className="h-3 w-3" /> Installed
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2.5 py-0.5 text-[10px] font-bold text-rose-400">
+              <AlertCircle className="h-3 w-3" /> Not Detected
+            </span>
+          )}
+          {status.configured && (
+            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-bold text-cyan-300">
+              Configured
+            </span>
+          )}
+          <span className={`text-[10px] font-bold uppercase ${healthColor}`}>● {healthLabel}</span>
+        </div>
+
+        {/* Key facts */}
+        <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+          <div className="text-white/50">
+            Version: <span className="font-mono text-white/70">{detail?.version ?? '—'}</span>
+          </div>
+          <div className="text-white/50">
+            Executable: <span className="font-mono text-white/70 truncate">{detail?.executable?.split('\\').pop() ?? '—'}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-white/60">
+            <Circle className={`h-3 w-3 ${running ? 'text-emerald-400 animate-pulse' : 'text-white/30'}`} fill="currentColor" />
+            {running ? 'Running' : 'Stopped'}
+          </div>
+          <div className="text-white/50">
+            PID: <span className="font-mono text-white/70">{runtime?.pid ?? '—'}</span>
+          </div>
+        </div>
+
+        {/* Endpoint mismatch banner */}
+        {mismatch ? (
+          <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+            <div className="flex items-center gap-1.5 font-bold">
+              <ShieldAlert className="h-3.5 w-3.5" /> Configuration Mismatch
+            </div>
+            <div className="mt-1 font-mono text-amber-300/90 break-all">
+              Current: {detail?.configuredEndpoint ?? '—'}
+            </div>
+            <div className="font-mono text-amber-300/90 break-all">
+              Nexus: {detail?.expectedEndpoint ?? '—'}
+            </div>
+          </div>
+        ) : (
+          detail?.configuredEndpoint && (
+            <div className="mt-3 truncate font-mono text-[10px] text-white/40" title={detail.configuredEndpoint}>
+              Endpoint: {detail.configuredEndpoint}
+            </div>
+          )
+        )}
+      </div>
+
+      {/* Lifecycle controls — gated by adapter capabilities */}
+      <div className="mt-4">
+        <div className="flex flex-wrap gap-2">
+          {mismatch && caps?.supportsInstall && (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => run('rebind', rebind)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-300 transition hover:bg-cyan-500/20 disabled:opacity-40"
+            >
+              <Rocket className="h-3.5 w-3.5" /> {busy === 'rebind' ? 'Rebinding…' : 'Rebind to Nexus'}
+            </button>
+          )}
+          {caps?.supportsStart && (
+            <button
+              type="button"
+              disabled={busy !== null || running}
+              onClick={() => run('start', start)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Play className="h-3.5 w-3.5" /> {busy === 'start' ? '…' : 'Start'}
+            </button>
+          )}
+          {caps?.supportsStop && (
+            <button
+              type="button"
+              disabled={busy !== null || !running}
+              onClick={() => setConfirm('stop')}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Square className="h-3.5 w-3.5" /> {busy === 'stop' ? '…' : 'Stop'}
+            </button>
+          )}
+          {caps?.supportsRestart && (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => setConfirm('restart')}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-300 transition hover:bg-amber-500/20 disabled:opacity-40"
+            >
+              <RotateCw className={`h-3.5 w-3.5 ${busy === 'restart' ? 'animate-spin' : ''}`} /> {busy === 'restart' ? 'Restarting…' : 'Restart'}
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => run('verify', verify)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/70 transition hover:bg-white/10 disabled:opacity-40"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" /> {busy === 'verify' ? '…' : 'Verify'}
+          </button>
+          {!caps?.supportsStart && caps?.supportsInstall && (
+            <button
+              type="button"
+              onClick={copyToClipboard}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/70 transition hover:bg-white/10"
+              title="Copy install command (this agent has no managed-launch support yet)"
+            >
+              <Settings2 className="h-3.5 w-3.5" /> Configure
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div className="mt-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-300">
+            {error}
+          </div>
+        )}
+
+        {!caps?.supportsStart && (
+          <button
+            type="button"
+            onClick={copyToClipboard}
+            className="mt-2 flex w-full items-center justify-between rounded-xl border border-white/5 bg-black/50 p-2.5 font-mono text-[11px] text-white/70 hover:bg-black/70 hover:border-nexus-500/30 transition text-left cursor-pointer group"
+            title="Click to copy install command"
+          >
+            <span className="truncate">
+              <span className="text-nexus-400 mr-1.5">$</span>
+              {installCmd}
+            </span>
+            <span className="ml-2 shrink-0 text-white/40 group-hover:text-nexus-400 transition">
+              {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+            </span>
+          </button>
+        )}
+      </div>
+
+      {/* Confirmation dialog for destructive actions */}
+      {confirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setConfirm(null)}>
+          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0b0f1a] p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+              <ShieldAlert className="h-4 w-4" />
+              {confirm === 'restart' ? `Restart ${status.displayName}?` : `Stop ${status.displayName}?`}
+            </div>
+            <p className="mt-2 text-xs text-white/60">
+              {confirm === 'restart'
+                ? 'The current agent process will be terminated and relaunched using the Nexus configuration.'
+                : 'The running agent process will be terminated.'}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirm(null)}
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/70 hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => run(confirm, confirm === 'restart' ? restart : stop)}
+                className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-300 hover:bg-rose-500/20"
+              >
+                {confirm === 'restart' ? 'Restart Agent' : 'Stop Agent'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NexusRuntime() {
+  const { data: gw, isLoading } = useGatewayHealth();
+  const { total, free, stale } = useModelCount();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const healthy = gw?.status === 'ok' || gw?.status === 'healthy';
+  const restart = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch('/api/v1/system/gateway/restart', { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Gateway will briefly drop; the health poll recovers automatically.
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setTimeout(() => setBusy(false), 4000);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-nexus-500/20 bg-gradient-to-b from-nexus-500/[0.06] to-black/40 p-5 backdrop-blur-xl">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Server className="h-5 w-5 text-nexus-400" />
+          <span className="text-sm font-bold text-white">Nexus Runtime</span>
+          {isLoading ? (
+            <span className="text-[10px] text-white/40">checking…</span>
+          ) : (
+            <span className={`text-[10px] font-bold uppercase ${healthy ? 'text-emerald-400' : 'text-rose-400'}`}>
+              ● {healthy ? 'Healthy' : 'Down'}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={restart}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-300 transition hover:bg-amber-500/20 disabled:opacity-40"
+        >
+          <RotateCw className={`h-3.5 w-3.5 ${busy ? 'animate-spin' : ''}`} /> {busy ? 'Restarting…' : 'Restart Gateway'}
+        </button>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+        <div className="text-white/50">
+          Endpoint: <span className="font-mono text-nexus-300">127.0.0.1:8787</span>
+        </div>
+        <div className="text-white/50">
+          Version: <span className="font-mono text-white/70">{gw?.version ?? '—'}</span>
+        </div>
+        <div className="text-white/50">
+          Models: <span className="font-mono text-white/70">{total}</span>{' '}
+          <span className="text-emerald-400/80">({free} free)</span>
+        </div>
+        <div className="text-white/50">
+          Stale: <span className="font-mono text-white/70">{stale}</span>
+        </div>
+      </div>
+      {err && <div className="mt-2 text-[10px] text-rose-300">{err}</div>}
+    </div>
+  );
 }
 
 export default function IntegrationsPage() {
-  const { data, isLoading } = useSWR<{ count: number; integrations: IntegrationStatus[] }>(
-    '/api/v1/integrations',
-    fetcher,
-    { refreshInterval: 30_000 },
-  );
+  const list = useIntegrationsList();
+  const { restart, verify } = useIntegrationActions();
+  const [bulkBusy, setBulkBusy] = useState<string | null>(null);
+  const [bulkErr, setBulkErr] = useState<string | null>(null);
 
-  const integrations = data?.integrations ?? [];
-  const groups: Array<[string, IntegrationStatus[]]> = [
+  const integrations = list.data?.integrations ?? [];
+
+  const grouped: Array<[string, IntegrationStatus[]]> = [
     ['CLI Coding Agents', integrations.filter((i) => i.category === 'cli')],
     ['Code Editors & IDEs', integrations.filter((i) => i.category === 'editor' || i.category === 'ide')],
     ['Autonomous Agent Frameworks', integrations.filter((i) => i.category === 'agent')],
   ];
+
+  const counts = {
+    total: integrations.length,
+    detected: integrations.filter((i) => i.installed).length,
+    configured: integrations.filter((i) => i.configured).length,
+  };
+
+  const refreshDetection = () => list.mutate();
+  const restartAll = async () => {
+    setBulkBusy('restart');
+    setBulkErr(null);
+    try {
+      await Promise.all(
+        integrations
+          .filter((i) => i.installed)
+          .map((i) => restart(i.id).catch((e) => e)),
+      );
+      setTimeout(refreshDetection, 800);
+    } catch (e) {
+      setBulkErr((e as Error).message);
+    } finally {
+      setBulkBusy(null);
+    }
+  };
+  const verifyAll = async () => {
+    setBulkBusy('verify');
+    setBulkErr(null);
+    try {
+      await Promise.all(integrations.map((i) => verify(i.id).catch((e) => e)));
+      setTimeout(refreshDetection, 800);
+    } catch (e) {
+      setBulkErr((e as Error).message);
+    } finally {
+      setBulkBusy(null);
+    }
+  };
 
   return (
     <div className="space-y-8 relative pb-12 w-full max-w-full overflow-x-hidden">
@@ -43,14 +409,14 @@ export default function IntegrationsPage() {
       <div className="relative flex flex-col justify-between gap-4 md:flex-row md:items-center border-b border-white/10 pb-6">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-nexus-500/30 bg-nexus-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-nexus-400 backdrop-blur-md mb-2">
-            <Sparkles className="h-3.5 w-3.5 animate-pulse text-nexus-300" /> One-Click Agent & IDE Harness
+            <Sparkles className="h-3.5 w-3.5 animate-pulse text-nexus-300" /> Universal Coding Agent Control Center
           </div>
           <h1 className="flex items-center gap-3 text-2xl sm:text-3xl font-extrabold tracking-tight text-white drop-shadow-sm">
             <Plug className="h-8 w-8 text-nexus-400" />
-            Native Integrations Matrix
+            Agent Integrations &amp; Lifecycle
           </h1>
           <p className="mt-1 text-xs sm:text-sm text-white/60 max-w-2xl">
-            Buckle Claude Code, Cursor, OpenCode, Aider, Codex, VS Code, and DeepSeek Code to your local proxy gateway in seconds.
+            Buckle Claude Code, Codex, Gemini, OpenCode, Aider &amp; more to your Nexus Gateway, then start / stop / restart them directly. Each agent runs as its own tracked process — restarting one never touches another.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
@@ -69,12 +435,58 @@ export default function IntegrationsPage() {
         </div>
       </div>
 
-      {isLoading ? (
+      {/* Universal Action Bar */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wider text-white/70 flex items-center gap-2">
+              <Terminal className="h-4 w-4 text-nexus-400" /> Coding Agents
+            </div>
+            <div className="mt-1 text-[11px] text-white/50">
+              {counts.total} detected ·{' '}
+              <span className="text-emerald-400">{counts.detected} installed</span> ·{' '}
+              <span className="text-cyan-400">{counts.configured} configured</span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={list.isLoading}
+              onClick={refreshDetection}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/70 hover:bg-white/10 disabled:opacity-40"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${list.isLoading ? 'animate-spin' : ''}`} /> Refresh Detection
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy !== null}
+              onClick={restartAll}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-300 hover:bg-amber-500/20 disabled:opacity-40"
+            >
+              <RotateCw className={`h-3.5 w-3.5 ${bulkBusy === 'restart' ? 'animate-spin' : ''}`} /> Restart Selected
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy !== null}
+              onClick={verifyAll}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/70 hover:bg-white/10 disabled:opacity-40"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" /> Verify All
+            </button>
+          </div>
+        </div>
+        {bulkErr && <div className="mt-2 text-[10px] text-rose-300">{bulkErr}</div>}
+      </div>
+
+      {/* Nexus Runtime (separate from agent restart) */}
+      <NexusRuntime />
+
+      {list.isLoading ? (
         <div className="rounded-2xl border border-white/10 bg-black/40 py-12 text-center text-xs text-white/40">
           Scanning system for installed coding agent harnesses...
         </div>
       ) : (
-        groups.map(([label, items]) =>
+        grouped.map(([label, items]) =>
           items.length === 0 ? null : (
             <div key={label} className="space-y-4">
               <h2 className="text-xs font-bold uppercase tracking-wider text-white/70 flex items-center gap-2">
@@ -82,7 +494,7 @@ export default function IntegrationsPage() {
               </h2>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {items.map((i) => (
-                  <IntegrationCard key={i.id} integration={i} />
+                  <IntegrationCard key={i.id} status={i} onMutate={refreshDetection} />
                 ))}
               </div>
             </div>
@@ -92,82 +504,3 @@ export default function IntegrationsPage() {
     </div>
   );
 }
-
-function IntegrationCard({ integration }: { integration: IntegrationStatus }) {
-  const [copied, setCopied] = useState(false);
-  const installCmd = `anx integrations install ${integration.id}`;
-
-  const copyToClipboard = () => {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(installCmd);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/40 p-5 backdrop-blur-xl transition hover:border-nexus-500/40 flex flex-col justify-between">
-      <div>
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="font-bold text-sm text-white">{integration.displayName}</div>
-            <div className="text-xs text-white/50 mt-0.5">{integration.description}</div>
-          </div>
-          {integration.homepage && (
-            <a
-              href={integration.homepage}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-white/40 transition hover:text-white flex items-center gap-1 text-[11px]"
-              title={`Visit official documentation for ${integration.displayName}`}
-            >
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          )}
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-          <code className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-[11px] text-nexus-300">
-            {integration.id}
-          </code>
-          {integration.installed ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold text-emerald-400">
-              <CheckCircle2 className="h-3 w-3" /> Installed
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2.5 py-0.5 text-[10px] font-bold text-rose-400">
-              <AlertCircle className="h-3 w-3" /> Not Detected
-            </span>
-          )}
-          {integration.configured && (
-            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-bold text-cyan-300">
-              Configured
-            </span>
-          )}
-        </div>
-
-        {integration.configPath && (
-          <div className="mt-2 truncate font-mono text-[10px] text-white/40" title={integration.configPath}>
-            Config: {integration.configPath}
-          </div>
-        )}
-      </div>
-
-      <button
-        type="button"
-        onClick={copyToClipboard}
-        className="mt-4 flex items-center justify-between rounded-xl border border-white/5 bg-black/50 p-2.5 font-mono text-[11px] text-white/70 hover:bg-black/70 hover:border-nexus-500/30 transition text-left cursor-pointer group"
-        title="Click to copy install command"
-      >
-        <span className="truncate">
-          <span className="text-nexus-400 mr-1.5">$</span>
-          {installCmd}
-        </span>
-        <span className="ml-2 shrink-0 text-white/40 group-hover:text-nexus-400 transition">
-          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-        </span>
-      </button>
-    </div>
-  );
-}
-

@@ -2,8 +2,17 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import type { IntegrationAdapter, IntegrationContext, IntegrationResult, IntegrationStatus } from './contract.js';
-import { fail, home, ok, normalizeGatewayUrl } from './contract.js';
+import type {
+  IntegrationAdapter,
+  IntegrationContext,
+  IntegrationResult,
+  IntegrationStatus,
+  IntegrationCapabilities,
+  LaunchSpec,
+  ProcessState,
+} from './contract.js';
+import { fail, home, ok, normalizeGatewayUrl, DEFAULT_CAPABILITIES } from './contract.js';
+import { integrationProcessManager } from './process-manager.js';
 
 /**
  * Base class with file I/O helpers. Concrete integrations extend this and
@@ -275,6 +284,16 @@ export abstract class BaseIntegration implements IntegrationAdapter {
       }
     }
     const binding = await this.detectCurrentGateway(ctx);
+    const expectedEndpoint = `${normalizeGatewayUrl(ctx.gatewayUrl)}/v1`;
+    const mismatch =
+      !!binding && normalizeGatewayUrl(binding) !== normalizeGatewayUrl(ctx.gatewayUrl);
+    const executable = installed ? await this.resolveExecutable(this.detectBinaries()[0] ?? this.id) : undefined;
+    const version = installed ? await this.detectVersion(executable) : undefined;
+
+    let health: IntegrationStatus['health'] = 'unknown';
+    if (installed && configured) health = mismatch ? 'mismatch' : 'healthy';
+    else if (installed && !configured) health = 'not-configured';
+
     return {
       id: this.id,
       displayName: this.displayName,
@@ -284,11 +303,164 @@ export abstract class BaseIntegration implements IntegrationAdapter {
       details: installed
         ? configured
           ? binding
-            ? `ready (bound to ${binding})`
+            ? mismatch
+              ? `bound to ${binding} (mismatch — Nexus expects ${expectedEndpoint})`
+              : `ready (bound to ${binding})`
             : 'ready'
           : 'installed but not configured for the gateway'
         : 'tool not installed',
+      configuredEndpoint: binding,
+      expectedEndpoint,
+      mismatch,
+      executable,
+      version,
+      health,
     };
+  }
+
+  /**
+   * Best-effort version detection via `<executable> --version`. Bounded by a
+   * short timeout so `status()` never hangs the integrations list. Returns
+   * undefined on any failure (missing binary, no version flag, timeout).
+   */
+  protected async detectVersion(executable?: string): Promise<string | undefined> {
+    if (!executable) return undefined;
+    const { spawn } = await import('node:child_process');
+    return new Promise<string | undefined>((resolve) => {
+      let done = false;
+      const finish = (v?: string) => {
+        if (!done) {
+          done = true;
+          resolve(v);
+        }
+      };
+      const child = spawn(executable, ['--version'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 1500,
+      });
+      let out = '';
+      child.stdout?.on('data', (d) => (out += String(d)));
+      child.stderr?.on('data', (d) => (out += String(d)));
+      child.on('error', () => finish(undefined));
+      child.on('close', () => {
+        const m = out.match(/([0-9]+\.[0-9]+(?:\.[0-9]+)?)/);
+        finish(m ? m[1] : undefined);
+      });
+      setTimeout(() => {
+        child.kill('SIGKILL');
+        finish(undefined);
+      }, 1600);
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Lifecycle / process-management (Universal Coding Agent Integration layer)
+  //
+  // These delegate to the shared, agent-agnostic `integrationProcessManager`.
+
+  /**
+   * Resolve the absolute path of this agent's executable. Tries the candidate
+   * locations used by `commandExists`, then falls back to a bare PATH lookup
+   * via `where`/`command -v`. Returns the bare binary name if nothing
+   * concrete is found (the OS will resolve it from PATH at spawn time).
+   */
+  protected async resolveExecutable(cmd: string): Promise<string> {
+    const candidates = this.executableCandidates(cmd);
+    for (const p of candidates) {
+      if (p && existsSync(p)) return p;
+    }
+    return cmd; // rely on PATH resolution at spawn
+  }
+
+  /**
+   * Candidate absolute paths for a binary, mirroring `commandExists`. Override
+   * in subclasses only if a tool lives somewhere unusual.
+   */
+  protected executableCandidates(cmd: string): string[] {
+    if (process.platform === 'win32') {
+      const userHome = process.env.USERPROFILE || process.env.HOME || '';
+      const localAppData = process.env.LOCALAPPDATA || (userHome ? join(userHome, 'AppData', 'Local') : '');
+      return [
+        join(userHome, '.local', 'bin', `${cmd}.exe`),
+        join(userHome, '.local', 'bin', `${cmd}.cmd`),
+        join(userHome, '.local', 'bin', cmd),
+        join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin', `${cmd}.exe`),
+        join(localAppData, 'Programs', cmd, 'bin', `${cmd}.exe`),
+        join(localAppData, cmd, `${cmd}-agent`, 'venv', 'Scripts', `${cmd}.exe`),
+        join(localAppData, cmd, 'bin', `${cmd}.exe`),
+      ].filter(Boolean);
+    }
+    const userHome = process.env.HOME || '';
+    return [
+      join(userHome, '.local', 'bin', cmd),
+      join('/usr', 'local', 'bin', cmd),
+      join('/opt', 'homebrew', 'bin', cmd),
+    ];
+  }
+  // Adapters that can launch their agent override `getLaunchSpec()`; the
+  // defaults here advertise `supportsStart/Stop/Restart` based on whether a
+  // launch spec is available, so the dashboard never shows a dead button.
+
+  /**
+   * Default capabilities. `supportsStart/Stop/Restart` are true only when this
+   * adapter provides a launch spec; `interactive` reflects the spec too.
+   */
+  async capabilities(ctx: IntegrationContext): Promise<IntegrationCapabilities> {
+    const spec = await this.getLaunchSpec(ctx);
+    return {
+      ...DEFAULT_CAPABILITIES,
+      supportsStart: spec !== null,
+      supportsStop: spec !== null,
+      supportsRestart: spec !== null,
+      interactive: spec?.interactive ?? false,
+    };
+  }
+
+  /**
+   * Override in subclasses to return a LaunchSpec (or null). The base returns
+   * null → no process-management support, dashboard shows no lifecycle buttons.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async getLaunchSpec(_ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    return null;
+  }
+
+  async start(ctx: IntegrationContext): Promise<IntegrationResult> {
+    const spec = await this.getLaunchSpec(ctx);
+    if (!spec) {
+      return fail(`${this.displayName} does not support managed start (no launch spec).`);
+    }
+    const state = await integrationProcessManager.start(this.id, spec, ctx.gatewayUrl);
+    if (state.running) {
+      return ok(`started ${this.displayName} (pid ${state.pid})`, [
+        `pid ${state.pid}`,
+        `executable ${state.executable}`,
+      ]);
+    }
+    return fail(`failed to start ${this.displayName}`, [`exit code ${state.exitCode ?? 'unknown'}`]);
+  }
+
+  async stop(_ctx: IntegrationContext): Promise<IntegrationResult> {
+    const res = await integrationProcessManager.stop(this.id);
+    if (res.stopped) return ok(`stopped ${this.displayName} (pid ${res.pid})`, [`pid ${res.pid}`]);
+    if (res.error) return fail(`error stopping ${this.displayName}`, [res.error]);
+    return ok(`${this.displayName} was not running`, []);
+  }
+
+  async restart(ctx: IntegrationContext): Promise<IntegrationResult> {
+    const spec = await this.getLaunchSpec(ctx);
+    if (!spec) {
+      return fail(`${this.displayName} does not support managed restart (no launch spec).`);
+    }
+    const state = await integrationProcessManager.restart(this.id, spec, ctx.gatewayUrl);
+    if (state.running) {
+      return ok(`restarted ${this.displayName} (pid ${state.pid})`, [`pid ${state.pid}`]);
+    }
+    return fail(`failed to restart ${this.displayName}`, [`exit code ${state.exitCode ?? 'unknown'}`]);
+  }
+
+  async runtime(_ctx: IntegrationContext): Promise<ProcessState> {
+    return integrationProcessManager.runtime(this.id);
   }
 
   // ─────────────────────────────────────────────────────────────────────────

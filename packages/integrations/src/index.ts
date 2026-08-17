@@ -19,13 +19,22 @@ export {
   type IntegrationContext,
   type IntegrationResult,
   type IntegrationStatus,
+  type IntegrationCapabilities,
+  type LaunchSpec,
+  type ProcessState,
+  type LifecycleAction,
   normalizeGatewayUrl,
   ok,
   fail,
   home,
+  DEFAULT_CAPABILITIES,
 } from './contract.js';
 
 export { BaseIntegration, jsonString } from './base.js';
+export {
+  IntegrationProcessManager,
+  integrationProcessManager,
+} from './process-manager.js';
 
 export {
   BUILTIN_INTEGRATIONS,

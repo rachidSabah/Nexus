@@ -36,6 +36,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@anx/cli": "workspace:*",
     "@changesets/cli": "^2.27.9",
     "@commitlint/cli": "^19.6.0",
     "@commitlint/config-conventional": "^19.6.0",
