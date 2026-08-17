@@ -172,28 +172,31 @@ export class IntegrationProcessManager {
     const env = { ...process.env, ...spec.env } as NodeJS.ProcessEnv;
 
     if (spec.interactive) {
-      // Interactive TTY agents need their own window. We wrap the executable in
-      // a shell that stays open (Windows `cmd /k`, POSIX xterm/gnome-terminal).
+      // Interactive agents are driven through the gateway (they connect to
+      // ANTHROPIC_BASE_URL / the gateway's /v1 endpoint), so they do NOT need a
+      // visible terminal. Spawn them hidden — never open a console window.
+      // (On Windows a console-subsystem exe would otherwise pop a black `cmd`
+      // window that lingers; `windowsHide: true` suppresses it.)
       if (process.platform === 'win32') {
-        const quoted = this.quote(spec.executable);
-        const argStr = spec.args.map((a) => this.quote(a)).join(' ');
-        return spawn(
-          'cmd.exe',
-          ['/d', '/s', '/c', `start "" cmd /k "${quoted} ${argStr}"`],
-          { env, detached: true, stdio: 'ignore', windowsHide: false },
-        );
+        const child = spawn(spec.executable, [...spec.args], {
+          env,
+          cwd: spec.cwd,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+        return child;
       }
-      // macOS / Linux: open a terminal emulator if available.
-      const cmd = `${this.quote(spec.executable)} ${spec.args.map((a) => this.quote(a)).join(' ')}`;
-      const term = process.platform === 'darwin' ? 'osascript' : 'x-terminal-emulator';
-      if (process.platform === 'darwin') {
-        return spawn(
-          'osascript',
-          ['-e', `tell app "Terminal" to do script "${cmd.replace(/"/g, '\\"')}"`],
-          { env, detached: true, stdio: 'ignore' },
-        );
-      }
-      return spawn(term, ['-e', cmd], { env, detached: true, stdio: 'ignore' });
+      // macOS / Linux: run detached in the background (no terminal emulator popup).
+      const child = spawn(spec.executable, [...spec.args], {
+        env,
+        cwd: spec.cwd,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+      return child;
     }
 
     // Headless / background spawn.
@@ -202,6 +205,8 @@ export class IntegrationProcessManager {
       cwd: spec.cwd,
       detached: true,
       stdio: 'ignore',
+      // Suppress the black console window on Windows for console-subsystem exes.
+      ...(process.platform === 'win32' ? { windowsHide: true } : {}),
     });
     // Unref so the gateway process can exit independently of the agent.
     child.unref();
@@ -236,9 +241,6 @@ export class IntegrationProcessManager {
     };
   }
 
-  private quote(s: string): string {
-    return `"${s.replace(/"/g, '\\"')}"`;
-  }
 }
 
 /** Shared singleton used by the gateway and adapters. */
