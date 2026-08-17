@@ -15,7 +15,10 @@ describe('IntegrationStatus rich contract', () => {
 
     expect(s.id).toBe('claude-code');
     // Extended fields must be present (backward-compatible contract).
-    expect(typeof s.configuredEndpoint).toBe('string');
+    // configuredEndpoint is `string | undefined` (undefined when the tool is not
+    // installed on the host), so it must be either undefined or a string.
+    expect(s.configuredEndpoint === undefined || typeof s.configuredEndpoint === 'string').toBe(true);
+    // expectedEndpoint is always derived from the gateway URL, installed or not.
     expect(typeof s.expectedEndpoint).toBe('string');
     expect(s.expectedEndpoint!.endsWith('/v1')).toBe(true);
     expect(typeof s.mismatch).toBe('boolean');

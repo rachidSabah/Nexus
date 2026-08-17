@@ -44,13 +44,16 @@ describe('ClaudeCodeIntegration lifecycle', () => {
     for (const adapter of registry.values()) {
       if (adapter.id === 'claude-code') continue; // claude-code has a real spec
       const caps = await adapter.capabilities(ctx);
-      // Adapters without a getLaunchSpec override must NOT advertise start/stop/restart.
-      if (caps.supportsStart) {
+      // The safety invariant: an adapter must NOT advertise start/stop/restart
+      // unless it actually provides a launch spec (i.e. it can really be launched).
+      if (caps.supportsStart || caps.supportsStop || caps.supportsRestart) {
         const spec = await adapter.getLaunchSpec(ctx);
-        expect(spec).not.toBeNull();
+        expect(spec, `${adapter.id} advertises lifecycle but has no launch spec`).not.toBeNull();
       }
-      expect(caps.interactive).toBe(false);
     }
+    // The shared default never advertises lifecycle.
     expect(DEFAULT_CAPABILITIES.supportsStart).toBe(false);
+    expect(DEFAULT_CAPABILITIES.supportsStop).toBe(false);
+    expect(DEFAULT_CAPABILITIES.supportsRestart).toBe(false);
   });
 });
