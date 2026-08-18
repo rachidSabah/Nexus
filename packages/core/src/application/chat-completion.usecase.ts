@@ -39,6 +39,7 @@ import type {
 import type { PrivacyConfig } from './privacy.js';
 import { DEFAULT_PRIVACY } from './privacy.js';
 import type { RequestTracer } from './request-tracer.js';
+import { repairJson, repairToolCallArguments } from './json-repair.js';
 
 export interface ChatCompletionUseCaseOptions {
   /** Optional cache. When provided, exact-match cache is consulted before routing. */
@@ -388,6 +389,25 @@ export class ChatCompletionUseCase {
           outputPer1K: endpoint.pricing?.outputPer1K ?? 0,
           cachedInputPer1K: endpoint.pricing?.cachedInputPer1K,
         });
+
+        // Self-Healing JSON & Tool Call Schema Repair:
+        if (response.choices) {
+          for (const choice of response.choices) {
+            if (effectiveRequest.response_format?.type === 'json_object' && choice.message?.content) {
+              const repaired = repairJson(choice.message.content);
+              if (repaired.isValidJson) {
+                choice.message.content = repaired.repaired;
+              }
+            }
+            if (choice.message?.tool_calls) {
+              for (const tc of choice.message.tool_calls) {
+                if (tc.function?.arguments) {
+                  tc.function.arguments = repairToolCallArguments(tc.function.arguments);
+                }
+              }
+            }
+          }
+        }
 
         const finalResponse: ChatCompletionResponse = {
           ...response,

@@ -47,6 +47,7 @@ export { TaskClassifier, type TaskType, type TaskClassification } from './applic
 export { ContextWindowManager, type ContextWindowConfig, type ContextCheckResult, DEFAULT_CONTEXT_CONFIG } from './application/context-window-manager.js';
 export { CostPredictor, type CostPredictorConfig, type CostEstimate, type CostPredictionResult, DEFAULT_COST_CONFIG } from './application/cost-predictor.js';
 export { NaiveTokenCounter, CodeAwareTokenCounter, defaultTokenCounter, type TokenCounter } from './application/token-counter.js';
+export { repairJson, repairToolCallArguments, type JsonRepairResult } from './application/json-repair.js';
 
 // ── Phase 5/6/7 Orchestration & Workflow Fabric ──────────────────────────────
 export * from './domain/orchestration.js';
