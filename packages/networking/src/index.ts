@@ -826,38 +826,75 @@ export class DefaultNetworkService implements NetworkPort {
 
   private async checkIpV4(): Promise<{ ok: boolean; latencyMs: number }> {
     const start = Date.now();
-    try {
-      const r = await fetch('https://1.1.1.1', { method: 'HEAD', signal: AbortSignal.timeout(3000) });
-      return { ok: r.status < 500, latencyMs: Date.now() - start };
-    } catch {
-      // Fallback check against safe HTTP destination
-      try {
-        const r2 = await fetch('http://1.1.1.1', { method: 'HEAD', signal: AbortSignal.timeout(3000) });
-        return { ok: r2.status < 500, latencyMs: Date.now() - start };
-      } catch {
-        return { ok: false, latencyMs: -1 };
-      }
-    }
+    return new Promise((resolve) => {
+      const socket = new Socket();
+      socket.setTimeout(2500);
+      socket.once('connect', () => {
+        const latency = Date.now() - start;
+        socket.destroy();
+        resolve({ ok: true, latencyMs: latency });
+      });
+      socket.once('timeout', () => {
+        socket.destroy();
+        resolve({ ok: false, latencyMs: -1 });
+      });
+      socket.once('error', () => {
+        socket.destroy();
+        fetch('https://1.1.1.1/dns-query?name=cloudflare.com', {
+          headers: { accept: 'application/dns-json' },
+          signal: AbortSignal.timeout(2500),
+        })
+          .then((r) => resolve({ ok: r.ok, latencyMs: Date.now() - start }))
+          .catch(() => resolve({ ok: false, latencyMs: -1 }));
+      });
+      socket.connect(53, '1.1.1.1');
+    });
   }
 
   private async checkIpV6(): Promise<{ ok: boolean; latencyMs: number; available: boolean }> {
     const start = Date.now();
-    try {
-      const r = await fetch('https://[2606:4700:4700::1111]', { method: 'HEAD', signal: AbortSignal.timeout(3000) });
-      return { ok: r.status < 500, latencyMs: Date.now() - start, available: true };
-    } catch {
-      return { ok: false, latencyMs: -1, available: false };
-    }
+    return new Promise((resolve) => {
+      const socket = new Socket();
+      socket.setTimeout(2000);
+      socket.once('connect', () => {
+        const latency = Date.now() - start;
+        socket.destroy();
+        resolve({ ok: true, latencyMs: latency, available: true });
+      });
+      socket.once('timeout', () => {
+        socket.destroy();
+        resolve({ ok: false, latencyMs: -1, available: false });
+      });
+      socket.once('error', () => {
+        socket.destroy();
+        resolve({ ok: false, latencyMs: -1, available: false });
+      });
+      try {
+        socket.connect(53, '2606:4700:4700::1111');
+      } catch {
+        resolve({ ok: false, latencyMs: -1, available: false });
+      }
+    });
   }
 
   private async checkDirectHttps(): Promise<{ ok: boolean; latencyMs: number }> {
     const start = Date.now();
-    try {
-      const r = await fetch('https://httpbin.org/get', { method: 'HEAD', signal: AbortSignal.timeout(3000) });
-      return { ok: r.status < 500, latencyMs: Date.now() - start };
-    } catch {
-      return { ok: false, latencyMs: -1 };
+    const targets = [
+      'https://cloudflare.com/cdn-cgi/trace',
+      'https://api.github.com/zen',
+      'https://httpbin.org/get',
+    ];
+    for (const url of targets) {
+      try {
+        const r = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(2500) });
+        if (r.status < 500) {
+          return { ok: true, latencyMs: Date.now() - start };
+        }
+      } catch {
+        continue;
+      }
     }
+    return { ok: false, latencyMs: -1 };
   }
 }
 
