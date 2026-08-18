@@ -6167,6 +6167,54 @@ let optMessages: never[] | undefined;
       return { ok: await this.deps.memory.delete(id) };
     });
 
+    // ─── Universal Cross-Agent Shared Context Bus ───────────────────────
+    this.fastify.post('/v1/context/broadcast', async (request, reply) => {
+      const body = request.body as {
+        topic: string;
+        content: string;
+        sourceAgentId?: string;
+        tags?: string[];
+      };
+      if (!body?.topic || !body?.content) {
+        return reply.code(400).send({ error: { message: 'topic and content are required' } });
+      }
+      const record = await this.deps.memory.store(body.content, {
+        namespace: 'shared-agent-bus',
+        scope: 'long',
+        contentType: 'text',
+        metadata: {
+          author: body.sourceAgentId || 'unknown-agent',
+          topic: body.topic,
+          tags: body.tags || [],
+          timestamp: Date.now(),
+        },
+      });
+      return { ok: true, recordId: record.id, record };
+    });
+
+    this.fastify.post('/v1/context/query', async (request, reply) => {
+      const body = request.body as { query: string; limit?: number; threshold?: number };
+      if (!body?.query) {
+        return reply.code(400).send({ error: { message: 'query is required' } });
+      }
+      const results = await this.deps.memory.search(body.query, {
+        namespace: 'shared-agent-bus',
+        scope: 'long',
+        limit: body.limit ?? 5,
+        threshold: body.threshold ?? 0.7,
+      });
+      return { results };
+    });
+
+    this.fastify.get('/v1/context/shared', async (request) => {
+      const q = request.query as { limit?: number };
+      const records = await this.deps.memory.list('shared-agent-bus', {
+        scope: 'long',
+        limit: q.limit ?? 20,
+      });
+      return { count: records.length, records };
+    });
+
     // ─── Phase 4: Tools ────────────────────────────────────────────────
     this.fastify.get('/v1/tools', async () => {
       return this.deps.tools.list();

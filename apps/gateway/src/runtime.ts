@@ -725,6 +725,53 @@ export class GatewayRuntime {
           inputSchema: { type: 'object', properties: {} },
           invoke: async () => workflows.list(),
         },
+        {
+          name: 'broadcast_context',
+          description: 'Broadcast a solution, architectural note, or learning to the Nexus Universal Shared Context Bus for all peer agents',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              topic: { type: 'string' },
+              content: { type: 'string' },
+              authorAgent: { type: 'string' },
+              tags: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['topic', 'content'],
+          },
+          invoke: async (args) => {
+            const author = (args['authorAgent'] as string) || 'mcp-agent';
+            const topic = args['topic'] as string;
+            const content = args['content'] as string;
+            const tags = (args['tags'] as string[]) || [];
+            return await memory.store(content, {
+              namespace: 'shared-agent-bus',
+              scope: 'long',
+              contentType: 'text',
+              metadata: { author, topic, tags, timestamp: Date.now() },
+            });
+          },
+        },
+        {
+          name: 'query_shared_context',
+          description: 'Search shared architectural learnings and solutions previously recorded by peer coding agents',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: { type: 'string' },
+              limit: { type: 'number' },
+            },
+            required: ['query'],
+          },
+          invoke: async (args) => {
+            const q = args['query'] as string;
+            const limit = (args['limit'] as number) || 5;
+            return await memory.search(q, {
+              namespace: 'shared-agent-bus',
+              scope: 'long',
+              limit,
+            });
+          },
+        },
       ],
     });
 
