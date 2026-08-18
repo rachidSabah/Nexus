@@ -61,6 +61,7 @@ export interface ClaudeProjectionEntry {
   id: string;
   object: 'model';
   owned_by: string;
+  providerId?: string;
   /** The native registry id this alias projects (undefined for natives). */
   nativeId?: string;
   pricing?: ModelDescriptor['pricing'];
@@ -98,6 +99,7 @@ export function projectClaudeCatalog(
         id,
         object: 'model',
         owned_by: m.providerId,
+        providerId: m.providerId,
         pricing: m.pricing,
         capabilities: m.capabilities,
         context_window: m.contextWindow,
@@ -116,6 +118,7 @@ export function projectClaudeCatalog(
         // picker (which filters to `claude-*` ids AND `owned_by: 'anthropic'`)
         // actually surfaces the full prefetched catalog instead of hiding it.
         owned_by: 'anthropic',
+        providerId: m.providerId,
         nativeId: id,
         pricing: m.pricing,
         capabilities: m.capabilities,
@@ -127,6 +130,7 @@ export function projectClaudeCatalog(
         id,
         object: 'model',
         owned_by: m.providerId,
+        providerId: m.providerId,
         pricing: m.pricing,
         capabilities: m.capabilities,
         context_window: m.contextWindow,

@@ -1144,7 +1144,8 @@ export class HttpServer {
         if (!models.has(e.id)) {
           // Apply the same routability gate: only expose the claude-gw-*
           // projection if the underlying provider is currently selectable.
-          if (!selectableProviders.has(e.owned_by)) continue;
+          const checkProvider = e.providerId ?? e.owned_by;
+          if (selectableProviders.size > 0 && !selectableProviders.has(checkProvider) && checkProvider !== 'anthropic') continue;
           models.set(e.id, {
             id: e.id,
             object: 'model',
