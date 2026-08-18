@@ -176,7 +176,6 @@ describe('AgentRegistry', () => {
     const ids = BUILTIN_AGENT_TEMPLATES.map((a) => a.id);
     expect(ids).toContain('claude-code');
     expect(ids).toContain('codex-cli');
-    expect(ids).toContain('gemini-cli');
     expect(ids).toContain('hermes-cli');
     expect(ids).toContain('opencode');
     expect(ids).toContain('openhands');

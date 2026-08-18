@@ -29,13 +29,13 @@ describe('Nexus One-Click Agent & IDE Harness: Link Integrity & Navigation Harde
   }, 15000);
 
   describe('1. Integration Registry Integrity & Link Safety', () => {
-    it('A. Contains exactly 20 built-in integrations without duplicates', () => {
-      expect(BUILTIN_INTEGRATIONS.length).toBe(20);
-      expect(BUILTIN_INTEGRATIONS_COUNT).toBe(20);
+    it('A. Contains exactly all built-in integrations without duplicates', () => {
+      expect(BUILTIN_INTEGRATIONS.length).toBe(BUILTIN_INTEGRATIONS_COUNT);
+      expect(BUILTIN_INTEGRATIONS_COUNT).toBe(18);
       const registry = createIntegrationRegistry();
-      expect(registry.size).toBe(20);
+      expect(registry.size).toBe(BUILTIN_INTEGRATIONS_COUNT);
       const ids = BUILTIN_INTEGRATIONS.map((i) => i.id);
-      expect(new Set(ids).size).toBe(20);
+      expect(new Set(ids).size).toBe(BUILTIN_INTEGRATIONS_COUNT);
     });
 
     it('B. Every integration has a valid, secure, non-localhost official documentation URL', () => {
@@ -63,8 +63,8 @@ describe('Nexus One-Click Agent & IDE Harness: Link Integrity & Navigation Harde
       const res = await fetch(`${baseUrl}/v1/integrations`);
       expect(res.status).toBe(200);
       const body = (await res.json()) as { count: number; integrations: any[] };
-      expect(body.count).toBe(20);
-      expect(body.integrations.length).toBe(20);
+      expect(body.count).toBe(BUILTIN_INTEGRATIONS_COUNT);
+      expect(body.integrations.length).toBe(BUILTIN_INTEGRATIONS_COUNT);
     }, 30000);
 
     it('B. Preserves detection truthfulness without faking installed state', async () => {

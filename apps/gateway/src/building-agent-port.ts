@@ -59,11 +59,9 @@ export interface BuildingAgentPort {
 const BUILDING_AGENT_IDS = new Set([
   'hermes-cli',
   'opencode',
-  'opencode-zen',
   'opencode-go',
   'claude-code',
   'codex-cli',
-  'gemini-cli',
   'aider',
   'cline',
   'roo-code',
@@ -119,11 +117,9 @@ export class IntegrationBuildingAgentAdapter implements BuildingAgentPort {
     const aliases: Record<string, string> = {
       hermes: 'hermes-cli',
       opencode: 'opencode',
-      'opencode-zen': 'opencode-zen',
       'opencode-go': 'opencode-go',
       claude: 'claude-code',
       codex: 'codex-cli',
-      gemini: 'gemini-cli',
     };
     return aliases[id] ?? id;
   }

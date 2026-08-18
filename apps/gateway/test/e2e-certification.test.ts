@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { rmSync } from 'node:fs';
-import { BUILTIN_INTEGRATIONS, TRUSTED_AGENT_CATALOG, getAgentCatalogEntry } from '@anx/integrations';
+import { BUILTIN_INTEGRATIONS, BUILTIN_INTEGRATIONS_COUNT, TRUSTED_AGENT_CATALOG, getAgentCatalogEntry } from '@anx/integrations';
 import { GatewayRuntime } from '../src/runtime.js';
 
 describe('Nexus Full System Certification & Diagnostics', () => {
@@ -68,10 +68,10 @@ describe('Nexus Full System Certification & Diagnostics', () => {
   });
 
   describe('2. Trusted Agent Catalogue & Integrations Registry', () => {
-    it('contains all 20 built-in integrations without duplicates', () => {
-      expect(BUILTIN_INTEGRATIONS.length).toBe(20);
+    it('contains all built-in integrations without duplicates', () => {
+      expect(BUILTIN_INTEGRATIONS.length).toBe(BUILTIN_INTEGRATIONS_COUNT);
       const ids = BUILTIN_INTEGRATIONS.map((i) => i.id);
-      expect(new Set(ids).size).toBe(20);
+      expect(new Set(ids).size).toBe(BUILTIN_INTEGRATIONS_COUNT);
     });
 
     it('serves GET /v1/agents/catalog and /v1/agent-catalog with full catalog', async () => {
@@ -88,8 +88,8 @@ describe('Nexus Full System Certification & Diagnostics', () => {
 
     it('every supported integration (continue, neovim, emacs, jetbrains, etc.) is recognized in catalog', () => {
       const supported = [
-        'claude-code', 'codex-cli', 'gemini-cli', 'qwen-code', 'hermes-cli',
-        'opencode', 'opencode-go', 'opencode-zen', 'aider', 'openhands',
+        'claude-code', 'codex-cli', 'qwen-code', 'hermes-cli',
+        'opencode', 'opencode-go', 'aider', 'openhands',
         'cursor', 'continue', 'cline', 'roo-code', 'zed', 'neovim', 'emacs',
         'vscode', 'jetbrains', 'deepseek-harness',
       ];

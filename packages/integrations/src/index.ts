@@ -40,6 +40,7 @@ export {
 
 export {
   BUILTIN_INTEGRATIONS,
+  BUILTIN_INTEGRATIONS_COUNT,
   INTEGRATION_IDS,
   createIntegrationRegistry,
   type IntegrationId,
@@ -48,12 +49,10 @@ export {
 // ─── Individual adapters (re-exported for direct use) ───────────────────────
 export { ClaudeCodeIntegration } from './adapters/claude-code.js';
 export { CodexCliIntegration } from './adapters/codex-cli.js';
-export { GeminiCliIntegration } from './adapters/gemini-cli.js';
 export { HermesCliIntegration } from './adapters/hermes-cli.js';
 export {
   OpenCodeIntegration,
   OpenCodeGoIntegration,
-  OpenCodeZenIntegration,
 } from './adapters/opencode.js';
 export { QwenCodeIntegration } from './adapters/qwen-code.js';
 export { CursorIntegration } from './adapters/cursor.js';
@@ -76,9 +75,4 @@ export {
 } from './catalog.js';
 
 export const INTEGRATIONS_VERSION = '0.1.0';
-
-/**
- * Total count — convenient for tests.
- */
-export const BUILTIN_INTEGRATIONS_COUNT = 20;
 

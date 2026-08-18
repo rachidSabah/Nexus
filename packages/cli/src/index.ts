@@ -874,8 +874,8 @@ COMMANDS
   version                    Print CLI version
   help                       Show this help
 
-SUPPORTED INTEGRATIONS (19 total)
-  CLI:     claude-code, codex-cli, gemini-cli, hermes-cli,
+SUPPORTED INTEGRATIONS (18 total)
+  CLI:     claude-code, codex-cli, hermes-cli,
            opencode, opencode-go, opencode-zen, aider, openhands
   Editors: cursor, continue, cline, roo-code, zed, neovim, emacs
   IDEs:    vscode, jetbrains

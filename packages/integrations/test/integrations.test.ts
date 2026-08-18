@@ -28,17 +28,16 @@ describe('Integrations registry', () => {
     expect(BUILTIN_INTEGRATIONS.length).toBe(BUILTIN_INTEGRATIONS_COUNT);
   });
 
-  it('includes OpenCode, OpenCode Go, and OpenCode Zen', () => {
+  it('includes OpenCode and OpenCode Go', () => {
     const registry = createIntegrationRegistry();
     expect(registry.has('opencode')).toBe(true);
     expect(registry.has('opencode-go')).toBe(true);
-    expect(registry.has('opencode-zen')).toBe(true);
   });
 
-  it('includes all 19 integrations from the spec', () => {
+  it('includes all 17 active integrations from the spec', () => {
     const expected = [
-      'claude-code', 'codex-cli', 'gemini-cli', 'qwen-code', 'hermes-cli',
-      'opencode', 'opencode-go', 'opencode-zen',
+      'claude-code', 'codex-cli', 'qwen-code', 'hermes-cli',
+      'opencode', 'opencode-go',
       'cursor', 'continue', 'cline', 'roo-code',
       'openhands', 'aider',
       'zed', 'vscode', 'jetbrains', 'neovim', 'emacs',
@@ -74,7 +73,6 @@ describe('Integration install / uninstall round-trip', () => {
   // Test one CLI, one editor, and one IDE to cover the three base classes.
   const cases: Array<{ id: string; expectedConfigPath: string }> = [
     { id: 'claude-code', expectedConfigPath: '.claude/settings.json' },
-    { id: 'opencode-zen', expectedConfigPath: '.config/opencode-zen/config.yaml' },
     { id: 'opencode-go', expectedConfigPath: '.config/opencode-go/config.toml' },
     { id: 'opencode', expectedConfigPath: '.config/opencode/opencode.json' },
     { id: 'aider', expectedConfigPath: '.aider.conf.yml' },
@@ -113,18 +111,6 @@ describe('Integration install / uninstall round-trip', () => {
     const config = JSON.parse(readFileSync(join(tempHome, '.claude/settings.json'), 'utf8')) as Record<string, unknown>;
     expect(config['apiBaseUrl']).toBe('http://localhost:8787/v1');
     expect(config['model']).toBe('gpt-4');
-  });
-
-  it('opencode-zen: YAML config contains provider and model', async () => {
-    const registry = createIntegrationRegistry();
-    const adapter = registry.get('opencode-zen')!;
-    const ctx = makeCtx({ homeDir: tempHome, force: true });
-
-    await adapter.install(ctx);
-    const yaml = readFileSync(join(tempHome, '.config/opencode-zen/config.yaml'), 'utf8');
-    expect(yaml).toContain('provider: nexus');
-    expect(yaml).toContain('model: gpt-4');
-    expect(yaml).toContain('http://localhost:8787/v1');
   });
 
   it('opencode-go: TOML config contains provider block', async () => {

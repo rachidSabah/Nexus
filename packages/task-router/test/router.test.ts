@@ -120,7 +120,6 @@ describe('AgentSelector', () => {
     await registry.unregister('mistral-coder');
     await registry.unregister('hermes-cli');
     await registry.unregister('continue');
-    await registry.unregister('gemini-cli');
     const agent = selector.select('coding');
     expect(agent).toBeUndefined();
   });
@@ -141,7 +140,7 @@ describe('ModelSelector', () => {
   });
 
   it('returns first model if no preference matches', () => {
-    const agent = BUILTIN_AGENT_TEMPLATES.find((a) => a.id === 'gemini-cli')!;
+    const agent = BUILTIN_AGENT_TEMPLATES.find((a) => a.id === 'codex-cli')!;
     const model = selector.select(agent as never, 'backend');
     expect(model).toBeDefined();
   });

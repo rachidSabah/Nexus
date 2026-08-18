@@ -29,7 +29,6 @@ export const KNOWN_AGENT_CAPABILITIES: Record<string, readonly AgentCapabilityTa
   'hermes-cli': ['coding', 'tool-usage', 'terminal', 'analysis', 'multi-model'],
   opencode: ['coding', 'repository-edit', 'repository-read', 'debugging', 'multi-model'],
   agy: ['application-building', 'scaffolding', 'coding', 'testing', 'verification', 'repository-edit'],
-  'gemini-cli': ['coding', 'analysis', 'repository-read', 'debugging'],
 };
 
 export class AgentScoringEngine {
@@ -133,7 +132,6 @@ export class AgentScoringEngine {
     if (policy === 'nexus/prefer-hermes' && agent.id === 'hermes-cli') policyBonus = 35;
     if (policy === 'nexus/prefer-opencode' && agent.id === 'opencode') policyBonus = 35;
     if (policy === 'nexus/prefer-agy' && agent.id === 'agy') policyBonus = 35;
-    if (policy === 'nexus/prefer-gemini' && agent.id === 'gemini-cli') policyBonus = 35;
     if (policy === 'nexus/application-builder' && agent.id === 'agy') policyBonus = 25;
     if (policy === 'nexus/best-coding-agent' && (agent.id === 'claude-code' || agent.id === 'codex-cli')) policyBonus = 10;
 
