@@ -28,19 +28,9 @@ import { access, constants } from 'node:fs/promises';
 import { homedir, platform } from 'node:os';
 import { promisify } from 'node:util';
 
-const execAsync = promisify(exec);
+import { TRUSTED_AGENT_CATALOG } from '@anx/integrations';
 
-/**
- * Resolves with `promise` or, if it does not settle within `ms`, resolves with
- * `fallback` instead. Used to bound subprocess-based detection so a single
- * hanging probe can never stall the whole control plane.
- */
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
-  ]);
-}
+const execAsync = promisify(exec);
 
 export interface DetectedAgent {
   /** Agent id (e.g. 'claude-code', 'codex', 'gemini-cli'). */
@@ -61,147 +51,44 @@ export interface DetectedAgent {
   readonly detectedVia: 'path' | 'npm-global' | 'config-file' | 'not-found';
 }
 
-/** Known coding agents and their detection strategies. */
-const KNOWN_AGENTS: Array<{
+/**
+ * Resolves with `promise` or, if it does not settle within `ms`, resolves with
+ * `fallback` instead. Used to bound subprocess-based detection so a single
+ * hanging probe can never stall the whole control plane.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
+/**
+ * The single authoritative agent list is the Trusted Agent Catalog
+ * (`@anx/integrations`). Detection derives its strategies from it so the
+ * dashboard, installer, CLI and detector never disagree about which agents
+ * exist. Each catalog entry's `binaryNames`/`npmPackage`/`configPaths` map
+ * onto the detection strategies below.
+ */
+interface DetectorAgent {
   id: string;
   name: string;
-  /** Binary names to look for in PATH. */
   binaries: string[];
-  /** npm global package names (checked via `npm ls -g`). */
   npmPackages?: string[];
-  /** Config file paths relative to home dir (checked for existence). */
   configPaths?: string[];
-}> = [
-  {
-    id: 'claude-code',
-    name: 'Claude Code',
-    binaries: ['claude'],
-    npmPackages: ['@anthropic-ai/claude-code'],
-    configPaths: ['.claude/settings.json', '.claude/settings.local.json'],
-  },
-  {
-    id: 'agy',
-    name: 'AGY Builder Agent',
-    binaries: ['agy'],
-    configPaths: ['.agy/config.json'],
-  },
-  {
-    id: 'codex-cli',
-    name: 'Codex CLI',
-    binaries: ['codex'],
-    configPaths: ['.codex/config.toml', '.codex/config.json'],
-  },
-  {
-    id: 'gemini-cli',
-    name: 'Gemini CLI',
-    binaries: ['gemini', 'gemini-cli'],
-    npmPackages: ['@anthropic-ai/gemini-cli', '@google/gemini-cli'],
-    configPaths: ['.gemini/settings.json'],
-  },
-  {
-    id: 'hermes-cli',
-    name: 'Hermes CLI',
-    binaries: ['hermes'],
-    configPaths: ['AppData/Local/hermes/config.yaml', '.hermes/config.yaml', '.hermes/config.json'],
-  },
-  {
-    id: 'opencode',
-    name: 'OpenCode',
-    binaries: ['opencode'],
-    npmPackages: ['opencode'],
-    configPaths: ['.config/opencode/opencode.json'],
-  },
-  {
-    id: 'opencode-go',
-    name: 'OpenCode Go',
-    binaries: ['opencode-go', 'ocode'],
-  },
-  {
-    id: 'opencode-zen',
-    name: 'OpenCode Zen',
-    binaries: ['opencode-zen', 'ocode-zen', 'zen'],
-  },
-  {
-    id: 'aider',
-    name: 'Aider',
-    binaries: ['aider'],
-    npmPackages: ['aider-chat'],
-    configPaths: ['.aider.conf.yml'],
-  },
-  {
-    id: 'cline',
-    name: 'Cline',
-    binaries: ['cline'],
-    configPaths: ['.cline/config.json'],
-  },
-  {
-    id: 'roo-code',
-    name: 'Roo Code',
-    binaries: ['roo-code'],
-  },
-  {
-    id: 'openhands',
-    name: 'OpenHands',
-    binaries: ['openhands', 'opendevin'],
-  },
-  {
-    id: 'goose',
-    name: 'Goose',
-    binaries: ['goose'],
-  },
-  {
-    id: 'crush',
-    name: 'Crush',
-    binaries: ['crush'],
-  },
-  {
-    id: 'kimi-code',
-    name: 'Kimi Code',
-    binaries: ['kimi'],
-  },
-  {
-    id: 'qwen-code',
-    name: 'Qwen Code',
-    binaries: ['qwen', 'qwen-code'],
-    npmPackages: ['@qwen/code', 'qwen-code'],
-    configPaths: ['.qwen/settings.json', '.qwen/config.json'],
-  },
-  {
-    id: 'cursor',
-    name: 'Cursor',
-    binaries: ['cursor'],
-    configPaths: ['.cursor/config.json'],
-  },
-  {
-    id: 'zed',
-    name: 'Zed',
-    binaries: ['zed'],
-  },
-  {
-    id: 'vscode',
-    name: 'VS Code',
-    binaries: ['code'],
-    configPaths: ['.vscode/settings.json'],
-  },
-  {
-    id: 'jetbrains',
-    name: 'JetBrains IDEs',
-    binaries: ['idea', 'pycharm', 'webstorm', 'goland'],
-    configPaths: ['.IntelliJIdea', '.PyCharm', '.WebStorm', '.GoLand'],
-  },
-  {
-    id: 'neovim',
-    name: 'Neovim',
-    binaries: ['nvim'],
-    configPaths: ['.config/nvim'],
-  },
-  {
-    id: 'emacs',
-    name: 'Emacs',
-    binaries: ['emacs'],
-    configPaths: ['.emacs.d', '.config/emacs'],
-  },
-];
+}
+
+function knownAgentsFromCatalog(): DetectorAgent[] {
+  return TRUSTED_AGENT_CATALOG.map((entry) => ({
+    id: entry.id,
+    name: entry.displayName,
+    binaries: [...entry.binaryNames],
+    npmPackages: entry.npmPackage ? [entry.npmPackage] : undefined,
+    configPaths: entry.configPaths ? [...entry.configPaths] : undefined,
+  }));
+}
+
+const KNOWN_AGENTS: readonly DetectorAgent[] = knownAgentsFromCatalog();
 
 export class AgentDetector {
   private readonly platform: string;

@@ -25,6 +25,11 @@ export interface AgentCatalogEntry {
     readonly guideUrl?: string;
   };
   readonly supportedProtocols: readonly ('Anthropic' | 'OpenAI-compatible')[];
+  /**
+   * Config-file locations (relative to home dir) used for detection when the
+   * agent binary is not on PATH. Optional.
+   */
+  readonly configPaths?: readonly string[];
 }
 
 export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
@@ -226,6 +231,115 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     installRecipe: {
       type: 'manual',
       guideUrl: 'https://code.visualstudio.com',
+    },
+    supportedProtocols: ['OpenAI-compatible'],
+  },
+  {
+    id: 'agy',
+    displayName: 'AGY Builder Agent',
+    description: 'Antigravity AGY multi-agent builder CLI',
+    category: 'cli',
+    homepage: 'https://github.com/antigravity-ai/agy',
+    binaryNames: ['agy'],
+    configPaths: ['.agy/config.json'],
+    installRecipe: {
+      type: 'manual',
+      guideUrl: 'https://github.com/antigravity-ai/agy',
+    },
+    supportedProtocols: ['OpenAI-compatible'],
+  },
+  {
+    id: 'continue',
+    displayName: 'Continue',
+    description: 'Open-source AI code assistant (VS Code / JetBrains extension)',
+    category: 'editor',
+    homepage: 'https://continue.dev',
+    binaryNames: ['continue'],
+    configPaths: ['.continue/config.json'],
+    installRecipe: {
+      type: 'manual',
+      guideUrl: 'https://docs.continue.dev/quickstart/install',
+    },
+    supportedProtocols: ['OpenAI-compatible'],
+  },
+  {
+    id: 'neovim',
+    displayName: 'Neovim',
+    description: 'Hyperextensible Vim-based text editor',
+    category: 'editor',
+    homepage: 'https://neovim.io',
+    binaryNames: ['nvim'],
+    configPaths: ['.config/nvim'],
+    installRecipe: {
+      type: 'manual',
+      guideUrl: 'https://github.com/neovim/neovim/wiki/Install',
+    },
+    supportedProtocols: ['OpenAI-compatible'],
+  },
+  {
+    id: 'emacs',
+    displayName: 'Emacs',
+    description: 'Extensible, customizable text editor',
+    category: 'editor',
+    homepage: 'https://www.gnu.org/software/emacs/',
+    binaryNames: ['emacs'],
+    configPaths: ['.emacs.d', '.config/emacs'],
+    installRecipe: {
+      type: 'manual',
+      guideUrl: 'https://www.gnu.org/software/emacs/download.html',
+    },
+    supportedProtocols: ['OpenAI-compatible'],
+  },
+  {
+    id: 'jetbrains',
+    displayName: 'JetBrains IDEs',
+    description: 'IntelliJ / PyCharm / WebStorm / GoLand and family',
+    category: 'ide',
+    homepage: 'https://www.jetbrains.com',
+    binaryNames: ['idea', 'pycharm', 'webstorm', 'goland'],
+    configPaths: ['.IntelliJIdea', '.PyCharm', '.WebStorm', '.GoLand'],
+    installRecipe: {
+      type: 'manual',
+      guideUrl: 'https://www.jetbrains.com/products/',
+    },
+    supportedProtocols: ['OpenAI-compatible'],
+  },
+  {
+    id: 'goose',
+    displayName: 'Goose',
+    description: "Block's open-source AI agent CLI",
+    category: 'cli',
+    homepage: 'https://github.com/block/goose',
+    binaryNames: ['goose'],
+    installRecipe: {
+      type: 'manual',
+      guideUrl: 'https://github.com/block/goose',
+    },
+    supportedProtocols: ['OpenAI-compatible'],
+  },
+  {
+    id: 'crush',
+    displayName: 'Crush',
+    description: 'CLI coding agent (Rust)',
+    category: 'cli',
+    homepage: 'https://github.com/charmbracelet/crush',
+    binaryNames: ['crush'],
+    installRecipe: {
+      type: 'manual',
+      guideUrl: 'https://github.com/charmbracelet/crush',
+    },
+    supportedProtocols: ['OpenAI-compatible'],
+  },
+  {
+    id: 'kimi-code',
+    displayName: 'Kimi Code',
+    description: "Moonshot AI's Kimi coding agent CLI",
+    category: 'cli',
+    homepage: 'https://github.com/Moonshot-AI/Kimi-Code',
+    binaryNames: ['kimi'],
+    installRecipe: {
+      type: 'manual',
+      guideUrl: 'https://github.com/Moonshot-AI/Kimi-Code',
     },
     supportedProtocols: ['OpenAI-compatible'],
   },

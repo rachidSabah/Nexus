@@ -148,6 +148,14 @@ export interface RoutingEnginePort {
    * List all currently-registered endpoints (for dashboard/CLI).
    */
   listEndpoints(): readonly ProviderEndpoint[];
+
+  /**
+   * Returns the set of provider IDs that currently have at least one
+   * selectable (registered, healthy, not in cooldown) endpoint. A discovered
+   * model is only routable when its `providerId` is in this set — used to
+   * avoid advertising models that no provider can actually serve.
+   */
+  getSelectableProviders(): readonly string[];
 }
 
 /**

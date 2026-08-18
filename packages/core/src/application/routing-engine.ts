@@ -174,6 +174,24 @@ export class RoutingEngine implements RoutingEnginePort {
     return Array.from(this.endpoints.values());
   }
 
+  /**
+   * Provider IDs that currently have at least one selectable endpoint
+   * (registered, healthy, not in cooldown). Used by the gateway's `/v1/models`
+   * endpoint to report only routable models — never advertising a model whose
+   * provider has no eligible endpoint.
+   */
+  getSelectableProviders(): readonly string[] {
+    const now = Date.now();
+    const out = new Set<string>();
+    for (const e of this.endpoints.values()) {
+      if (!isSelectable(e)) continue;
+      const cooldownUntil = this.cooldowns.get(e.id);
+      if (cooldownUntil && now < cooldownUntil) continue;
+      out.add(e.providerId);
+    }
+    return Array.from(out);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Private helpers
   // ─────────────────────────────────────────────────────────────────────────

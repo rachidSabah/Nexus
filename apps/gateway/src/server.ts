@@ -1102,6 +1102,7 @@ export class HttpServer {
       }>();
 
       // Dynamically discovered real models (from ModelRegistry).
+      const selectableProviders = new Set(this.deps.routing.getSelectableProviders());
       let discovered = this.deps.modelRegistry.list();
       if (q.free === 'true') {
         discovered = this.deps.modelRegistry.listFree();
@@ -1110,6 +1111,11 @@ export class HttpServer {
       }
       for (const m of discovered) {
         if (m.stale) continue;
+        // Routability gate: never advertise a model whose provider currently
+        // has no selectable (registered, healthy, non-cooldown) endpoint. A
+        // model with zero eligible providers is reported separately via
+        // /v1/models/stats as `unavailable`, never as `available`.
+        if (!selectableProviders.has(m.providerId)) continue;
         models.set(m.id, {
           id: m.id,
           object: 'model',
@@ -1132,6 +1138,9 @@ export class HttpServer {
       // alias so Claude Code's /model picker shows the full discovered catalog.
       for (const e of projectClaudeCatalog(discovered, { includeNatives: false })) {
         if (!models.has(e.id)) {
+          // Apply the same routability gate: only expose the claude-gw-*
+          // projection if the underlying provider is currently selectable.
+          if (!selectableProviders.has(e.owned_by)) continue;
           models.set(e.id, {
             id: e.id,
             object: 'model',

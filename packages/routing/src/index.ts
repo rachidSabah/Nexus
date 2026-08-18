@@ -55,6 +55,9 @@ export class CompositeRoutingEngine implements RoutingEnginePort {
   listEndpoints(): readonly ProviderEndpoint[] {
     return this.engines[0]?.listEndpoints() ?? [];
   }
+  getSelectableProviders(): readonly string[] {
+    return this.engines[0]?.getSelectableProviders() ?? [];
+  }
 }
 
 /**
@@ -118,6 +121,9 @@ export class AffinityRouter implements RoutingEnginePort {
   }
   listEndpoints(): readonly ProviderEndpoint[] {
     return this.inner.listEndpoints();
+  }
+  getSelectableProviders(): readonly string[] {
+    return this.inner.getSelectableProviders();
   }
 
   clearAffinity(): void {
