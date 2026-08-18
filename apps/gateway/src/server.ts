@@ -4428,7 +4428,7 @@ let optMessages: never[] | undefined;
     // ── Coding-agent auto-detection (master prompt #9) ─────────────────
     // Scans PATH, npm globals, and config files to detect installed coding
     // agents (Claude Code, Codex, Gemini CLI, etc.).
-    this.fastify.get('/v1/agents/detect', async () => {
+    const handleAgentsDetect = async () => {
       const detected = await this.deps.agentDetector.detectAll();
       return {
         platform: process.platform,
@@ -4437,7 +4437,11 @@ let optMessages: never[] | undefined;
         foundCount: detected.filter((a) => a.found).length,
         totalCount: detected.length,
       };
-    });
+    };
+    this.fastify.get('/v1/agents/detect', handleAgentsDetect);
+    this.fastify.post('/v1/agents/detect', handleAgentsDetect);
+    this.fastify.get('/agents/detect', handleAgentsDetect);
+    this.fastify.post('/agents/detect', handleAgentsDetect);
 
     this.fastify.get('/v1/agents/detect/:id', async (request, reply) => {
       const { id } = request.params as { id: string };
@@ -5677,9 +5681,12 @@ let optMessages: never[] | undefined;
     });
 
     // ─── Universal Agent Control Plane Endpoints ───────────────────────
-    this.fastify.get('/v1/agents/catalog', async () => {
+    const handleAgentCatalog = async () => {
       return { catalog: TRUSTED_AGENT_CATALOG, count: TRUSTED_AGENT_CATALOG.length };
-    });
+    };
+    this.fastify.get('/v1/agents/catalog', handleAgentCatalog);
+    this.fastify.get('/v1/agent-catalog', handleAgentCatalog);
+    this.fastify.get('/agent-catalog', handleAgentCatalog);
 
     this.fastify.post('/v1/agents/:id/install', async (request, reply) => {
       const { id } = request.params as { id: string };

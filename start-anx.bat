@@ -3,7 +3,7 @@ title ANX - Agent Nexus Gateway ^& Dashboard
 echo ========================================================
 echo   Starting ANX Gateway, Dashboard ^& Claude CLI...
 echo ========================================================
-cd /d "F:\codingghosts"
+cd /d "%~dp0"
 
 rem Clean the dashboard build cache so `next dev` never reuses a stale
 rem production `.next` (which causes `middleware-manifest.json missing`

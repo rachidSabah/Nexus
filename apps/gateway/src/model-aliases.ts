@@ -606,7 +606,7 @@ export class ModelAliasRegistry {
       };
     }
     // Nothing to rewrite to — let the routing engine fail honestly.
-    return { model: `claude-${family === 'default' ? 'default' : family}` };
+    return { model };
   }
 
   /** Finds a model whose id matches a configured target (provider/model or bare model). */

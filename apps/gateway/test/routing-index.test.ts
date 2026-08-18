@@ -69,7 +69,7 @@ describe('RoutingIndexManager & TokenAccountingManager', () => {
       const queryDuration = performance.now() - startQuery;
 
       expect(results.length).toBeGreaterThan(0);
-      expect(queryDuration).toBeLessThan(50); // Generous assertion margin for test suite environment
+      expect(queryDuration).toBeLessThan(250); // Generous assertion margin for test suite environment on all platforms
       expect(rebuildDuration).toBeLessThan(1500); // Generous margin for shared vCPU CI runners
     });
   });

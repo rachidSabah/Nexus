@@ -58,7 +58,7 @@ export default function ModelsPage() {
       if (filter === 'paid') return m.freeTier === 'PAID' || (m.isFree !== true && m.pricing?.isFree !== true);
       if (filter === 'vision') return m.capabilities?.vision === true;
       if (filter === 'reasoning') return m.capabilities?.reasoning === true || m.id.includes('think') || m.id.includes('r1') || m.id.includes('reason');
-      if (filter === 'tools') return m.capabilities?.functionCalling === true || m.capabilities?.tools === true;
+      if (filter === 'tools') return m.capabilities?.toolCalling === true || m.capabilities?.functionCalling === true || m.capabilities?.tools === true;
       if (filter === 'stale') return m.stale === true;
       return true;
     }).filter((m) => {
