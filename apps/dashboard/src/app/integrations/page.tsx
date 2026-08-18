@@ -34,7 +34,7 @@ import {
 } from '@/hooks/integrations';
 
 function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMutate: () => void }) {
-  const { start, stop, restart, rebind, installAgent, verify, uninstall, unbuckle } = useIntegrationActions();
+  const { start, stop, restart, rebind, installAgent, updateAgent, verify, uninstall, unbuckle } = useIntegrationActions();
   const detail = useIntegrationStatus(status.id).data;
   const runtime = useIntegrationRuntime(status.id).data;
   const [copied, setCopied] = useState(false);
@@ -69,7 +69,9 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
       setError(null);
       try {
         await fn(status.id);
-        setTimeout(onMutate, 600);
+        onMutate();
+        setTimeout(onMutate, 800);
+        setTimeout(onMutate, 2000);
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -172,19 +174,34 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
       {/* Lifecycle controls — gated by adapter capabilities */}
       <div className="mt-4">
         <div className="flex flex-wrap gap-2">
-          {/* Action 1: Install Binary Package if not present on system */}
-          {!status.installed ? (
+          {/* Action 1: Install Binary Package (npm / pip) */}
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => run('install', installAgent)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25 disabled:opacity-40"
+            title={`Install ${status.displayName} package binary on your system`}
+          >
+            <Rocket className={`h-3.5 w-3.5 ${busy === 'install' ? 'animate-pulse' : ''}`} />
+            {busy === 'install' ? 'Installing…' : status.installed ? 'Reinstall Agent' : 'Install Agent'}
+          </button>
+
+          {/* Action 2: Update Agent to Latest Version */}
+          {status.installed && (
             <button
               type="button"
               disabled={busy !== null}
-              onClick={() => run('install', installAgent)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-nexus-500/50 bg-nexus-500/20 px-3 py-1.5 text-[11px] font-semibold text-nexus-200 transition hover:bg-nexus-500/30 disabled:opacity-40"
-              title={`Install ${status.displayName} binary package on system`}
+              onClick={() => run('update', updateAgent)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-40"
+              title={`Update ${status.displayName} to latest release via package manager`}
             >
-              <Rocket className={`h-3.5 w-3.5 ${busy === 'install' ? 'animate-pulse' : ''}`} />
-              {busy === 'install' ? 'Installing…' : 'Install Agent'}
+              <RotateCw className={`h-3.5 w-3.5 ${busy === 'update' ? 'animate-spin' : ''}`} />
+              {busy === 'update' ? 'Updating…' : 'Update Agent'}
             </button>
-          ) : !status.configured ? (
+          )}
+
+          {/* Action 3: 1-Click Buckle / Rebind to Nexus Gateway */}
+          {!status.configured ? (
             <button
               type="button"
               disabled={busy !== null}
@@ -193,14 +210,14 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               title={`Configure ${status.displayName} to route through Nexus Gateway`}
             >
               <Rocket className={`h-3.5 w-3.5 ${busy === 'rebind' ? 'animate-pulse' : ''}`} />
-              {busy === 'rebind' ? 'Buckling…' : 'Buckle to Nexus'}
+              {busy === 'rebind' ? 'Buckling…' : '1-Click Buckle to Nexus'}
             </button>
           ) : (
             <button
               type="button"
               disabled={busy !== null}
               onClick={() => run('rebind', rebind)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/30 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-purple-500/40 bg-purple-500/20 px-3 py-1.5 text-[11px] font-semibold text-purple-200 transition hover:bg-purple-500/30 disabled:opacity-40"
               title={`Re-apply Nexus gateway configuration for ${status.displayName}`}
             >
               <RotateCw className={`h-3.5 w-3.5 ${busy === 'rebind' ? 'animate-spin' : ''}`} />
@@ -316,7 +333,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
                   ? 'The running agent process will be terminated.'
                   : confirm === 'unbuckle'
                     ? 'Nexus configuration endpoints and overrides will be removed from this agent, reverting it to default.'
-                    : 'The agent will be stopped and all Nexus integration settings will be completely removed.'}
+                    : 'The agent will be stopped, package binary uninstalled via npm/pip, and all configurations removed.'}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button

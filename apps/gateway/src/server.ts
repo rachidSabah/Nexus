@@ -5847,6 +5847,20 @@ let optMessages: never[] | undefined;
       return reply.code(result.ok ? 200 : 400).send({ ok: result.ok, uninstalled: result.ok, message: result.message, actions: result.actions });
     });
 
+    this.fastify.post('/v1/agents/:id/update', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      const result = await manager.updateAgent(id);
+      return reply.code(result.ok ? 200 : 400).send({ ok: result.ok, updated: result.ok, message: result.message, actions: result.actions });
+    });
+
+    this.fastify.post('/v1/runtime-agents/:id/update', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      const result = await manager.updateAgent(id);
+      return reply.code(result.ok ? 200 : 400).send({ ok: result.ok, updated: result.ok, message: result.message, actions: result.actions });
+    });
+
     this.fastify.post('/v1/agents/:id/rebind', async (request, reply) => {
       const { id } = request.params as { id: string };
       const body = (request.body as { defaultModel?: string; apiKey?: string } | undefined) ?? {};

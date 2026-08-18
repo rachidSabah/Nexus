@@ -646,6 +646,79 @@ export class AgentRuntimeManager {
     };
   }
 
+  async updateAgent(agentId: string): Promise<{ ok: boolean; message: string; actions: string[] }> {
+    const catalog = getAgentCatalogEntry(agentId);
+    const actions: string[] = [];
+
+    if (catalog?.installRecipe?.type === 'npm' && catalog.installRecipe.packageName) {
+      actions.push(`Updating npm package ${catalog.installRecipe.packageName}@latest...`);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn('npm', ['install', '-g', `${catalog.installRecipe.packageName}@latest`], {
+            stdio: 'pipe',
+            timeout: 180_000,
+            shell: true,
+          });
+          let errOut = '';
+          child.stderr?.on('data', (d) => (errOut += String(d)));
+          child.on('error', (err) => reject(err));
+          child.on('close', (code) => {
+            if (code === 0) {
+              actions.push(`Successfully updated npm package ${catalog.installRecipe.packageName} to latest`);
+              resolve();
+            } else {
+              reject(new Error(`npm install exited with code ${code}: ${errOut}`));
+            }
+          });
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          message: `Failed to update ${catalog.displayName}: ${(err as Error).message}`,
+          actions,
+        };
+      }
+    } else if (catalog?.installRecipe?.type === 'pip' && catalog.installRecipe.packageName) {
+      actions.push(`Updating pip package ${catalog.installRecipe.packageName}...`);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'pip', 'install', '-U', catalog.installRecipe.packageName!], {
+            stdio: 'pipe',
+            timeout: 180_000,
+            shell: true,
+          });
+          child.on('close', (code) => {
+            if (code === 0) {
+              actions.push(`Successfully updated pip package ${catalog.installRecipe.packageName}`);
+              resolve();
+            } else {
+              reject(new Error(`pip install exited with code ${code}`));
+            }
+          });
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          message: `Failed to update ${catalog.displayName}: ${(err as Error).message}`,
+          actions,
+        };
+      }
+    } else {
+      return {
+        ok: false,
+        message: `No package manager update recipe available for ${catalog?.displayName ?? agentId}`,
+        actions,
+      };
+    }
+
+    AgentRuntimeManager.verificationCache.delete(agentId);
+    return {
+      ok: true,
+      message: `Agent ${catalog?.displayName ?? agentId} updated to latest version.`,
+      actions,
+    };
+  }
+
   getProtocol(agentId: string): 'Anthropic/OpenAI CLI' | 'OpenAI-compatible' | 'unknown' {
     const adapter = this.integrationMap.get(agentId);
     if (!adapter) return 'unknown';

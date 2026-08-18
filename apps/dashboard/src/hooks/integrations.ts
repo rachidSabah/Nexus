@@ -129,6 +129,10 @@ export function useIntegrationActions() {
     (id: string) => action(`/api/v1/agents/${id}/install`, { force: true }),
     [],
   );
+  const updateAgent = useCallback(
+    (id: string) => action(`/api/v1/agents/${id}/update`),
+    [],
+  );
   const verify = useCallback(
     (id: string) => action(`/api/v1/integrations/${id}/verify`) as Promise<void>,
     [],
@@ -143,5 +147,5 @@ export function useIntegrationActions() {
   );
   const restartGateway = useCallback(() => action('/api/v1/system/gateway/restart'), []);
 
-  return { start, stop, restart, rebind, installAgent, verify, uninstall, unbuckle, restartGateway };
+  return { start, stop, restart, rebind, installAgent, updateAgent, verify, uninstall, unbuckle, restartGateway };
 }
