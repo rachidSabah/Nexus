@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, isAbsolute } from 'node:path';
 
 import type {
   IntegrationAdapter,
@@ -111,7 +111,7 @@ export abstract class BaseIntegration implements IntegrationAdapter {
    */
   protected async detectCurrentGateway(ctx: IntegrationContext): Promise<string | undefined> {
     for (const file of this.configFiles(ctx)) {
-      const fullPath = file.path.startsWith('/') ? file.path : join(home(ctx), file.path);
+      const fullPath = isAbsolute(file.path) ? file.path : join(home(ctx), file.path);
       if (!existsSync(fullPath)) continue;
       try {
         const raw = await readFile(fullPath, 'utf8');
@@ -175,7 +175,7 @@ export abstract class BaseIntegration implements IntegrationAdapter {
     }
 
     for (const file of files) {
-      const fullPath = file.path.startsWith('/') ? file.path : join(home(ctx), file.path);
+      const fullPath = isAbsolute(file.path) ? file.path : join(home(ctx), file.path);
 
       // json-merge files are ALWAYS merged, with or without --force. The
       // `force` flag only bypasses the "refuse to take over a different
@@ -263,12 +263,69 @@ export abstract class BaseIntegration implements IntegrationAdapter {
     const actions: string[] = [];
     const errors: string[] = [];
 
+    // 1. Terminate any running process for this agent
+    try {
+      await integrationProcessManager.stop(this.id);
+      actions.push(`stopped process for ${this.displayName}`);
+    } catch {
+      // ignore if not running
+    }
+
+    // 2. Clean up or restore each configured file
     for (const file of files) {
-      const fullPath = file.path.startsWith('/') ? file.path : join(home(ctx), file.path);
+      const fullPath = isAbsolute(file.path) ? file.path : join(home(ctx), file.path);
+      const backupPath = `${fullPath}.anx-backup`;
+
+      if (existsSync(backupPath)) {
+        if (ctx.dryRun) {
+          actions.push(`would restore backup: ${backupPath} -> ${fullPath}`);
+          continue;
+        }
+        try {
+          const originalContent = await readFile(backupPath, 'utf8');
+          await writeFile(fullPath, originalContent, 'utf8');
+          await unlink(backupPath);
+          actions.push(`restored original config from backup: ${fullPath}`);
+        } catch (err) {
+          errors.push(`failed to restore backup ${backupPath}: ${(err as Error).message}`);
+        }
+        continue;
+      }
+
       if (!existsSync(fullPath)) {
         actions.push(`not present: ${fullPath}`);
         continue;
       }
+
+      if (file.merge === 'json-merge') {
+        if (ctx.dryRun) {
+          actions.push(`would unbind gateway settings from: ${fullPath}`);
+          continue;
+        }
+        try {
+          const existing = JSON.parse(await readFile(fullPath, 'utf8')) as Record<string, unknown>;
+          delete existing['apiBaseUrl'];
+          delete existing['apiKeyHelper'];
+          delete existing['baseUrl'];
+          delete existing['base_url'];
+          if (existing['env'] && typeof existing['env'] === 'object') {
+            const envObj = existing['env'] as Record<string, unknown>;
+            delete envObj['ANTHROPIC_BASE_URL'];
+            delete envObj['ANTHROPIC_AUTH_TOKEN'];
+            delete envObj['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'];
+            delete envObj['CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT'];
+            delete envObj['OPENAI_BASE_URL'];
+            delete envObj['OPENAI_API_KEY'];
+            delete envObj['GEMINI_API_BASE'];
+          }
+          await writeFile(fullPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
+          actions.push(`unbound gateway config from: ${fullPath}`);
+        } catch (err) {
+          errors.push(`failed to clean ${fullPath}: ${(err as Error).message}`);
+        }
+        continue;
+      }
+
       if (ctx.dryRun) {
         actions.push(`would remove: ${fullPath}`);
         continue;
@@ -310,7 +367,7 @@ export abstract class BaseIntegration implements IntegrationAdapter {
     let configured = false;
     let configPath: string | undefined;
     for (const file of files) {
-      const full = file.path.startsWith('/') ? file.path : join(home(ctx), file.path);
+      const full = isAbsolute(file.path) ? file.path : join(home(ctx), file.path);
       if (existsSync(full)) {
         configured = true;
         configPath = full;

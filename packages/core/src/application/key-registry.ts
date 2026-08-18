@@ -121,6 +121,11 @@ export class KeyRegistry {
     }
     // Store plaintext in the vault (encrypted at rest).
     await this.vault.set(params.id, params.plaintext);
+    // Also persist metadata so any key id format restores accurately
+    await this.vault.set(`__meta__${params.id}`, JSON.stringify({
+      providerId: params.providerId,
+      label: params.label,
+    }));
 
     const descriptor: KeyDescriptor = {
       id: params.id,
@@ -148,7 +153,6 @@ export class KeyRegistry {
   }
 
   /** Removes a key from the registry and the vault. */
-  /** Removes a key from the registry and the vault. */
   async unregister(keyId: string): Promise<boolean> {
     const desc = this.keys.get(keyId);
     if (!desc) return false;
@@ -158,6 +162,7 @@ export class KeyRegistry {
     if (idx >= 0) list.splice(idx, 1);
     if (list.length === 0) this.byProvider.delete(desc.providerId);
     await this.vault.delete(keyId);
+    await this.vault.delete(`__meta__${keyId}`);
     return true;
   }
 
@@ -165,37 +170,81 @@ export class KeyRegistry {
    * Rehydrates registry metadata from the encrypted vault after a restart.
    * The vault persists plaintexts (keyed by key id); descriptors are rebuilt
    * from those entries so multi-key rotation survives gateway restarts.
-   *
-   * Key ids are expected to follow the `{providerId}-key-{suffix}` shape
-   * (see server.ts POST /v1/keys). Plaintexts are stored in the vault only —
-   * never persisted here.
    */
   async restoreFromVault(): Promise<number> {
     const ids = await this.vault.list();
     let restored = 0;
     for (const id of ids) {
+      if (id.startsWith('__meta__')) continue;
       if (this.keys.has(id)) continue;
       const plaintext = await this.vault.get(id);
       if (!plaintext) continue;
-      const providerId = this.parseProviderId(id);
+
+      let providerId: string | undefined;
+      let label: string | undefined;
+
+      const metaRaw = await this.vault.get(`__meta__${id}`);
+      if (metaRaw) {
+        try {
+          const meta = JSON.parse(metaRaw) as { providerId?: string; label?: string };
+          providerId = meta.providerId;
+          label = meta.label;
+        } catch {
+          // ignore
+        }
+      }
+
+      if (!providerId) {
+        providerId = this.parseProviderId(id);
+      }
       if (!providerId) continue;
-      await this.register({
+
+      const descriptor: KeyDescriptor = {
         id,
         providerId,
-        plaintext,
-        label: undefined,
-      });
+        label,
+        lastFour: plaintext.slice(-4),
+        status: 'active',
+        requests: 0,
+        tokens: 0,
+        errors: 0,
+        rateLimitedCount: 0,
+        latencyMs: 0,
+        lastSuccessAt: 0,
+        lastFailureAt: 0,
+        cooldownUntil: 0,
+        registeredAt: Date.now(),
+      };
+      this.keys.set(id, descriptor);
+
+      const list = this.byProvider.get(providerId) ?? [];
+      list.push(id);
+      this.byProvider.set(providerId, list);
+
       restored += 1;
     }
     return restored;
   }
 
   private parseProviderId(keyId: string): string | undefined {
-    // `{providerId}-key-{suffix}` — provider ids may contain dashes, so split
-    // on the LAST `-key-` occurrence.
+    if (keyId.startsWith('__meta__')) return undefined;
+    // 1. `{providerId}-key-{suffix}`
     const idx = keyId.lastIndexOf('-key-');
-    if (idx <= 0) return undefined;
-    return keyId.slice(0, idx);
+    if (idx > 0) return keyId.slice(0, idx);
+
+    // 2. `key-{providerId}-{suffix}`
+    if (keyId.startsWith('key-')) {
+      const rest = keyId.slice(4);
+      const lastDash = rest.lastIndexOf('-');
+      if (lastDash > 0) return rest.slice(0, lastDash);
+      return rest;
+    }
+
+    // 3. `auto-{providerId}`
+    if (keyId.startsWith('auto-')) return keyId.slice(5);
+
+    // 4. Provider id directly (e.g. 'nvidia-nim', 'mistral', 'opencode-zen', etc.)
+    return keyId;
   }
 
   /** Returns the descriptor for a key, or undefined. */
