@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Continue — open-source AI code assistant (VS Code + JetBrains extension).
@@ -31,7 +32,7 @@ export class ContinueIntegration extends BaseIntegration {
               {
                 title: 'Agent Nexus',
                 provider: 'openai',
-                model: ctx.defaultModel,
+                model: resolveModel(ctx),
                 apiBase: `${ctx.gatewayUrl}/v1`,
                 apiKey: ctx.apiKey ?? 'no-key-required',
               },
@@ -40,7 +41,7 @@ export class ContinueIntegration extends BaseIntegration {
             tabAutocompleteModel: {
               title: 'Agent Nexus',
               provider: 'openai',
-              model: ctx.defaultModel,
+              model: resolveModel(ctx),
               apiBase: `${ctx.gatewayUrl}/v1`,
               apiKey: ctx.apiKey ?? 'no-key-required',
             },

@@ -202,6 +202,83 @@ describe('OpenAIAdapter', () => {
     expect(paid.pricing?.quotaLimited).toBeFalsy();
   });
 
+  it('classifies local Ollama models as FREE (unrestricted), not FREE_TIER', async () => {
+    const modelsPayload = {
+      data: [
+        { id: 'llama3.1:8b', object: 'model', owned_by: 'ollama' },
+        { id: 'qwen2.5:7b', object: 'model', owned_by: 'ollama' },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => modelsPayload,
+      text: async () => JSON.stringify(modelsPayload),
+    }));
+
+    const adapter = new OpenAIAdapter();
+    const endpoint = makeEndpoint({ providerId: 'ollama' });
+    const discovered = await adapter.discoverModels(endpoint, new AbortController().signal);
+    const byId = Object.fromEntries(discovered.map((m) => [m.id, m]));
+
+    for (const id of ['llama3.1:8b', 'qwen2.5:7b']) {
+      const m = byId[id];
+      expect(m, `model ${id} present`).toBeDefined();
+      expect(m.pricing?.isFree, `${id} isFree`).toBe(true);
+      // Local/self-hosted → unrestricted → FREE, NOT quota-limited FREE_TIER.
+      expect(m.pricing?.quotaLimited, `${id} quotaLimited`).toBeFalsy();
+      expect(m.pricing?.freeTier, `${id} freeTier`).toBe('FREE');
+      expect(m.pricing?.source, `${id} source`).toBe('provider_metadata');
+    }
+  });
+
+  it('keeps honest UNKNOWN when API returns no pricing for a non-suffix model', async () => {
+    // OpenCode Zen / NVIDIA / Groq models without a `-free` suffix and no
+    // per-model pricing must stay UNKNOWN — we must NOT fabricate $0 as free.
+    const modelsPayload = {
+      data: [
+        { id: 'some-provider-model-x', object: 'model', owned_by: 'opencode-zen' },
+        { id: 'groq-large-unknown', object: 'model', owned_by: 'groq' },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => modelsPayload,
+      text: async () => JSON.stringify(modelsPayload),
+    }));
+
+    const adapter = new OpenAIAdapter();
+    const endpoint = makeEndpoint({ providerId: 'opencode-zen' });
+    const discovered = await adapter.discoverModels(endpoint, new AbortController().signal);
+    const byId = Object.fromEntries(discovered.map((m) => [m.id, m]));
+
+    for (const id of ['some-provider-model-x', 'groq-large-unknown']) {
+      const m = byId[id];
+      expect(m, `model ${id} present`).toBeDefined();
+      expect(m.pricing?.freeTier, `${id} freeTier`).toBe('UNKNOWN');
+      expect(m.pricing?.isFree, `${id} isFree`).toBe(false);
+      expect(m.pricing?.source, `${id} source`).toBe('unknown');
+    }
+  });
+
+  it('tags provider_metadata source for a free-suffix model even without live pricing', async () => {
+    const modelsPayload = {
+      data: [{ id: 'deepseek-v4-flash-free', object: 'model', owned_by: 'deepseek' }],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => modelsPayload,
+      text: async () => JSON.stringify(modelsPayload),
+    }));
+
+    const adapter = new OpenAIAdapter();
+    const endpoint = makeEndpoint({ providerId: 'opencode-zen' });
+    const discovered = await adapter.discoverModels(endpoint, new AbortController().signal);
+    const m = discovered.find((x) => x.id === 'deepseek-v4-flash-free');
+    expect(m?.pricing?.freeTier).toBe('FREE_TIER');
+    // We KNOW it is a free alias (suffix), so the source is metadata, not unknown.
+    expect(m?.pricing?.source).toBe('provider_metadata');
+  });
+
   it('parses SSE stream correctly', async () => {
     const encoder = new TextEncoder();
     const sse = [

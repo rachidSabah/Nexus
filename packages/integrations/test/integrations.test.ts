@@ -37,7 +37,7 @@ describe('Integrations registry', () => {
 
   it('includes all 19 integrations from the spec', () => {
     const expected = [
-      'claude-code', 'codex-cli', 'gemini-cli', 'hermes-cli',
+      'claude-code', 'codex-cli', 'gemini-cli', 'qwen-code', 'hermes-cli',
       'opencode', 'opencode-go', 'opencode-zen',
       'cursor', 'continue', 'cline', 'roo-code',
       'openhands', 'aider',

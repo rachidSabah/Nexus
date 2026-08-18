@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
-import type { IntegrationContext } from '../contract.js';
+import type { IntegrationContext, LaunchSpec } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Hermes CLI — a multi-provider AI CLI. Hermes reads its config from
@@ -34,6 +35,10 @@ export class HermesCliIntegration extends BaseIntegration {
     return ['hermes'];
   }
 
+  protected detectPaths(): string[] {
+    return ['AppData/Local/hermes', '.hermes'];
+  }
+
   // First-class building agent: ready to bind to the gateway.
   protected skipIfConfigured(): boolean {
     return false;
@@ -41,7 +46,7 @@ export class HermesCliIntegration extends BaseIntegration {
 
   protected configFiles(ctx: IntegrationContext) {
     const endpoint = `${ctx.gatewayUrl}/v1`;
-    const targetModel = ctx.defaultModel || 'nexus/best-coding';
+    const targetModel = resolveModel(ctx) ?? 'nexus/best-coding';
     const isWindows = process.platform === 'win32';
     const configRel = isWindows ? 'AppData/Local/hermes/config.yaml' : '.hermes/config.yaml';
     const envRel = isWindows ? 'AppData/Local/hermes/.env' : '.hermes/.env';
@@ -112,11 +117,27 @@ export class HermesCliIntegration extends BaseIntegration {
           [
             `# Agent Nexus Gateway binding for Hermes (managed by anx integrations)`,
             `export OPENAI_BASE_URL="${endpoint}"`,
-            `export ANTHROPIC_BASE_URL="${endpoint}"`,
             `export NEXUS_TARGET_MODEL="${targetModel}"`,
             ``,
           ].join('\n'),
       },
     ];
+  }
+
+  async getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    const exe = await this.resolveExecutable('hermes');
+    const endpoint = `${ctx.gatewayUrl}/v1`;
+    const targetModel = resolveModel(ctx) ?? 'nexus/best-coding';
+    return {
+      executable: exe,
+      args: [],
+      interactive: true,
+      env: {
+        OPENAI_BASE_URL: endpoint,
+        OPENAI_API_KEY: ctx.apiKey || 'nexus',
+        HERMES_INFERENCE_MODEL: targetModel,
+      },
+      display: `hermes → ${ctx.gatewayUrl}`,
+    };
   }
 }

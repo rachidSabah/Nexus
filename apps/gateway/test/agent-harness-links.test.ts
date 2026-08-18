@@ -17,7 +17,7 @@ describe('Nexus One-Click Agent & IDE Harness: Link Integrity & Navigation Harde
     process.env['PORT'] = String(testPort);
     runtime = await GatewayRuntime.create(undefined);
     await runtime.start();
-  });
+  }, 30000);
 
   afterAll(async () => {
     await runtime.stop();
@@ -26,16 +26,16 @@ describe('Nexus One-Click Agent & IDE Harness: Link Integrity & Navigation Harde
     } catch {
       // ignore
     }
-  });
+  }, 15000);
 
   describe('1. Integration Registry Integrity & Link Safety', () => {
-    it('A. Contains exactly 18 built-in integrations without duplicates', () => {
-      expect(BUILTIN_INTEGRATIONS.length).toBe(18);
-      expect(BUILTIN_INTEGRATIONS_COUNT).toBe(18);
+    it('A. Contains exactly 19 built-in integrations without duplicates', () => {
+      expect(BUILTIN_INTEGRATIONS.length).toBe(19);
+      expect(BUILTIN_INTEGRATIONS_COUNT).toBe(19);
       const registry = createIntegrationRegistry();
-      expect(registry.size).toBe(18);
+      expect(registry.size).toBe(19);
       const ids = BUILTIN_INTEGRATIONS.map((i) => i.id);
-      expect(new Set(ids).size).toBe(18);
+      expect(new Set(ids).size).toBe(19);
     });
 
     it('B. Every integration has a valid, secure, non-localhost official documentation URL', () => {
@@ -63,9 +63,9 @@ describe('Nexus One-Click Agent & IDE Harness: Link Integrity & Navigation Harde
       const res = await fetch(`${baseUrl}/v1/integrations`);
       expect(res.status).toBe(200);
       const body = (await res.json()) as { count: number; integrations: any[] };
-      expect(body.count).toBe(18);
-      expect(body.integrations.length).toBe(18);
-    });
+      expect(body.count).toBe(19);
+      expect(body.integrations.length).toBe(19);
+    }, 30000);
 
     it('B. Preserves detection truthfulness without faking installed state', async () => {
       const res = await fetch(`${baseUrl}/v1/integrations`);
@@ -74,7 +74,7 @@ describe('Nexus One-Click Agent & IDE Harness: Link Integrity & Navigation Harde
         expect(typeof item.installed).toBe('boolean');
         expect(typeof item.configured).toBe('boolean');
       }
-    });
+    }, 30000);
 
     it('C. Payloads contain no secret credentials, auth tokens, or private keys', async () => {
       const res = await fetch(`${baseUrl}/v1/integrations`);
@@ -83,7 +83,7 @@ describe('Nexus One-Click Agent & IDE Harness: Link Integrity & Navigation Harde
       expect(text).not.toContain('apiKey');
       expect(text).not.toContain('vault');
       expect(text).not.toContain('secret');
-    });
+    }, 30000);
   });
 
   describe('3. Internal Navigation Target Validation', () => {

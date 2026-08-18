@@ -179,22 +179,236 @@ export class NexusCli {
     }
   }
 
-  private async agents(_args: string[] = []): Promise<void> {
-    const client = this.client();
-    const baseUrl = (client as unknown as { options: { baseUrl: string } }).options.baseUrl;
-    try {
-      const r = await fetch(`${baseUrl}/v1/runtime-agents`);
-      const body = (await r.json()) as { agents?: Array<{ id: string; name: string; detected: boolean; configured: boolean; protocol: string }> } | Array<{ id: string; name: string; detected: boolean; configured: boolean; protocol: string }>;
-      const agents = Array.isArray(body) ? body : (body.agents ?? []);
-      process.stdout.write(`\nRuntime Coding Agents (${agents.length}):\n`);
-      for (const a of agents) {
-        const status = a.detected ? (a.configured ? 'CONFIGURED' : 'DETECTED') : 'NOT DETECTED';
-        process.stdout.write(`  ${a.id.padEnd(20)} ${a.name.padEnd(24)} ${status.padEnd(16)} [${a.protocol}]\n`);
-      }
-    } catch (err) {
-      process.stderr.write(`Failed to retrieve agents: ${(err as Error).message}\n`);
-      process.exitCode = 1;
+  private async agents(args: string[] = []): Promise<void> {
+    const [sub, ...rest] = args;
+    const knownSubs = ['list', 'status', 'install', 'configure', 'start', 'stop', 'restart', 'verify'];
+    if (!sub || !knownSubs.includes(sub)) {
+      return this.agentsList();
     }
+
+    switch (sub) {
+      case 'list':
+        return this.agentsList();
+      case 'status':
+        return this.agentsStatus(rest);
+      case 'install':
+        return this.agentsInstall(rest);
+      case 'configure':
+        return this.agentsConfigure(rest);
+      case 'start':
+        return this.agentsStart(rest);
+      case 'stop':
+        return this.agentsStop(rest);
+      case 'restart':
+        return this.agentsRestart(rest);
+      case 'verify':
+        return this.agentsVerify(rest);
+      default:
+        return this.agentsList();
+    }
+  }
+
+  private async agentsList(): Promise<void> {
+    const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+    try {
+      const r = await fetch(`${baseUrl}/v1/integrations`);
+      if (r.ok) {
+        const body = (await r.json()) as { count: number; integrations: Array<{ id: string; displayName: string; installed: boolean; configured: boolean; version?: string; health?: string }> };
+        const integrations = body.integrations ?? [];
+        process.stdout.write(`\nUniversal Coding Agents (${integrations.length}):\n`);
+        process.stdout.write(`${'ID'.padEnd(20)} ${'NAME'.padEnd(22)} ${'STATE'.padEnd(16)} ${'VERSION'.padEnd(12)} HEALTH\n`);
+        process.stdout.write(`${'─'.repeat(20)} ${'─'.repeat(22)} ${'─'.repeat(16)} ${'─'.repeat(12)} ${'─'.repeat(10)}\n`);
+        for (const a of integrations) {
+          const state = a.installed ? (a.configured ? 'CONFIGURED' : 'INSTALLED') : 'AVAILABLE';
+          process.stdout.write(`${a.id.padEnd(20)} ${a.displayName.padEnd(22)} ${state.padEnd(16)} ${(a.version ?? '—').padEnd(12)} ${(a.health ?? 'unknown').toUpperCase()}\n`);
+        }
+        process.stdout.write('\n');
+        return;
+      }
+    } catch {
+      // Fallback to local integration registry if gateway is offline
+    }
+
+    const ctx = this.integrationContext();
+    process.stdout.write(`\nUniversal Coding Agents (${BUILTIN_INTEGRATIONS.length}) [Direct Mode]:\n`);
+    process.stdout.write(`${'ID'.padEnd(20)} ${'NAME'.padEnd(22)} ${'STATE'.padEnd(16)} ${'VERSION'.padEnd(12)} HEALTH\n`);
+    process.stdout.write(`${'─'.repeat(20)} ${'─'.repeat(22)} ${'─'.repeat(16)} ${'─'.repeat(12)} ${'─'.repeat(10)}\n`);
+    for (const adapter of BUILTIN_INTEGRATIONS) {
+      const s = await adapter.status(ctx);
+      const state = s.installed ? (s.configured ? 'CONFIGURED' : 'INSTALLED') : 'AVAILABLE';
+      process.stdout.write(`${s.id.padEnd(20)} ${s.displayName.padEnd(22)} ${state.padEnd(16)} ${(s.version ?? '—').padEnd(12)} ${(s.health ?? 'unknown').toUpperCase()}\n`);
+    }
+    process.stdout.write('\n');
+  }
+
+  private async agentsStatus(args: string[]): Promise<void> {
+    const [id] = args.filter((a) => !a.startsWith('--'));
+    const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+
+    if (id) {
+      try {
+        const r = await fetch(`${baseUrl}/v1/integrations/${id}/status`);
+        if (r.ok) {
+          const s = (await r.json()) as Record<string, unknown>;
+          process.stdout.write(`\nAgent Status: ${s['displayName'] ?? id}\n`);
+          process.stdout.write(`${'─'.repeat(40)}\n`);
+          process.stdout.write(`  ID:          ${s['id']}\n`);
+          process.stdout.write(`  Installed:   ${s['installed'] ? 'yes' : 'no'}\n`);
+          process.stdout.write(`  Configured:  ${s['configured'] ? 'yes' : 'no'}\n`);
+          if (s['version']) process.stdout.write(`  Version:     ${s['version']}\n`);
+          if (s['executable']) process.stdout.write(`  Executable:  ${s['executable']}\n`);
+          if (s['configuredEndpoint']) process.stdout.write(`  Current API: ${s['configuredEndpoint']}\n`);
+          if (s['expectedEndpoint']) process.stdout.write(`  Nexus API:   ${s['expectedEndpoint']}\n`);
+          if (s['mismatch']) process.stdout.write(`  ⚠ WARNING: Configuration mismatch (rebind required)\n`);
+          if (s['health']) process.stdout.write(`  Health:      ${String(s['health']).toUpperCase()}\n`);
+          process.stdout.write(`  Details:     ${s['details'] ?? ''}\n\n`);
+          return;
+        }
+      } catch {
+        // Fallback to local
+      }
+    }
+
+    return this.integrationsStatus(args);
+  }
+
+  private async agentsInstall(args: string[]): Promise<void> {
+    const ids = args.filter((a) => !a.startsWith('--'));
+    if (ids.length === 0) {
+      process.stderr.write('Usage: anx agents install <agent-id> [--force]\n');
+      process.exitCode = 1;
+      return;
+    }
+
+    const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+    for (const id of ids) {
+      process.stdout.write(`\nInstalling agent '${id}' via Nexus Control Plane...\n`);
+      try {
+        const r = await fetch(`${baseUrl}/v1/agents/${id}/install`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: args.includes('--force') }),
+        });
+        const res = (await r.json()) as { ok: boolean; message: string; state?: string; actions?: string[]; errors?: string[] };
+        const mark = res.ok ? '✓' : '✗';
+        process.stdout.write(`${mark} ${id}: ${res.message}\n`);
+        for (const a of res.actions ?? []) process.stdout.write(`    ${a}\n`);
+        for (const e of res.errors ?? []) process.stderr.write(`    ERROR: ${e}\n`);
+      } catch {
+        // Fallback to direct integration install
+        process.stdout.write(`  (Gateway offline, falling back to direct configuration)\n`);
+        await this.integrationsInstall([id, ...args]);
+      }
+    }
+  }
+
+  private async agentsConfigure(args: string[]): Promise<void> {
+    const ids = args.filter((a) => !a.startsWith('--'));
+    if (ids.length === 0) {
+      process.stderr.write('Usage: anx agents configure <agent-id> [--force]\n');
+      process.exitCode = 1;
+      return;
+    }
+
+    const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+    for (const id of ids) {
+      process.stdout.write(`\nConfiguring agent '${id}' binding to Nexus...\n`);
+      try {
+        const r = await fetch(`${baseUrl}/v1/agents/${id}/rebind`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (r.ok) {
+          const res = (await r.json()) as { message?: string };
+          process.stdout.write(`✓ ${id}: ${res.message ?? 'Configured successfully'}\n`);
+          continue;
+        }
+      } catch {
+        // network/parse error — fall through to next candidate
+      }
+      await this.integrationsInstall([id, '--force']);
+    }
+  }
+
+  private async agentsStart(args: string[]): Promise<void> {
+    const [id] = args.filter((a) => !a.startsWith('--'));
+    if (!id) {
+      process.stderr.write('Usage: anx agents start <agent-id>\n');
+      process.exitCode = 1;
+      return;
+    }
+    const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+    try {
+      const r = await fetch(`${baseUrl}/v1/agents/${id}/start`, { method: 'POST' });
+      const res = (await r.json()) as { ok: boolean; message: string; actions?: string[] };
+      process.stdout.write(`${res.ok ? '✓' : '✗'} ${id}: ${res.message}\n`);
+      for (const a of res.actions ?? []) process.stdout.write(`    ${a}\n`);
+    } catch {
+      const registry = createIntegrationRegistry();
+      const adapter = registry.get(id);
+      if (!adapter) {
+        process.stderr.write(`Unknown agent: ${id}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      const res = await adapter.start(this.integrationContext());
+      process.stdout.write(`${res.ok ? '✓' : '✗'} ${adapter.displayName}: ${res.message}\n`);
+    }
+  }
+
+  private async agentsStop(args: string[]): Promise<void> {
+    const [id] = args.filter((a) => !a.startsWith('--'));
+    if (!id) {
+      process.stderr.write('Usage: anx agents stop <agent-id>\n');
+      process.exitCode = 1;
+      return;
+    }
+    const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+    try {
+      const r = await fetch(`${baseUrl}/v1/agents/${id}/stop`, { method: 'POST' });
+      const res = (await r.json()) as { ok: boolean; message: string };
+      process.stdout.write(`${res.ok ? '✓' : '✗'} ${id}: ${res.message}\n`);
+    } catch {
+      const registry = createIntegrationRegistry();
+      const adapter = registry.get(id);
+      if (!adapter) {
+        process.stderr.write(`Unknown agent: ${id}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      const res = await adapter.stop(this.integrationContext());
+      process.stdout.write(`${res.ok ? '✓' : '✗'} ${adapter.displayName}: ${res.message}\n`);
+    }
+  }
+
+  private async agentsRestart(args: string[]): Promise<void> {
+    const [id] = args.filter((a) => !a.startsWith('--'));
+    if (!id) {
+      process.stderr.write('Usage: anx agents restart <agent-id>\n');
+      process.exitCode = 1;
+      return;
+    }
+    const baseUrl = process.env['NEXUS_BASE_URL'] ?? 'http://localhost:8787';
+    try {
+      const r = await fetch(`${baseUrl}/v1/agents/${id}/restart`, { method: 'POST' });
+      const res = (await r.json()) as { ok: boolean; message: string };
+      process.stdout.write(`${res.ok ? '✓' : '✗'} ${id}: ${res.message}\n`);
+    } catch {
+      const registry = createIntegrationRegistry();
+      const adapter = registry.get(id);
+      if (!adapter) {
+        process.stderr.write(`Unknown agent: ${id}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      const res = await adapter.restart(this.integrationContext());
+      process.stdout.write(`${res.ok ? '✓' : '✗'} ${adapter.displayName}: ${res.message}\n`);
+    }
+  }
+
+  private async agentsVerify(args: string[]): Promise<void> {
+    return this.integrationsVerify(args);
   }
 
   private async stopOrRestart(cmd: string, args: string[]): Promise<void> {
@@ -633,6 +847,16 @@ COMMANDS
   chat                       Send a chat completion request
   completion                 Alias for chat
   providers                  List configured providers
+  models                     List discovered models from Model Fabric
+  agents <subcmd>            Universal Agent Control Plane
+    list                     List coding agents with real states
+    status [id]              Detailed status and diagnostics for agent(s)
+    install <id>             Install agent binary from trusted catalog & configure
+    configure <id>           Configure/rebind agent to Nexus Gateway
+    start <id>               Start agent process
+    stop <id>                Stop agent process
+    restart <id>             Restart agent process
+    verify <id>              Verify agent connection & health
   integrations <subcmd>      Manage native tool integrations
     list                     List all integrations
     install <id|--all>       Configure a tool to use the gateway

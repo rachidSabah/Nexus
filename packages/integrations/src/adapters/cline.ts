@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Cline — autonomous AI coding agent for VS Code (formerly Claude Dev).
@@ -32,7 +33,7 @@ export class ClineIntegration extends BaseIntegration {
             apiProvider: 'openai',
             openAiBaseUrl: `${ctx.gatewayUrl}/v1`,
             openAiApiKey: ctx.apiKey ?? 'no-key-required',
-            openAiModelId: ctx.defaultModel,
+            openAiModelId: resolveModel(ctx),
           }),
       },
       {
@@ -43,7 +44,7 @@ export class ClineIntegration extends BaseIntegration {
             'cline.apiProvider': 'openai',
             'cline.openAiBaseUrl': `${ctx.gatewayUrl}/v1`,
             'cline.openAiApiKey': ctx.apiKey ?? 'no-key-required',
-            'cline.openAiModelId': ctx.defaultModel,
+            'cline.openAiModelId': resolveModel(ctx),
             'cline.autoApproval.enabled': true,
             'cline.allowedCommands': ['npm test', 'npm run build', 'git status'],
           }),

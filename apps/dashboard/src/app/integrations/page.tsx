@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   RefreshCw,
   Server,
+  Download,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useCallback } from 'react';
@@ -35,7 +36,7 @@ import {
 } from '@/hooks/integrations';
 
 function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMutate: () => void }) {
-  const { start, stop, restart, rebind, verify } = useIntegrationActions();
+  const { start, stop, restart, rebind, installAgent, verify } = useIntegrationActions();
   const detail = useIntegrationStatus(status.id).data;
   const runtime = useIntegrationRuntime(status.id).data;
   const [copied, setCopied] = useState(false);
@@ -47,6 +48,14 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
   const running = runtime?.running ?? false;
   const mismatch = detail?.mismatch ?? false;
   const installCmd = `anx integrations install ${status.id}`;
+
+  // Lifecycle gating. When the live `/runtime` capabilities are unavailable
+  // (transient gateway hiccup), fall back to the truthful detection state:
+  // an installed agent is launchable, so its controls must remain visible
+  // rather than silently vanishing. When capabilities ARE present, honor them.
+  const canStart = caps?.supportsStart ?? status.installed;
+  const canStop = caps?.supportsStop ?? running;
+  const canRestart = caps?.supportsRestart ?? status.installed;
 
   const copyToClipboard = useCallback(() => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -165,6 +174,16 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
       {/* Lifecycle controls — gated by adapter capabilities */}
       <div className="mt-4">
         <div className="flex flex-wrap gap-2">
+          {!status.installed && (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => run('install', installAgent)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-nexus-500/40 bg-nexus-500/20 px-3 py-1.5 text-[11px] font-semibold text-nexus-300 transition hover:bg-nexus-500/30 disabled:opacity-40"
+            >
+              <Download className="h-3.5 w-3.5" /> {busy === 'install' ? 'Installing…' : 'Install Agent'}
+            </button>
+          )}
           {mismatch && caps?.supportsInstall && (
             <button
               type="button"
@@ -175,7 +194,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               <Rocket className="h-3.5 w-3.5" /> {busy === 'rebind' ? 'Rebinding…' : 'Rebind to Nexus'}
             </button>
           )}
-          {caps?.supportsStart && (
+          {canStart && (
             <button
               type="button"
               disabled={busy !== null || running}
@@ -185,7 +204,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               <Play className="h-3.5 w-3.5" /> {busy === 'start' ? '…' : 'Start'}
             </button>
           )}
-          {caps?.supportsStop && (
+          {canStop && (
             <button
               type="button"
               disabled={busy !== null || !running}
@@ -195,7 +214,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               <Square className="h-3.5 w-3.5" /> {busy === 'stop' ? '…' : 'Stop'}
             </button>
           )}
-          {caps?.supportsRestart && (
+          {canRestart && (
             <button
               type="button"
               disabled={busy !== null}
@@ -213,7 +232,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
           >
             <CheckCircle2 className="h-3.5 w-3.5" /> {busy === 'verify' ? '…' : 'Verify'}
           </button>
-          {!caps?.supportsStart && caps?.supportsInstall && (
+          {!caps?.supportsStart && caps?.supportsInstall && status.installed && (
             <button
               type="button"
               onClick={copyToClipboard}

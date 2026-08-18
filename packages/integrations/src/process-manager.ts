@@ -3,6 +3,19 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { type LaunchSpec, type ProcessState } from './contract.js';
 
 /**
+ * Checks if a process with the given PID is currently alive in the operating system.
+ */
+export function isProcessRunning(pid?: number): boolean {
+  if (!pid || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e.code === 'EPERM'; // exists but permission denied
+  }
+}
+
+/**
  * Generic, agent-agnostic process manager for coding-agent integrations.
  *
  * DESIGN (per the Universal Coding Agent Integration spec):
@@ -16,9 +29,7 @@ import { type LaunchSpec, type ProcessState } from './contract.js';
  *    `taskkill /IM claude.exe` or similar blanket kills. If a user started a
  *    Claude process manually (untracked), Nexus leaves it alone.
  *  - Never persists credentials. Launch env is applied in-memory only.
- *  - Cross-platform: Windows uses `cmd /c` (or `cmd /k` for interactive
- *    TTY windows); POSIX uses `sh -c`. Platform-specific executable resolution
- *    is the adapter's job (via LaunchSpec.executable).
+ *  - Cross-platform: Windows uses taskkill tree kill and cmd /k; POSIX uses SIGTERM/SIGKILL.
  */
 
 interface TrackedProcess {
@@ -57,7 +68,7 @@ export class IntegrationProcessManager {
       return this.toState(id, existing, gatewayTarget);
     }
     // If a tracked entry exited, clear it so we can respawn.
-    if (existing && existing.exited) this.tracked.delete(id);
+    if (existing) this.tracked.delete(id);
 
     const child = this.spawn(spec);
 
@@ -75,7 +86,6 @@ export class IntegrationProcessManager {
     child.on('exit', (code) => {
       tracked.exited = true;
       tracked.exitCode = typeof code === 'number' ? code : undefined;
-      // Keep the entry (with exit info) for status queries; cleared on next start.
     });
     child.on('error', (err) => {
       this.bootErrors.set(id, err.message);
@@ -88,7 +98,7 @@ export class IntegrationProcessManager {
     await new Promise((r) => setTimeout(r, settleMs));
 
     const bootErr = this.bootErrors.get(id);
-    if (bootErr && tracked.exited) {
+    if (bootErr && (tracked.exited || !this.isAlive(child))) {
       this.tracked.delete(id);
       this.bootErrors.delete(id);
       return {
@@ -110,26 +120,53 @@ export class IntegrationProcessManager {
    */
   async stop(id: string): Promise<{ stopped: boolean; pid?: number; error?: string }> {
     const tracked = this.tracked.get(id);
-    if (!tracked || tracked.exited) {
-      this.tracked.delete(id);
+    if (!tracked) {
       return { stopped: false };
     }
     const pid = tracked.child.pid;
+    if (tracked.exited || !this.isAlive(tracked.child)) {
+      this.tracked.delete(id);
+      return { stopped: false, pid };
+    }
+
     try {
-      if (!tracked.child.kill('SIGTERM')) {
-        // Already gone.
-        this.tracked.delete(id);
-        return { stopped: false };
+      if (process.platform === 'win32' && pid) {
+        const { execSync } = await import('node:child_process');
+        try {
+          execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+        } catch {
+          // Taskkill best-effort (process might have already exited)
+        }
       }
-      // Give it a moment; escalate to SIGKILL if still alive.
-      await this.waitForExit(tracked, 5000);
-      if (!tracked.exited) {
-        tracked.child.kill('SIGKILL');
-        await this.waitForExit(tracked, 3000);
+      try {
+        tracked.child.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+
+      await this.waitForExit(tracked, 3000);
+
+      if (pid && isProcessRunning(pid)) {
+        if (process.platform === 'win32') {
+          const { execSync } = await import('node:child_process');
+          try {
+            execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+          } catch {
+            // ignore
+          }
+        } else {
+          try {
+            tracked.child.kill('SIGKILL');
+          } catch {
+            // ignore
+          }
+        }
+        await this.waitForExit(tracked, 2000);
       }
     } catch (err) {
       return { stopped: false, pid, error: (err as Error).message };
     } finally {
+      tracked.exited = true;
       this.tracked.delete(id);
     }
     return { stopped: true, pid };
@@ -146,6 +183,8 @@ export class IntegrationProcessManager {
     opts: ManagerStartOptions = {},
   ): Promise<ProcessState> {
     await this.stop(id);
+    // Give OS a moment to release ports/handles
+    await new Promise((r) => setTimeout(r, 200));
     return this.start(id, spec, gatewayTarget, opts);
   }
 
@@ -157,6 +196,9 @@ export class IntegrationProcessManager {
     const tracked = this.tracked.get(id);
     if (!tracked) {
       return { id, running: false, health: 'exited', gatewayTarget };
+    }
+    if (!tracked.exited && !this.isAlive(tracked.child)) {
+      tracked.exited = true;
     }
     return this.toState(id, tracked, gatewayTarget);
   }
@@ -172,23 +214,19 @@ export class IntegrationProcessManager {
     const env = { ...process.env, ...spec.env } as NodeJS.ProcessEnv;
 
     if (spec.interactive) {
-      // Interactive agents are driven through the gateway (they connect to
-      // ANTHROPIC_BASE_URL / the gateway's /v1 endpoint), so they do NOT need a
-      // visible terminal. Spawn them hidden — never open a console window.
-      // (On Windows a console-subsystem exe would otherwise pop a black `cmd`
-      // window that lingers; `windowsHide: true` suppresses it.)
       if (process.platform === 'win32') {
-        const child = spawn(spec.executable, [...spec.args], {
+        // On Windows, spawn interactive CLI agents via cmd.exe /k so they maintain
+        // their interactive runtime lifecycle cleanly and report real OS PIDs.
+        const child = spawn(process.env.ComSpec || 'cmd.exe', ['/k', spec.executable, ...spec.args], {
           env,
           cwd: spec.cwd,
           detached: true,
           stdio: 'ignore',
-          windowsHide: true,
         });
         child.unref();
         return child;
       }
-      // macOS / Linux: run detached in the background (no terminal emulator popup).
+      // POSIX: run detached in the background
       const child = spawn(spec.executable, [...spec.args], {
         env,
         cwd: spec.cwd,
@@ -205,42 +243,51 @@ export class IntegrationProcessManager {
       cwd: spec.cwd,
       detached: true,
       stdio: 'ignore',
-      // Suppress the black console window on Windows for console-subsystem exes.
       ...(process.platform === 'win32' ? { windowsHide: true } : {}),
     });
-    // Unref so the gateway process can exit independently of the agent.
     child.unref();
     return child;
   }
 
   private isAlive(child: ChildProcess): boolean {
-    return child.exitCode === null && child.signalCode === null && child.killed === false;
+    if (child.exitCode !== null || child.signalCode !== null || child.killed === true) {
+      return false;
+    }
+    if (child.pid) {
+      return isProcessRunning(child.pid);
+    }
+    return false;
   }
 
   private async waitForExit(tracked: TrackedProcess, timeoutMs: number): Promise<void> {
-    if (tracked.exited) return;
+    if (tracked.exited || !this.isAlive(tracked.child)) {
+      tracked.exited = true;
+      return;
+    }
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (tracked.exited) return;
+      if (tracked.exited || !this.isAlive(tracked.child)) {
+        tracked.exited = true;
+        return;
+      }
       await new Promise((r) => setTimeout(r, 100));
     }
   }
 
   private toState(id: string, t: TrackedProcess, gatewayTarget?: string): ProcessState {
-    const running = !t.exited && this.isAlive(t.child);
+    const alive = !t.exited && this.isAlive(t.child);
     return {
       id,
-      running,
-      pid: running ? t.child.pid ?? undefined : undefined,
+      running: alive,
+      pid: alive ? t.child.pid ?? undefined : undefined,
       executable: t.executable,
       args: t.args,
       startedAt: new Date(t.startedAt).toISOString(),
       gatewayTarget: gatewayTarget ?? t.gatewayTarget,
-      health: running ? 'healthy' : t.exited ? 'exited' : 'unknown',
+      health: alive ? 'healthy' : t.exited ? 'exited' : 'unknown',
       exitCode: t.exited ? t.exitCode : undefined,
     };
   }
-
 }
 
 /** Shared singleton used by the gateway and adapters. */

@@ -1,5 +1,6 @@
 import { BaseIntegration } from '../base.js';
-import type { IntegrationContext } from '../contract.js';
+import type { IntegrationContext, LaunchSpec } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * OpenHands — open-source AI software engineer (formerly OpenDevin).
@@ -34,7 +35,7 @@ export class OpenHandsIntegration extends BaseIntegration {
             '# Written by Agent Nexus Gateway — anx integrations install openhands',
             '',
             '[llm]',
-            `model = "${ctx.defaultModel}"`,
+            `model = "${resolveModel(ctx) ?? 'gateway-routed'}"`,
             `base_url = "${ctx.gatewayUrl}/v1"`,
             `api_key = "${ctx.apiKey ?? 'no-key-required'}"`,
             'stream = true',
@@ -52,11 +53,26 @@ export class OpenHandsIntegration extends BaseIntegration {
             '# Added by Agent Nexus Gateway',
             `OPENAI_API_BASE=${ctx.gatewayUrl}/v1`,
             `OPENAI_API_KEY=${ctx.apiKey ?? 'no-key-required'}`,
-            `LLM_MODEL=${ctx.defaultModel}`,
+            `LLM_MODEL=${resolveModel(ctx) ?? 'gateway-routed'}`,
             `LLM_BASE_URL=${ctx.gatewayUrl}/v1`,
             '',
           ].join('\n'),
       },
     ];
+  }
+
+  async getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    const exe = await this.resolveExecutable('openhands');
+    return {
+      executable: exe,
+      args: [],
+      interactive: true,
+      env: {
+        OPENAI_API_BASE: `${ctx.gatewayUrl}/v1`,
+        OPENAI_API_KEY: ctx.apiKey ?? 'nexus',
+        LLM_BASE_URL: `${ctx.gatewayUrl}/v1`,
+      },
+      display: `openhands → ${ctx.gatewayUrl}`,
+    };
   }
 }

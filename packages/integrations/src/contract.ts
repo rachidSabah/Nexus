@@ -261,3 +261,48 @@ export function normalizeGatewayUrl(url: string): string {
   }
   return u;
 }
+
+/**
+ * True when `model` is a Nexus routing policy / virtual alias (e.g. `nexus/*`,
+ * `local/*`, `claude-gw-*`) rather than a concrete agent-native model id.
+ *
+ * These identifiers resolve dynamically at the gateway (Model Fabric / Alias
+ * Registry) and are NOT valid persisted `model` values for most agents — e.g.
+ * Claude Code rejects `nexus/auto` on startup with "not a model this version
+ * recognizes". Adapters must never pin a routing alias as an agent's model.
+ */
+export function isNexusRoutingAlias(model: string | undefined): boolean {
+  if (!model) return false;
+  const m = model.toLowerCase();
+  return m.startsWith('nexus/') || m.startsWith('local/') || m.startsWith('claude-gw-');
+}
+
+/**
+ * Resolve the model that should be persisted for an agent's native config.
+ *
+ * Universal rule (enforced for EVERY adapter via this single helper):
+ *   - A concrete user-selected model (`claude-haiku-4-5`, `gpt-4o`, …) is kept.
+ *   - A Nexus routing alias (`nexus/auto`, `local/*`, `claude-gw-*`) is NOT
+ *     written — the gateway resolves it at request time. If the existing
+ *     config already pins a stale alias, it is dropped so the agent stops
+ *     warning on startup.
+ *   - When neither a concrete default nor an existing concrete model exists,
+ *     returns `undefined` (the adapter omits the model field).
+ *
+ * This keeps agent-specific configuration semantics INSIDE each adapter (the
+ * adapter still chooses which field and format to write); only the *value* is
+ * sanitized here, so no agent ever receives a Nexus routing alias as its
+ * native model id.
+ */
+export function resolveModel(
+  ctx: IntegrationContext,
+  existingModel?: string,
+): string | undefined {
+  if (ctx.defaultModel && !isNexusRoutingAlias(ctx.defaultModel)) {
+    return ctx.defaultModel; // explicit concrete selection wins
+  }
+  if (existingModel && !isNexusRoutingAlias(existingModel)) {
+    return existingModel; // preserve the agent's own concrete selection
+  }
+  return undefined; // drop stale alias / none
+}

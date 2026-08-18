@@ -179,17 +179,38 @@ export class OpenAIAdapter implements ProviderAdapter {
         // or pricing 0) is genuinely unrestricted and stays quotaLimited:
         // false/absent (plain FREE).
         const freeBySuffix = hasFreeSuffix(id);
+        // A genuinely local/self-hosted provider (Ollama) has no API cost by
+        // construction — the endpoint is keyless and points at localhost. That
+        // is evidence-based (not price inference), so its models are FREE
+        // (unrestricted), not FREE_TIER. Other providers whose IDs carry a
+        // provider-enforced free alias (`:free`, `-free`, `_free` …) are
+        // quota/rate-limited → FREE_TIER.
+        const isLocal = endpoint.providerId === 'ollama';
+        const isFree =
+          freeBySuffix
+          || isLocal
+          || (extra.pricing?.prompt === '0' && extra.pricing?.completion === '0')
+          || extra.per_request_rate === 0;
+        const hasLivePricing = extra.pricing != null;
         const livePricing = {
           inputPer1M,
           outputPer1M,
-          isFree: freeBySuffix
-            || (extra.pricing?.prompt === '0' && extra.pricing?.completion === '0')
-            || extra.per_request_rate === 0,
+          isFree,
+          // Only a provider-enforced free ALIAS is quota-limited. A local model
+          // (Ollama) or a model merely priced at 0 is unrestricted → no quota.
           quotaLimited: freeBySuffix,
           currency: 'USD',
-          // Live provider API metadata wins only when it actually carried
-          // pricing; otherwise the source is genuinely unknown.
-          source: (extra.pricing != null ? 'live' : 'unknown') as 'live' | 'unknown',
+          // Source hierarchy, honestly tagged:
+          //  - 'live'            when the provider returned per-token pricing
+          //  - 'provider_metadata' when we KNOW the model is free via a provider
+          //                       free alias or a local/self-hosted endpoint
+          //  - 'unknown'         when the API returned no pricing at all (we
+          //                       must NOT fabricate $0 as "free")
+          source: (hasLivePricing
+            ? 'live'
+            : isFree
+              ? 'provider_metadata'
+              : 'unknown') as 'live' | 'provider_metadata' | 'unknown',
           updatedAt: now,
         };
         const classification = classifyPricing(livePricing);

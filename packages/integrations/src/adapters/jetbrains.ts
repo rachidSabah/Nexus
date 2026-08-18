@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * JetBrains IDEs — IntelliJ, PyCharm, WebStorm, GoLand, etc.
@@ -40,7 +41,7 @@ export class JetBrainsIntegration extends BaseIntegration {
             '  <component name="AiAssistantSettings">',
             `    <option name="serverUrl" value="${ctx.gatewayUrl}/v1" />`,
             `    <option name="apiKey" value="${ctx.apiKey ?? 'no-key-required'}" />`,
-            `    <option name="model" value="${ctx.defaultModel}" />`,
+            `    <option name="model" value="${resolveModel(ctx)}" />`,
             '    <option name="streaming" value="true" />',
             '  </component>',
             '</application>',
@@ -55,7 +56,7 @@ export class JetBrainsIntegration extends BaseIntegration {
             provider: 'OpenAI',
             baseUrl: `${ctx.gatewayUrl}/v1`,
             apiKey: ctx.apiKey ?? 'no-key-required',
-            model: ctx.defaultModel,
+            model: resolveModel(ctx),
             temperature: 0.7,
             stream: true,
           }),

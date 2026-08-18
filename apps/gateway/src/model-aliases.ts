@@ -419,7 +419,7 @@ export class ModelAliasRegistry {
       if (cooldownUntil && now < cooldownUntil) return false;
       const ep = registeredEndpoints.find((e: ProviderEndpoint) => e.providerId === m.providerId || e.id === `auto-${m.providerId}`);
       if (ep && (ep.health === 'unhealthy' || ep.health === 'circuit_open')) return false;
-      if (this.keyRegistry && !this.keyRegistry.select(m.providerId)) return false;
+      if (this.keyRegistry && this.keyRegistry.listByProvider(m.providerId).length > 0 && !this.keyRegistry.select(m.providerId)) return false;
       return true;
     });
 
@@ -644,7 +644,7 @@ export class ModelAliasRegistry {
       }
       const cooldownUntil = this.modelCooldowns.get(m.id);
       if (cooldownUntil && now < cooldownUntil) return false;
-      if (this.keyRegistry && !this.keyRegistry.select(m.providerId)) return false;
+      if (this.keyRegistry && this.keyRegistry.listByProvider(m.providerId).length > 0 && !this.keyRegistry.select(m.providerId)) return false;
       return true;
     });
 
@@ -682,7 +682,7 @@ export class ModelAliasRegistry {
   private endpointCandidates(): ModelDescriptor[] {
     if (!this.routing) return [];
     return this.routing.listEndpoints().map((e: ProviderEndpoint) => ({
-      id: e.id,
+      id: e.tags[0] ?? e.providerId,
       providerId: e.providerId,
       displayName: e.displayName ?? e.providerId,
       contextWindow: e.capabilities?.maxInputTokens,

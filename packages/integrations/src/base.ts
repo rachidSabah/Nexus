@@ -15,6 +15,18 @@ import { fail, home, ok, normalizeGatewayUrl, DEFAULT_CAPABILITIES } from './con
 import { integrationProcessManager } from './process-manager.js';
 
 /**
+ * Security guard: never let a real secret escape into API responses or logs.
+ * Returns `[REDACTED]` for any non-empty credential-like value. Used by
+ * `status()` and any diagnostic surface so the gateway never returns
+ * `apiKey` / `ANTHROPIC_AUTH_TOKEN` / `OPENAI_API_KEY` to the dashboard or
+ * writes them to the audit log in cleartext.
+ */
+export function maskSecret(value: string | undefined | null): string {
+  if (value === undefined || value === null || value === '') return '';
+  return '[REDACTED]';
+}
+
+/**
  * Base class with file I/O helpers. Concrete integrations extend this and
  * only implement `configFiles()` and (optionally) `detectBinary()`.
  *
@@ -165,26 +177,48 @@ export abstract class BaseIntegration implements IntegrationAdapter {
     for (const file of files) {
       const fullPath = file.path.startsWith('/') ? file.path : join(home(ctx), file.path);
 
+      // json-merge files are ALWAYS merged, with or without --force. The
+      // `force` flag only bypasses the "refuse to take over a different
+      // gateway" check above; it must NOT turn a merge into a full overwrite,
+      // or a user's own settings (e.g. a selected `model`) would be wiped on
+      // every rebind/configure. Merging keeps Nexus-owned keys current while
+      // preserving user-owned keys.
+      if (file.merge === 'json-merge' && existsSync(fullPath)) {
+        try {
+          const existing = JSON.parse(await readFile(fullPath, 'utf8')) as Record<string, unknown>;
+          const incoming = JSON.parse(await file.content(ctx)) as Record<string, unknown>;
+          const merged: Record<string, unknown> = { ...existing };
+          for (const [k, v] of Object.entries(incoming)) {
+            if (v === undefined || v === null) {
+              delete merged[k];
+            } else if (k === 'env' && typeof v === 'object' && v !== null && typeof existing.env === 'object' && existing.env !== null) {
+              merged.env = { ...(existing.env as Record<string, unknown>), ...(v as Record<string, unknown>) };
+            } else {
+              merged[k] = v;
+            }
+          }
+          if (!ctx.dryRun) {
+            // Backup existing config before overwriting/merging
+            const backup = `${fullPath}.anx-backup`;
+            try {
+              await writeFile(backup, await readFile(fullPath, 'utf8'), 'utf8');
+            } catch {
+              // backup best-effort
+            }
+            await mkdir(dirname(fullPath), { recursive: true });
+            await writeFile(fullPath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+          }
+          actions.push(`merged: ${fullPath}`);
+        } catch (err) {
+          errors.push(`failed to merge ${fullPath}: ${(err as Error).message}`);
+        }
+        continue;
+      }
+
       if (existsSync(fullPath) && !ctx.force) {
         if (file.merge === 'skip') {
           actions.push(`skipped (exists): ${fullPath}`);
           continue;
-        }
-        if (file.merge === 'json-merge') {
-          try {
-            const existing = JSON.parse(await readFile(fullPath, 'utf8')) as Record<string, unknown>;
-            const incoming = JSON.parse(await file.content(ctx)) as Record<string, unknown>;
-            const merged = { ...existing, ...incoming };
-            if (!ctx.dryRun) {
-              await mkdir(dirname(fullPath), { recursive: true });
-              await writeFile(fullPath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
-            }
-            actions.push(`merged: ${fullPath}`);
-            continue;
-          } catch (err) {
-            errors.push(`failed to merge ${fullPath}: ${(err as Error).message}`);
-            continue;
-          }
         }
         // default: overwrite — but record the action so the user knows
         actions.push(`overwrote: ${fullPath}`);
@@ -508,3 +542,5 @@ export abstract class BaseIntegration implements IntegrationAdapter {
 export function jsonString(obj: unknown): string {
   return JSON.stringify(obj, null, 2) + '\n';
 }
+
+export { home } from './contract.js';

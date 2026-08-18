@@ -86,7 +86,7 @@ import type {
 } from '@anx/core';
 import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
-import { BUILTIN_INTEGRATIONS, createIntegrationRegistry, type IntegrationContext } from '@anx/integrations';
+import { BUILTIN_INTEGRATIONS, createIntegrationRegistry, TRUSTED_AGENT_CATALOG, type IntegrationContext } from '@anx/integrations';
 import {
   TokenOptimizer,
   OptimizationMode,
@@ -123,7 +123,7 @@ import {
   type AnthropicRequest,
 } from './anthropic-compat.js';
 import { ModelAliasRegistry, type AliasRankingStrategy } from './model-aliases.js';
-import { projectClaudeCatalog, claudeCatalogDebug, type ClaudeProjectionEntry } from './claude-catalog.js';
+import { projectClaudeCatalog, claudeCatalogDebug } from './claude-catalog.js';
 import { projectGenericCatalog, projectOpenAICatalog, getAgentCompatibilityMatrix, explainFilters } from './model-fabric.js';
 import { IntentDetector, ScoringEngine } from './scoring-engine.js';
 import { defaultBaseUrlFor, defaultCapabilitiesFor, defaultPricingFor } from './endpoints.js';
@@ -1084,29 +1084,24 @@ export class HttpServer {
     // When a discovered model has pricing/capabilities, those are included
     // so the dashboard can show "free" badges and capability icons.
     const handleModels = async (request: any, reply: any) => {
-      const q = request.query as { free?: string; capability?: string };
-      const models = new Map<string, { id: string; object: 'model'; owned_by: string; pricing?: unknown; capabilities?: unknown; context_window?: number }>();
+      const q = request.query as { free?: string; capability?: string; include_policies?: string };
+      const models = new Map<string, {
+        id: string;
+        object: 'model';
+        owned_by: string;
+        pricing?: unknown;
+        capabilities?: unknown;
+        context_window?: number;
+        agentSnippets?: {
+          claudeCode?: string;
+          codexCli?: string;
+          hermesCli?: string;
+          agy?: string;
+          curl?: string;
+        };
+      }>();
 
-      // Nexus system aliases
-      const systemAliases = [
-        'nexus/best-coding',
-        'nexus/fast',
-        'nexus/free',
-        'nexus/best',
-        'nexus/cheap',
-      ];
-      for (const alias of systemAliases) {
-        models.set(alias, {
-          id: alias,
-          object: 'model',
-          owned_by: 'nexus',
-          pricing: { isFree: alias === 'nexus/free' || alias === 'nexus/cheap' },
-          capabilities: { streaming: true, toolCalling: true, jsonMode: true },
-          context_window: 128000,
-        });
-      }
-
-      // Dynamically discovered models (from ModelRegistry).
+      // Dynamically discovered real models (from ModelRegistry).
       let discovered = this.deps.modelRegistry.list();
       if (q.free === 'true') {
         discovered = this.deps.modelRegistry.listFree();
@@ -1122,48 +1117,64 @@ export class HttpServer {
           pricing: m.pricing,
           capabilities: m.capabilities,
           context_window: m.contextWindow,
+          agentSnippets: {
+            claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"\nexport ANTHROPIC_AUTH_TOKEN="nexus"\nclaude --model ${m.id}`,
+            codexCli: `codex --model ${m.id}`,
+            hermesCli: `hermes -m ${m.id}`,
+            agy: `agy -m ${m.id}`,
+            curl: `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${m.id}", "messages": [{"role": "user", "content": "Hello"}]}'`,
+          },
         });
       }
 
-      // Claude Code projection (master-prompt §10): every discovered model is
+      // Claude Code projection: every discovered non-claude model is
       // also exposed under an anthropic-compatible claude-gw-<provider>-<model>
-      // alias so Claude Code's /model picker shows the FULL prefetched catalog
-      // (it client-side filters to claude-* ids only). Purely registry-derived:
-      // new models appear automatically; stale models drop out. No hardcode.
-      const byId = new Map<string, ClaudeProjectionEntry>(
-        Array.from(models.values()).map((m) => [m.id, m as ClaudeProjectionEntry]),
-      );
+      // alias so Claude Code's /model picker shows the full discovered catalog.
       for (const e of projectClaudeCatalog(discovered, { includeNatives: false })) {
-        if (!byId.has(e.id)) byId.set(e.id, e);
+        if (!models.has(e.id)) {
+          models.set(e.id, {
+            id: e.id,
+            object: 'model',
+            owned_by: e.owned_by,
+            pricing: e.pricing,
+            capabilities: e.capabilities,
+            context_window: e.context_window,
+            agentSnippets: {
+              claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"\nexport ANTHROPIC_AUTH_TOKEN="nexus"\nclaude --model ${e.id}`,
+              codexCli: `codex --model ${e.nativeId ?? e.id}`,
+              hermesCli: `hermes -m ${e.nativeId ?? e.id}`,
+              agy: `agy -m ${e.nativeId ?? e.id}`,
+              curl: `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${e.id}", "messages": [{"role": "user", "content": "Hello"}]}'`,
+            },
+          });
+        }
       }
 
       reply.header('X-Nexus-Model-Catalog-Version', String(this.deps.modelRegistry.getCatalogVersion()));
-      // Virtual model aliases (e.g. nexus/auto, local/free, nexus/best) —
-      // project them as virtual routing models with valid metadata so clients
-      // (Codex, dashboards) that query /v1/models for an alias get a coherent
-      // record instead of "Model metadata not found". These are NOT concrete
-      // upstream models; they resolve dynamically at request time via the
-      // alias registry, which is exactly what the metadata advertises.
-      for (const a of this.deps.aliasRegistry.list()) {
-        if (models.has(a.alias)) continue;
-        models.set(a.alias, {
-          id: a.alias,
-          object: 'model',
-          owned_by: 'nexus',
-          pricing: {
-            isFree: a.filter.freeOnly === true,
-            currency: 'USD',
-            source: 'virtual-alias',
-          },
-          capabilities: {
-            streaming: true,
-            toolCalling: true,
-            jsonMode: true,
-            vision: false,
-            reasoning: true,
-          },
-          context_window: a.filter.minContextWindow ?? undefined,
-        });
+
+      // Only include virtual routing policies (nexus/*, local/*) when explicitly requested (e.g. Router Studio)
+      if (q.include_policies === 'true') {
+        for (const a of this.deps.aliasRegistry.list()) {
+          if (models.has(a.alias)) continue;
+          models.set(a.alias, {
+            id: a.alias,
+            object: 'model',
+            owned_by: 'nexus',
+            pricing: {
+              isFree: a.filter.freeOnly === true,
+              currency: 'USD',
+              source: 'virtual-alias',
+            },
+            capabilities: {
+              streaming: true,
+              toolCalling: true,
+              jsonMode: true,
+              vision: false,
+              reasoning: true,
+            },
+            context_window: a.filter.minContextWindow ?? undefined,
+          });
+        }
       }
 
       return { object: 'list', data: Array.from(models.values()) };
@@ -3070,6 +3081,9 @@ export class HttpServer {
     // resolve dynamically to the best currently-available model.
     this.fastify.get('/v1/aliases', async () => {
       return { aliases: this.deps.aliasRegistry.list() };
+    });
+    this.fastify.get('/v1/policies', async () => {
+      return { policies: this.deps.aliasRegistry.list() };
     });
 
     this.fastify.post('/v1/aliases', async (request, reply) => {
@@ -5549,6 +5563,13 @@ let optMessages: never[] | undefined;
     // args are ever accepted from the request body (security: §21).
     const integrationRegistry = createIntegrationRegistry();
 
+    // Helper: wraps a lifecycle payload into a valid DomainEvent
+    const agentEvent = (type: string, payload: Record<string, unknown>) => ({
+      type,
+      occurredAt: new Date(),
+      payload,
+    });
+
     const resolveIntegration = (id: string) => {
       const adapter = integrationRegistry.get(id);
       if (!adapter) {
@@ -5571,19 +5592,25 @@ let optMessages: never[] | undefined;
     this.fastify.post('/v1/integrations/:id/start', async (request) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
-      return adapter.start(integrationCtx(request));
+      const res = await adapter.start(integrationCtx(request));
+      await this.deps.events.publish(agentEvent('agent.started', { agentId: id, ...res }) as any);
+      return res;
     });
 
     this.fastify.post('/v1/integrations/:id/stop', async (request) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
-      return adapter.stop(integrationCtx(request));
+      const res = await adapter.stop(integrationCtx(request));
+      await this.deps.events.publish(agentEvent('agent.stopped', { agentId: id, ...res }) as any);
+      return res;
     });
 
     this.fastify.post('/v1/integrations/:id/restart', async (request) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
-      return adapter.restart(integrationCtx(request));
+      const res = await adapter.restart(integrationCtx(request));
+      await this.deps.events.publish(agentEvent('agent.restarted', { agentId: id, ...res }) as any);
+      return res;
     });
 
     this.fastify.get('/v1/integrations/:id/runtime', async (request) => {
@@ -5609,19 +5636,213 @@ let optMessages: never[] | undefined;
       const adapter = resolveIntegration(id);
       const body = (request.body ?? {}) as { force?: boolean };
       const ctx = integrationCtx(request);
-      return adapter.install({ ...ctx, force: body.force === true });
+      await this.deps.events.publish(agentEvent('agent.install.started', { agentId: id }) as any);
+      const res = await adapter.install({ ...ctx, force: body.force === true });
+      await this.deps.events.publish(agentEvent('agent.install.completed', { agentId: id, ok: res.ok, actions: res.actions }) as any);
+      return res;
     });
 
     this.fastify.post('/v1/integrations/:id/verify', async (request) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
-      return adapter.verify(integrationCtx(request));
+      const res = await adapter.verify(integrationCtx(request));
+      await this.deps.events.publish(agentEvent('agent.verification.completed', { agentId: id, ok: res.ok, message: res.message }) as any);
+      return res;
     });
 
     this.fastify.post('/v1/integrations/:id/uninstall', async (request) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
       return adapter.uninstall(integrationCtx(request));
+    });
+
+    this.fastify.post('/v1/integrations/:id/install-agent', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { force?: boolean } | undefined) ?? {};
+      const manager = new AgentRuntimeManager();
+      const result = await manager.installAgent(id, {
+        gatewayUrl: `http://${request.headers['host'] ?? '127.0.0.1:8787'}`,
+        force: body.force,
+      });
+      return reply.code(result.ok ? 200 : 400).send(result);
+    });
+
+    // ─── Universal Agent Control Plane Endpoints ───────────────────────
+    this.fastify.get('/v1/agents/catalog', async () => {
+      return { catalog: TRUSTED_AGENT_CATALOG, count: TRUSTED_AGENT_CATALOG.length };
+    });
+
+    this.fastify.post('/v1/agents/:id/install', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { force?: boolean } | undefined) ?? {};
+      const manager = new AgentRuntimeManager();
+      await this.deps.events.publish(agentEvent('agent.install.started', { agentId: id }) as any);
+      const result = await manager.installAgent(id, {
+        gatewayUrl: `http://${request.headers['host'] ?? '127.0.0.1:8787'}`,
+        force: body.force,
+      });
+      await this.deps.events.publish(agentEvent('agent.install.completed', { agentId: id, ok: result.ok, message: result.message }) as any);
+      await this.getAuditLogger().record({
+        event: 'config.changed',
+        principal: 'system',
+        action: 'agent.install',
+        resource: id,
+        agentId: id,
+        success: result.ok,
+        metadata: { agentId: id, resultState: result.state, message: result.message },
+      });
+      return reply.code(result.ok ? 200 : 400).send(result);
+    });
+
+    this.fastify.post('/v1/agents/:id/start', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      const result = await manager.startAgent(id, {
+        gatewayUrl: `http://${request.headers['host'] ?? '127.0.0.1:8787'}`,
+      });
+      if (result.ok) {
+        await this.deps.events.publish(agentEvent('agent.started', { agentId: id, message: result.message }) as any);
+      }
+      await this.getAuditLogger().record({
+        event: 'agent.execution.started',
+        principal: 'system',
+        action: 'agent.start',
+        resource: id,
+        agentId: id,
+        success: result.ok,
+        metadata: { agentId: id, message: result.message },
+      });
+      return reply.code(result.ok ? 200 : 400).send(result);
+    });
+
+    this.fastify.post('/v1/agents/:id/stop', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      const result = await manager.stopAgent(id);
+      await this.deps.events.publish(agentEvent('agent.stopped', { agentId: id, message: result.message }) as any);
+      await this.getAuditLogger().record({
+        event: 'cancellation',
+        principal: 'system',
+        action: 'agent.stop',
+        resource: id,
+        agentId: id,
+        success: result.ok,
+        metadata: { agentId: id, message: result.message },
+      });
+      return reply.code(result.ok ? 200 : 400).send(result);
+    });
+
+    this.fastify.post('/v1/agents/:id/restart', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      const result = await manager.restartAgent(id, {
+        gatewayUrl: `http://${request.headers['host'] ?? '127.0.0.1:8787'}`,
+      });
+      if (result.ok) {
+        await this.deps.events.publish(agentEvent('agent.restarted', { agentId: id, message: result.message }) as any);
+      }
+      await this.getAuditLogger().record({
+        event: 'agent.execution.started',
+        principal: 'system',
+        action: 'agent.restart',
+        resource: id,
+        agentId: id,
+        success: result.ok,
+        metadata: { agentId: id, message: result.message },
+      });
+      return reply.code(result.ok ? 200 : 400).send(result);
+    });
+
+    this.fastify.post('/v1/agents/:id/rebind', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { defaultModel?: string; apiKey?: string } | undefined) ?? {};
+      const manager = new AgentRuntimeManager();
+      await this.deps.events.publish(agentEvent('agent.configuration.started', { agentId: id }) as any);
+      const result = await manager.configureAgent(id, {
+        gatewayUrl: `http://${request.headers['host'] ?? '127.0.0.1:8787'}`,
+        force: true,
+        defaultModel: body.defaultModel,
+        apiKey: body.apiKey,
+      });
+      await this.deps.events.publish(agentEvent('agent.configuration.completed', { agentId: id, configured: result.configured, message: result.message }) as any);
+      await this.deps.events.publish(agentEvent('agent.binding.changed', { agentId: id, configured: result.configured }) as any);
+      await this.getAuditLogger().record({
+        event: 'config.changed',
+        principal: 'system',
+        action: 'agent.rebind',
+        resource: id,
+        agentId: id,
+        success: result.configured,
+        metadata: { agentId: id, message: result.message, backupPath: result.backupPath },
+      });
+      return reply.code(result.configured ? 200 : 400).send(result);
+    });
+
+    // ── Dashboard Forwarding / Production Hosting ──
+    const dashboardTarget = process.env.NEXUS_DASHBOARD_URL ?? 'http://127.0.0.1:3000';
+
+    const forwardToDashboard = async (req: any, reply: any, subpath: string) => {
+      const url = `${dashboardTarget.replace(/\/+$/, '')}/${subpath.replace(/^\/+/, '')}`;
+      try {
+        const queryStr = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+        const targetUrl = `${url}${queryStr}`;
+        const headers: Record<string, string> = { ...req.headers };
+        delete headers.host;
+        delete headers.connection;
+
+        const res = await fetch(targetUrl, {
+          method: req.method,
+          headers,
+          body: ['POST', 'PUT', 'PATCH'].includes(req.method) ? JSON.stringify(req.body) : undefined,
+        });
+
+        reply.code(res.status);
+        for (const [k, v] of res.headers.entries()) {
+          if (!['transfer-encoding', 'content-encoding', 'connection'].includes(k.toLowerCase())) {
+            reply.header(k, v);
+          }
+        }
+        const buffer = Buffer.from(await res.arrayBuffer());
+        return reply.send(buffer);
+      } catch {
+        return reply.type('text/html').code(200).send(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Nexus Control Plane</title>
+              <meta http-equiv="refresh" content="3;url=http://127.0.0.1:3000">
+              <style>
+                body { background: #090d16; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+                .card { background: #111827; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 32px; text-align: center; max-width: 450px; }
+                h1 { font-size: 20px; margin-bottom: 8px; color: #38bdf8; }
+                p { color: #94a3b8; font-size: 14px; line-height: 1.5; }
+                a { display: inline-block; margin-top: 16px; background: #0284c7; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: bold; }
+              </style>
+            </head>
+            <body>
+              <div class="card">
+                <h1>Agent Nexus Control Plane</h1>
+                <p>Connecting to Dashboard server at <code>${dashboardTarget}</code>...</p>
+                <a href="${dashboardTarget}">Open Dashboard Directly</a>
+              </div>
+            </body>
+          </html>
+        `);
+      }
+    };
+
+    this.fastify.get('/dashboard', async (req, reply) => {
+      return forwardToDashboard(req, reply, '');
+    });
+
+    this.fastify.get('/dashboard/*', async (req, reply) => {
+      const subpath = (req.params as { '*': string })['*'] || '';
+      return forwardToDashboard(req, reply, subpath);
+    });
+
+    this.fastify.get('/_next/*', async (req, reply) => {
+      const subpath = req.url.replace(/^\/+/, '');
+      return forwardToDashboard(req, reply, subpath);
     });
 
     // ─── Phase 4: Agents ───────────────────────────────────────────────

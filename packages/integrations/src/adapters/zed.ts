@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Zed — high-performance editor with first-class AI support.
@@ -33,15 +34,15 @@ export class ZedIntegration extends BaseIntegration {
                 api_url: `${ctx.gatewayUrl}/v1`,
                 available_models: [
                   {
-                    name: ctx.defaultModel,
-                    display_name: ctx.defaultModel,
+                    name: resolveModel(ctx),
+                    display_name: resolveModel(ctx),
                     max_tokens: 32768,
                   },
                 ],
               },
             },
             assistant: {
-              default_model: ctx.defaultModel,
+              default_model: resolveModel(ctx),
             },
           }),
       },

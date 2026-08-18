@@ -1,5 +1,6 @@
 import { BaseIntegration } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Emacs — extensible editor.
@@ -43,7 +44,7 @@ export class EmacsIntegration extends BaseIntegration {
             '',
             '(defvar anx-gateway-url "' + ctx.gatewayUrl + '/v1/chat/completions")',
             '(defvar anx-gateway-key "' + (ctx.apiKey ?? 'no-key-required') + '")',
-            '(defvar anx-gateway-model "' + ctx.defaultModel + '")',
+            '(defvar anx-gateway-model "' + (resolveModel(ctx) ?? 'gateway-routed') + '")',
             '',
             ';; Define a gptel backend that points at the gateway',
             '(setq gptel-model anx-gateway-model)',

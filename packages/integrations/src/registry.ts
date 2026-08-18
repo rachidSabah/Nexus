@@ -16,6 +16,7 @@ import {
   OpenCodeZenIntegration,
 } from './adapters/opencode.js';
 import { OpenHandsIntegration } from './adapters/openhands.js';
+import { QwenCodeIntegration } from './adapters/qwen-code.js';
 import { RooCodeIntegration } from './adapters/roo-code.js';
 import { VsCodeIntegration } from './adapters/vscode.js';
 import { ZedIntegration } from './adapters/zed.js';
@@ -30,6 +31,7 @@ export const BUILTIN_INTEGRATIONS: IntegrationAdapter[] = [
   new ClaudeCodeIntegration(),
   new CodexCliIntegration(),
   new GeminiCliIntegration(),
+  new QwenCodeIntegration(),
   new HermesCliIntegration(),
   new OpenCodeIntegration(),
   new OpenCodeGoIntegration(),

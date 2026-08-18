@@ -1,5 +1,6 @@
 import { BaseIntegration } from '../base.js';
-import type { IntegrationContext } from '../contract.js';
+import type { IntegrationContext, LaunchSpec } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Gemini CLI — Google's official CLI for Gemini models.
@@ -19,7 +20,7 @@ export class GeminiCliIntegration extends BaseIntegration {
   readonly homepage = 'https://github.com/google-gemini/gemini-cli';
 
   protected detectBinaries(): string[] {
-    return ['gemini'];
+    return ['gemini', 'gemini-cli'];
   }
 
   protected configFiles() {
@@ -30,7 +31,7 @@ export class GeminiCliIntegration extends BaseIntegration {
         content: (ctx: IntegrationContext) =>
           JSON.stringify(
             {
-              selectedModel: ctx.defaultModel,
+              selectedModel: resolveModel(ctx),
               // The gateway is OpenAI-compatible, so we point Gemini CLI at it
               // via the OpenAI-compat extension mechanism.
               extensions: [
@@ -38,7 +39,7 @@ export class GeminiCliIntegration extends BaseIntegration {
                   name: 'openai-compat',
                   baseUrl: `${ctx.gatewayUrl}/v1`,
                   apiKey: ctx.apiKey ?? 'no-key-required',
-                  model: ctx.defaultModel,
+                  model: resolveModel(ctx),
                 },
               ],
             },
@@ -60,4 +61,20 @@ export class GeminiCliIntegration extends BaseIntegration {
       },
     ];
   }
+
+  async getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    const exe = await this.resolveExecutable('gemini');
+    return {
+      executable: exe,
+      args: [],
+      interactive: true,
+      env: {
+        GEMINI_API_KEY: ctx.apiKey ?? 'nexus',
+        OPENAI_API_BASE: `${ctx.gatewayUrl}/v1`,
+        OPENAI_API_KEY: ctx.apiKey ?? 'nexus',
+      },
+      display: `gemini → ${ctx.gatewayUrl}`,
+    };
+  }
 }
+

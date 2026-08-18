@@ -75,3 +75,4 @@ tmp/
 
 # User WIP backup (broken in-progress refactor, preserved not committed)
 server.ts.wip-backup
+.aider*

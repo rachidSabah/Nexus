@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * VS Code — Microsoft's editor.
@@ -44,12 +45,12 @@ export class VsCodeIntegration extends BaseIntegration {
             'cline.apiProvider': 'openai',
             'cline.openAiBaseUrl': `${ctx.gatewayUrl}/v1`,
             'cline.openAiApiKey': ctx.apiKey ?? 'no-key-required',
-            'cline.openAiModelId': ctx.defaultModel,
+            'cline.openAiModelId': resolveModel(ctx),
             // Roo Code
             'roo-cline.apiProvider': 'openai',
             'roo-cline.openAiBaseUrl': `${ctx.gatewayUrl}/v1`,
             'roo-cline.openAiApiKey': ctx.apiKey ?? 'no-key-required',
-            'roo-cline.openAiModelId': ctx.defaultModel,
+            'roo-cline.openAiModelId': resolveModel(ctx),
           }),
       },
     ];

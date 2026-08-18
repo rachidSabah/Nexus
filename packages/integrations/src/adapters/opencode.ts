@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
-import type { IntegrationContext } from '../contract.js';
+import type { IntegrationContext, LaunchSpec } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * OpenCode — terminal-based AI coding agent (TypeScript / Node).
@@ -43,14 +44,28 @@ export class OpenCodeIntegration extends BaseIntegration {
                   apiKey: ctx.apiKey ?? 'no-key-required',
                 },
                 models: {
-                  [ctx.defaultModel]: { name: ctx.defaultModel },
+                  [resolveModel(ctx) ?? 'gateway-routed']: { name: resolveModel(ctx) ?? 'gateway-routed' },
                 },
               },
             },
-            model: `nexus/${ctx.defaultModel}`,
+            model: `nexus/${resolveModel(ctx) ?? 'auto'}`,
           }),
       },
     ];
+  }
+
+  async getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    const exe = await this.resolveExecutable('opencode');
+    return {
+      executable: exe,
+      args: ['--model', `nexus/${resolveModel(ctx) ?? 'auto'}`],
+      interactive: true,
+      env: {
+        OPENAI_BASE_URL: `${ctx.gatewayUrl}/v1`,
+        OPENAI_API_KEY: ctx.apiKey ?? 'nexus',
+      },
+      display: `opencode → ${ctx.gatewayUrl}`,
+    };
   }
 }
 
@@ -90,15 +105,29 @@ export class OpenCodeGoIntegration extends BaseIntegration {
             `type = "openai"`,
             `base_url = "${ctx.gatewayUrl}/v1"`,
             `api_key = "${ctx.apiKey ?? 'no-key-required'}"`,
-            `default_model = "${ctx.defaultModel}"`,
+            `default_model = "${resolveModel(ctx) ?? 'gateway-routed'}"`,
             '',
             '[default]',
             'provider = "nexus"',
-            `model = "${ctx.defaultModel}"`,
+            `model = "${resolveModel(ctx) ?? 'gateway-routed'}"`,
             '',
           ].join('\n'),
       },
     ];
+  }
+
+  async getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    const exe = await this.resolveExecutable('opencode-go');
+    return {
+      executable: exe,
+      args: [],
+      interactive: true,
+      env: {
+        OPENAI_BASE_URL: `${ctx.gatewayUrl}/v1`,
+        OPENAI_API_KEY: ctx.apiKey ?? 'nexus',
+      },
+      display: `opencode-go → ${ctx.gatewayUrl}`,
+    };
   }
 }
 
@@ -136,7 +165,7 @@ export class OpenCodeZenIntegration extends BaseIntegration {
             '# Written by Agent Nexus Gateway — anx integrations install opencode-zen',
             '',
             'provider: nexus',
-            `model: ${ctx.defaultModel}`,
+            `model: ${resolveModel(ctx) ?? 'gateway-routed'}`,
             'auto_discovery: false',
             '',
             'providers:',
@@ -144,7 +173,7 @@ export class OpenCodeZenIntegration extends BaseIntegration {
             `    base_url: "${ctx.gatewayUrl}/v1"`,
             `    api_key: "${ctx.apiKey ?? 'no-key-required'}"`,
             '    type: openai-compatible',
-            `    default_model: ${ctx.defaultModel}`,
+            `    default_model: ${resolveModel(ctx) ?? 'gateway-routed'}`,
             '',
             '# Zen-specific settings',
             'ui:',
@@ -167,5 +196,19 @@ export class OpenCodeZenIntegration extends BaseIntegration {
           ].join('\n'),
       },
     ];
+  }
+
+  async getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    const exe = await this.resolveExecutable('opencode-zen');
+    return {
+      executable: exe,
+      args: [],
+      interactive: true,
+      env: {
+        OPENAI_BASE_URL: `${ctx.gatewayUrl}/v1`,
+        OPENAI_API_KEY: ctx.apiKey ?? 'nexus',
+      },
+      display: `opencode-zen → ${ctx.gatewayUrl}`,
+    };
   }
 }

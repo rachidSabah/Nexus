@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Roo Code — VS Code extension, a fork of Cline with multi-mode support.
@@ -30,12 +31,12 @@ export class RooCodeIntegration extends BaseIntegration {
             apiProvider: 'openai',
             openAiBaseUrl: `${ctx.gatewayUrl}/v1`,
             openAiApiKey: ctx.apiKey ?? 'no-key-required',
-            openAiModelId: ctx.defaultModel,
+            openAiModelId: resolveModel(ctx),
             modes: {
-              architect: { model: ctx.defaultModel },
-              code: { model: ctx.defaultModel },
-              ask: { model: ctx.defaultModel },
-              debug: { model: ctx.defaultModel },
+              architect: { model: resolveModel(ctx) },
+              code: { model: resolveModel(ctx) },
+              ask: { model: resolveModel(ctx) },
+              debug: { model: resolveModel(ctx) },
             },
           }),
       },

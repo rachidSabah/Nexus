@@ -30,6 +30,18 @@ import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
 
+/**
+ * Resolves with `promise` or, if it does not settle within `ms`, resolves with
+ * `fallback` instead. Used to bound subprocess-based detection so a single
+ * hanging probe can never stall the whole control plane.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 export interface DetectedAgent {
   /** Agent id (e.g. 'claude-code', 'codex', 'gemini-cli'). */
   readonly id: string;
@@ -150,7 +162,9 @@ const KNOWN_AGENTS: Array<{
   {
     id: 'qwen-code',
     name: 'Qwen Code',
-    binaries: ['qwen'],
+    binaries: ['qwen', 'qwen-code'],
+    npmPackages: ['@qwen/code', 'qwen-code'],
+    configPaths: ['.qwen/settings.json', '.qwen/config.json'],
   },
   {
     id: 'cursor',
@@ -204,11 +218,23 @@ export class AgentDetector {
    * show the full detection matrix.
    */
   async detectAll(): Promise<readonly DetectedAgent[]> {
-    const results: DetectedAgent[] = [];
-    for (const agent of KNOWN_AGENTS) {
-      results.push(await this.detectOne(agent));
-    }
-    return results;
+    // Bound the whole scan: a single flaky subprocess probe must never block
+    // the control plane for more than a few seconds. Each agent gets a hard
+    // ceiling; on timeout we report it as not-detected (truthful, since we
+    // could not confirm presence) rather than hanging the dashboard/API.
+    const perAgentMs = 4000;
+    const all = Promise.all(
+      KNOWN_AGENTS.map((agent) =>
+        withTimeout(this.detectOne(agent), perAgentMs, {
+          id: agent.id,
+          name: agent.name,
+          found: false,
+          platform: this.platform,
+          detectedVia: 'not-found',
+        }),
+      ),
+    );
+    return all;
   }
 
   /** Detects a single agent by id. */

@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Cursor — AI-first code editor (VS Code fork).
@@ -29,7 +30,7 @@ export class CursorIntegration extends BaseIntegration {
           jsonString({
             openaiApiBase: `${ctx.gatewayUrl}/v1`,
             openaiApiKey: ctx.apiKey ?? 'no-key-required',
-            defaultModel: ctx.defaultModel,
+            defaultModel: resolveModel(ctx),
           }),
       },
     ];

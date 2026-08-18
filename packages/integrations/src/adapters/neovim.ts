@@ -1,5 +1,6 @@
 import { BaseIntegration } from '../base.js';
 import type { IntegrationContext } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Neovim — extensible Vim fork.
@@ -46,7 +47,7 @@ export class NeovimIntegration extends BaseIntegration {
             '  opts = opts or {}',
             '  local gateway_url = opts.url or "' + ctx.gatewayUrl + '/v1"',
             '  local api_key = opts.api_key or "' + (ctx.apiKey ?? 'no-key-required') + '"',
-            '  local model = opts.model or "' + ctx.defaultModel + '"',
+            '  local model = opts.model or "' + (resolveModel(ctx) ?? 'gateway-routed') + '"',
             '',
             '  -- codecompanion.nvim adapter',
             '  local ok_cc, cc = pcall(require, "codecompanion.adapters")',

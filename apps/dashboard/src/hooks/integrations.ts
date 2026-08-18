@@ -122,7 +122,11 @@ export function useIntegrationActions() {
   const stop = useCallback((id: string) => action(`/api/v1/integrations/${id}/stop`), []);
   const restart = useCallback((id: string) => action(`/api/v1/integrations/${id}/restart`), []);
   const rebind = useCallback(
-    (id: string) => action(`/api/v1/integrations/${id}/install`, { force: true }),
+    (id: string) => action(`/api/v1/agents/${id}/rebind`),
+    [],
+  );
+  const installAgent = useCallback(
+    (id: string) => action(`/api/v1/agents/${id}/install`, { force: true }),
     [],
   );
   const verify = useCallback(
@@ -135,5 +139,5 @@ export function useIntegrationActions() {
   );
   const restartGateway = useCallback(() => action('/api/v1/system/gateway/restart'), []);
 
-  return { start, stop, restart, rebind, verify, uninstall, restartGateway };
+  return { start, stop, restart, rebind, installAgent, verify, uninstall, restartGateway };
 }

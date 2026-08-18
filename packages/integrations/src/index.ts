@@ -24,13 +24,15 @@ export {
   type ProcessState,
   type LifecycleAction,
   normalizeGatewayUrl,
+  isNexusRoutingAlias,
+  resolveModel,
   ok,
   fail,
   home,
   DEFAULT_CAPABILITIES,
 } from './contract.js';
 
-export { BaseIntegration, jsonString } from './base.js';
+export { BaseIntegration, jsonString, maskSecret } from './base.js';
 export {
   IntegrationProcessManager,
   integrationProcessManager,
@@ -53,6 +55,7 @@ export {
   OpenCodeGoIntegration,
   OpenCodeZenIntegration,
 } from './adapters/opencode.js';
+export { QwenCodeIntegration } from './adapters/qwen-code.js';
 export { CursorIntegration } from './adapters/cursor.js';
 export { ContinueIntegration } from './adapters/continue.js';
 export { ClineIntegration } from './adapters/cline.js';
@@ -65,9 +68,16 @@ export { JetBrainsIntegration } from './adapters/jetbrains.js';
 export { NeovimIntegration } from './adapters/neovim.js';
 export { EmacsIntegration } from './adapters/emacs.js';
 
+export {
+  TRUSTED_AGENT_CATALOG,
+  getAgentCatalogEntry,
+  type AgentCatalogEntry,
+} from './catalog.js';
+
 export const INTEGRATIONS_VERSION = '0.1.0';
 
 /**
  * Total count — convenient for tests.
  */
-export const BUILTIN_INTEGRATIONS_COUNT = 18;
+export const BUILTIN_INTEGRATIONS_COUNT = 19;
+

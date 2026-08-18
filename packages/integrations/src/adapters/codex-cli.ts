@@ -1,5 +1,6 @@
 import { BaseIntegration, jsonString } from '../base.js';
-import type { IntegrationContext } from '../contract.js';
+import type { IntegrationContext, LaunchSpec } from '../contract.js';
+import { resolveModel } from '../contract.js';
 
 /**
  * Codex CLI — OpenAI's coding agent CLI.
@@ -22,7 +23,7 @@ export class CodexCliIntegration extends BaseIntegration {
 
   protected configFiles(ctx: IntegrationContext) {
     const endpoint = `${ctx.gatewayUrl}/v1`;
-    const targetModel = ctx.defaultModel || 'liquid/lfm-2.5-2.6b:free';
+    const targetModel = resolveModel(ctx);
     const envKey = process.platform === 'win32' ? 'USERPROFILE' : 'USER';
 
     return [
@@ -31,10 +32,10 @@ export class CodexCliIntegration extends BaseIntegration {
         merge: 'overwrite' as const,
         content: () =>
           [
-            `model = "${targetModel}"`,
+            `model = "${targetModel ?? 'gateway-routed'}"`,
             `model_provider = "nexus"`,
-            ``,
-            `[model_providers.nexus]`,
+            '',
+            '[model_providers.nexus]',
             `name = "nexus"`,
             `base_url = "${endpoint}"`,
             `wire_specification = "custom"`,
@@ -46,7 +47,7 @@ export class CodexCliIntegration extends BaseIntegration {
         merge: 'json-merge' as const,
         content: (ctx: IntegrationContext) =>
           jsonString({
-            model: ctx.defaultModel || 'nexus/fast',
+            model: resolveModel(ctx),
             model_provider: 'openai',
             providers: {
               openai: {
@@ -58,4 +59,20 @@ export class CodexCliIntegration extends BaseIntegration {
       },
     ];
   }
+
+  async getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    const exe = await this.resolveExecutable('codex');
+    return {
+      executable: exe,
+      args: [],
+      interactive: true,
+      env: {
+        OPENAI_BASE_URL: `${ctx.gatewayUrl}/v1`,
+        OPENAI_API_KEY: ctx.apiKey || 'nexus',
+        CODEX_MODEL: resolveModel(ctx) ?? 'gateway-routed',
+      },
+      display: `codex → ${ctx.gatewayUrl}`,
+    };
+  }
 }
+
