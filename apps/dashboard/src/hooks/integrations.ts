@@ -26,6 +26,11 @@ export interface IntegrationStatus {
   executable?: string;
   version?: string;
   health?: 'unknown' | 'healthy' | 'mismatch' | 'not-configured';
+  installRecipe?: {
+    type: 'npm' | 'pip' | 'binary' | 'manual';
+    packageName?: string;
+    guideUrl?: string;
+  };
 }
 
 export interface RuntimeState {

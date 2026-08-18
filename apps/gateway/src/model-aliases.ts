@@ -572,36 +572,35 @@ export class ModelAliasRegistry {
         };
       }
     }
-    // If an alias like nexus/best-coding or local/coding resolves to a healthy model, use it
-    const bestCoding = this.resolve('nexus/best-coding') ?? this.resolve('local/coding');
+    // If an alias like nexus/best-coding, nexus/best, or local/coding resolves to a healthy model, use it
+    const bestCoding = this.resolve('nexus/best-coding') ?? this.resolve('nexus/best') ?? this.resolve('nexus/auto') ?? this.resolve('local/coding') ?? this.resolve('local/best');
     if (bestCoding) {
       return {
         model: bestCoding.modelId,
         resolution: {
           modelId: bestCoding.modelId,
           providerId: bestCoding.providerId,
-          reason: `Claude family '${family}' -> ${bestCoding.reason}`,
+          reason: `Model family '${family}' (${model}) -> ${bestCoding.reason}`,
           candidateCount: bestCoding.candidateCount,
         },
       };
     }
 
     const freeCandidates = this.candidatesFor({ capability: 'toolCalling', freeOnly: true })
-      .filter((m) => !matchFamily(m.id));
+      .filter((m) => m.id.toLowerCase() !== model.toLowerCase());
     const candidates = (freeCandidates.length > 0 ? freeCandidates : this.candidatesFor({ capability: 'toolCalling' }))
-      .filter((m) => !matchFamily(m.id));
-    if (candidates.length > 0) {
-      const winners = this.rank(candidates, 'cheapest');
+      .filter((m) => m.id.toLowerCase() !== model.toLowerCase());
+    const finalCandidates = candidates.length > 0 ? candidates : this.candidatesFor({}).filter((m) => m.id.toLowerCase() !== model.toLowerCase());
+    if (finalCandidates.length > 0) {
+      const winners = this.rank(finalCandidates, 'highest_quality');
       const winner = winners[0]!;
       return {
         model: winner.id,
         resolution: {
           modelId: winner.id,
           providerId: winner.providerId,
-          reason: family === 'default'
-            ? `Claude family 'default' -> dynamic best tool-calling model`
-            : `Claude family '${family}' -> dynamic best tool-calling model (no GATEWAY_MODEL_${family.toUpperCase()} target configured)`,
-          candidateCount: candidates.length,
+          reason: `Model family '${family}' (${model}) -> dynamic best model '${winner.id}' on provider '${winner.providerId}'`,
+          candidateCount: finalCandidates.length,
         },
       };
     }

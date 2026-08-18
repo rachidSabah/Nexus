@@ -57,6 +57,11 @@ export interface IntegrationStatus {
   readonly version?: string;
   /** Coarse health for the control-center card. */
   readonly health?: 'unknown' | 'healthy' | 'mismatch' | 'not-configured';
+  readonly installRecipe?: {
+    readonly type: 'npm' | 'pip' | 'binary' | 'manual';
+    readonly packageName?: string;
+    readonly guideUrl?: string;
+  };
 }
 
 export interface IntegrationAdapter {

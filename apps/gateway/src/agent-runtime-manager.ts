@@ -704,9 +704,11 @@ export class AgentRuntimeManager {
         };
       }
     } else {
+      const guide = catalog?.installRecipe?.guideUrl ?? catalog?.homepage ?? 'official release channel';
+      actions.push(`${catalog?.displayName ?? agentId} is managed via ${catalog?.category === 'editor' || catalog?.category === 'ide' ? 'its editor marketplace/built-in updater' : 'standalone binary releases'}.`);
       return {
-        ok: false,
-        message: `No package manager update recipe available for ${catalog?.displayName ?? agentId}`,
+        ok: true,
+        message: `${catalog?.displayName ?? agentId} update guide: ${guide}`,
         actions,
       };
     }

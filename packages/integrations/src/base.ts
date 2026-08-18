@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { dirname, join, isAbsolute } from 'node:path';
 
+import { getAgentCatalogEntry } from './catalog.js';
 import type {
   IntegrationAdapter,
   IntegrationContext,
@@ -377,6 +378,7 @@ export abstract class BaseIntegration implements IntegrationAdapter {
       executable,
       version,
       health,
+      installRecipe: getAgentCatalogEntry(this.id)?.installRecipe,
     };
   }
 

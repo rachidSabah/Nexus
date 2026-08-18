@@ -45,6 +45,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
   const caps = runtime?.capabilities;
   const running = runtime?.running ?? false;
   const mismatch = detail?.mismatch ?? false;
+  const recipe = detail?.installRecipe ?? status.installRecipe;
   const installCmd = `anx integrations install ${status.id}`;
 
   // Lifecycle gating. When the live `/runtime` capabilities are unavailable
@@ -188,16 +189,29 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
 
           {/* Action 2: Update Agent to Latest Version */}
           {status.installed && (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => run('update', updateAgent)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-40"
-              title={`Update ${status.displayName} to latest release via package manager`}
-            >
-              <RotateCw className={`h-3.5 w-3.5 ${busy === 'update' ? 'animate-spin' : ''}`} />
-              {busy === 'update' ? 'Updating…' : 'Update Agent'}
-            </button>
+            recipe?.type === 'manual' && (recipe?.guideUrl || status.homepage) ? (
+              <a
+                href={recipe?.guideUrl || status.homepage}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+                title={`Open official release & update page for ${status.displayName}`}
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                Check Updates ↗
+              </a>
+            ) : (
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => run('update', updateAgent)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/25 disabled:opacity-40"
+                title={`Update ${status.displayName} to latest release via package manager`}
+              >
+                <RotateCw className={`h-3.5 w-3.5 ${busy === 'update' ? 'animate-spin' : ''}`} />
+                {busy === 'update' ? 'Updating…' : 'Update Agent'}
+              </button>
+            )
           )}
 
           {/* Action 3: 1-Click Buckle / Rebind to Nexus Gateway */}

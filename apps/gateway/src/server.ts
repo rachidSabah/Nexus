@@ -1164,6 +1164,40 @@ export class HttpServer {
         }
       }
 
+      const codexFrontierModels = [
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-5.5',
+        'gpt-5.2',
+        'gpt-5',
+        'codex',
+      ];
+      for (const cm of codexFrontierModels) {
+        if (!models.has(cm)) {
+          models.set(cm, {
+            id: cm,
+            object: 'model',
+            owned_by: 'openai',
+            capabilities: {
+              streaming: true,
+              toolCalling: true,
+              jsonMode: true,
+              vision: true,
+              reasoning: true,
+            },
+            context_window: 128000,
+            agentSnippets: {
+              claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"\nexport ANTHROPIC_AUTH_TOKEN="nexus"\nclaude --model ${cm}`,
+              codexCli: `codex --model ${cm}`,
+              hermesCli: `hermes -m ${cm}`,
+              agy: `agy -m ${cm}`,
+              curl: `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${cm}", "messages": [{"role": "user", "content": "Hello"}]}'`,
+            },
+          });
+        }
+      }
+
       reply.header('X-Nexus-Model-Catalog-Version', String(this.deps.modelRegistry.getCatalogVersion()));
 
       // Only include virtual routing policies (nexus/*, local/*) when explicitly requested (e.g. Router Studio)

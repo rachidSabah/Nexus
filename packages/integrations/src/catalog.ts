@@ -68,8 +68,10 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     category: 'cli',
     homepage: 'https://github.com/google-gemini/gemini-cli',
     binaryNames: ['gemini', 'gemini-cli'],
+    npmPackage: '@google/gemini-cli',
     installRecipe: {
-      type: 'manual',
+      type: 'npm',
+      packageName: '@google/gemini-cli',
       guideUrl: 'https://github.com/google-gemini/gemini-cli',
     },
     supportedProtocols: ['OpenAI-compatible'],
@@ -82,7 +84,8 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     homepage: 'https://github.com/QwenLM/Qwen',
     binaryNames: ['qwen', 'qwen-code'],
     installRecipe: {
-      type: 'manual',
+      type: 'pip',
+      packageName: 'qwen-agent',
       guideUrl: 'https://github.com/QwenLM/Qwen',
     },
     supportedProtocols: ['OpenAI-compatible'],
@@ -94,10 +97,10 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     category: 'cli',
     homepage: 'https://github.com/sst/opencode',
     binaryNames: ['opencode'],
-    npmPackage: 'opencode',
+    npmPackage: 'opencode-ai',
     installRecipe: {
       type: 'npm',
-      packageName: 'opencode',
+      packageName: 'opencode-ai',
       guideUrl: 'https://github.com/sst/opencode',
     },
     supportedProtocols: ['OpenAI-compatible'],
@@ -135,8 +138,10 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     category: 'cli',
     homepage: 'https://github.com/hermes-agent/hermes',
     binaryNames: ['hermes'],
+    npmPackage: 'hermes-agent',
     installRecipe: {
-      type: 'manual',
+      type: 'npm',
+      packageName: 'hermes-agent',
       guideUrl: 'https://github.com/hermes-agent/hermes',
     },
     supportedProtocols: ['OpenAI-compatible'],
@@ -338,8 +343,7 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     homepage: 'https://github.com/deepseek-ai/deepseek-harness',
     binaryNames: ['dsh'],
     installRecipe: {
-      type: 'npm',
-      packageName: '@deepseek-ai/dsh',
+      type: 'manual',
       guideUrl: 'https://github.com/deepseek-ai/deepseek-harness',
     },
     // DeepSeek Harness is a plugin harness that runs a web UI via `dsh web`
