@@ -11,7 +11,18 @@ import type { FailoverPort } from './ports.js';
  *  - prefer endpoints in different regions from the failed one
  */
 export class DefaultFailover implements FailoverPort {
+  private readonly failed = new Set<string>();
+
   next(decision: RoutingDecision, failedEndpointId: string): ProviderEndpoint | null {
-    return decision.alternatives.find((e) => e.id !== failedEndpointId) ?? null;
+    this.failed.add(failedEndpointId);
+
+    // 1. Find candidates that have not failed yet in this request
+    const viable = decision.alternatives.filter((e) => !this.failed.has(e.id) && e.health !== 'circuit_open');
+    if (viable.length === 0) {
+      return decision.alternatives.find((e) => e.id !== failedEndpointId && e.health !== 'circuit_open') ?? null;
+    }
+
+    // 2. Return first viable alternative
+    return viable[0] ?? null;
   }
 }

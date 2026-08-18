@@ -22,6 +22,7 @@ import type {
   ChatCompletionResponse,
   CostBreakdown,
   ProviderEndpoint,
+  RoutingDecision,
   TokenUsage,
 } from '../domain/types.js';
 
@@ -391,26 +392,44 @@ export class ChatCompletionUseCase {
         });
 
         // Self-Healing JSON & Tool Call Schema Repair:
-        if (response.choices) {
-          for (const choice of response.choices) {
-            if (effectiveRequest.response_format?.type === 'json_object' && choice.message?.content) {
-              const repaired = repairJson(choice.message.content);
-              if (repaired.isValidJson) {
-                choice.message.content = repaired.repaired;
-              }
-            }
-            if (choice.message?.tool_calls) {
-              for (const tc of choice.message.tool_calls) {
-                if (tc.function?.arguments) {
-                  tc.function.arguments = repairToolCallArguments(tc.function.arguments);
-                }
-              }
+        const isJsonMode = effectiveRequest.responseFormat?.type === 'json_object'
+          || (effectiveRequest as { response_format?: { type?: string } }).response_format?.type === 'json_object';
+
+        const repairedChoices = (response.choices ?? []).map((choice) => {
+          let content = choice.message?.content;
+          if (isJsonMode && typeof content === 'string') {
+            const repaired = repairJson(content);
+            if (repaired.isValidJson) {
+              content = repaired.repaired;
             }
           }
-        }
+
+          const toolCalls = choice.message?.tool_calls?.map((tc) => {
+            if (tc.function?.arguments && typeof tc.function.arguments === 'string') {
+              return {
+                ...tc,
+                function: {
+                  ...tc.function,
+                  arguments: repairToolCallArguments(tc.function.arguments),
+                },
+              };
+            }
+            return tc;
+          });
+
+          return {
+            ...choice,
+            message: {
+              ...choice.message,
+              content,
+              ...(toolCalls ? { tool_calls: toolCalls } : {}),
+            },
+          };
+        });
 
         const finalResponse: ChatCompletionResponse = {
           ...response,
+          choices: repairedChoices,
           provider: endpoint.providerId,
           endpoint: endpoint.id,
           latencyMs,
