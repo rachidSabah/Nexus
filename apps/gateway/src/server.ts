@@ -6442,14 +6442,21 @@ let optMessages: never[] | undefined;
       if (!m.stale && (m.id === stripped || m.id.endsWith(`/${stripped}`))) candidates.add(m.providerId);
     }
     if (candidates.size === 0) return undefined;
-    // Prefer a healthy owner; if none is healthy, lock to the known owner so
-    // the routing engine reports NO_ELIGIBLE_PROVIDER (503) rather than
-    // trying providers that do not serve this model.
     const endpoints = this.deps.routing.listEndpoints();
+    const selectableProviders = new Set(this.deps.routing.getSelectableProviders());
+    const activeProviders = new Set(endpoints.map((e) => e.providerId));
+
+    // Prefer a selectable/healthy candidate provider
     for (const p of candidates) {
-      if (endpoints.some((e) => e.providerId === p && e.health !== 'circuit_open')) return p;
+      if (selectableProviders.has(p)) return p;
     }
-    return resolved?.providerId ?? candidates.values().next().value;
+    // If a candidate provider is registered (even if degraded), prefer it
+    for (const p of candidates) {
+      if (activeProviders.has(p)) return p;
+    }
+    // If none of the candidate providers are registered in routing endpoints,
+    // do not lock preferredProviders so the request can route to any available provider.
+    return undefined;
   }
 
   /**
