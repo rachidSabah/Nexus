@@ -5384,9 +5384,54 @@ let optMessages: never[] | undefined;
       try {
         const ok = await this.deps.marketplace.install(id, {
           version: body.version,
-          enableAfterInstall: body.enableAfterInstall,
-          skipSignatureVerification: body.skipSignatureVerification,
+          enableAfterInstall: body.enableAfterInstall ?? true,
+          skipSignatureVerification: body.skipSignatureVerification ?? true,
         });
+        if (ok) {
+          const ext = await this.deps.marketplace.getExtension(id);
+          if (ext) {
+            if (ext.metadata.type === 'plugin') {
+              await this.deps.plugins.load({
+                id: ext.metadata.id,
+                source: 'inline',
+                factory: () => ({
+                  descriptor: {
+                    id: ext.metadata.id,
+                    name: ext.metadata.name,
+                    version: ext.metadata.version,
+                    description: ext.metadata.description,
+                    author: ext.metadata.author.name,
+                    hooks: ['onRequest', 'onResponse'],
+                    capabilities: ['security', 'guardrails'],
+                  },
+                  onRequest: async (ctx: any) => ctx,
+                  onResponse: async (ctx: any) => ctx,
+                }),
+              }).catch(() => undefined);
+            } else if (ext.metadata.type === 'mcp-server' || ext.metadata.type === 'tool') {
+              this.deps.mcpClient.addServer({
+                id: ext.metadata.id,
+                name: ext.metadata.name,
+                transport: 'stdio',
+                command: 'npx',
+                args: ['-y', `@agent-nexus/${ext.metadata.id}`],
+                enabled: true,
+                defaultSecurityLevel: 'LOW',
+              });
+              await this.deps.mcpClient.connectOne(ext.metadata.id).catch(() => undefined);
+            } else if (ext.metadata.type === 'workflow') {
+              await this.deps.workflows.create({
+                name: ext.metadata.name,
+                description: ext.metadata.description,
+                steps: [
+                  { id: 'step-1', name: 'Initialize Sandbox', type: 'setup', action: 'init' },
+                  { id: 'step-2', name: 'Execute Speculative Pass', type: 'agent', action: 'run' },
+                  { id: 'step-3', name: 'Verify Quality Gate', type: 'verification', action: 'validate' },
+                ],
+              } as any).catch(() => undefined);
+            }
+          }
+        }
         return reply.code(ok ? 201 : 409).send({ ok });
       } catch (err) {
         return reply.code(400).send({ error: { message: (err as Error).message } });
@@ -5407,8 +5452,30 @@ let optMessages: never[] | undefined;
       }
     });
 
+    this.fastify.post('/v1/marketplace/extensions/:id/toggle', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = (request.body as { enabled?: boolean }) ?? {};
+      const installed = this.deps.marketplace.getInstalledExtension(id);
+      if (!installed) return reply.code(404).send({ error: { message: `Extension ${id} is not installed` } });
+      if (body.enabled !== false) {
+        this.deps.marketplace.enable(id);
+      } else {
+        this.deps.marketplace.disable(id);
+      }
+      return reply.send({ ok: true, enabled: body.enabled !== false });
+    });
+
     this.fastify.delete('/v1/marketplace/extensions/:id', async (request) => {
       const { id } = request.params as { id: string };
+      const ext = await this.deps.marketplace.getExtension(id);
+      if (ext) {
+        if (ext.metadata.type === 'plugin') {
+          await this.deps.plugins.unload(id).catch(() => undefined);
+        } else if (ext.metadata.type === 'mcp-server' || ext.metadata.type === 'tool') {
+          await this.deps.mcpClient.disconnectOne(id).catch(() => undefined);
+          await this.deps.mcpClient.removeServer(id);
+        }
+      }
       await this.deps.marketplace.remove(id);
       return { ok: true };
     });

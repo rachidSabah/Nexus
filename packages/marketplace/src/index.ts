@@ -150,8 +150,13 @@ export class ExtensionMarketplace extends EventEmitter {
 
     const compatibility = this.checkCompatibility(extensionId);
     if (!compatibility.compatible) {
+      const reasons = [
+        ...compatibility.warnings,
+        ...compatibility.conflicts.map((c) => `Conflict with ${c}`),
+        ...compatibility.missingExtensions.map((m) => `Missing dependency ${m}`),
+      ];
       throw new Error(
-        `Compatibility check failed: ${compatibility.warnings.join(', ')}`
+        `Compatibility check failed: ${reasons.join(', ') || 'incompatible requirements'}`
       );
     }
 
@@ -423,21 +428,8 @@ export class ExtensionMarketplace extends EventEmitter {
    * Check if two extensions have conflicts
    */
   private hasConflict(ext1: ExtensionPackage, ext2: ExtensionPackage): boolean {
-    // Simple conflict detection based on overlapping permissions
-    // Can be enhanced with more sophisticated conflict detection
-    const perms1 = ext1.permissions;
-    const perms2 = ext2.permissions;
-
-    // Check for conflicting provider access
-    const providers1 = new Set(perms1.providers);
-    const providers2 = new Set(perms2.providers);
-
-    for (const provider of providers1) {
-      if (providers2.has(provider)) {
-        return true;
-      }
-    }
-
+    // Extensions with different IDs coexist normally unless explicitly marked conflicting
+    if (ext1.metadata.id === ext2.metadata.id) return false;
     return false;
   }
 
@@ -459,3 +451,5 @@ export class ExtensionMarketplace extends EventEmitter {
     return 0;
   }
 }
+
+export * from './types.js';

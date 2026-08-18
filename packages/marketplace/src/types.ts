@@ -6,6 +6,8 @@ export type ExtensionType =
   | 'provider'
   | 'mcp-server'
   | 'workflow'
+  | 'agent'
+  | 'tool'
   | 'prompt'
   | 'template'
   | 'theme'
