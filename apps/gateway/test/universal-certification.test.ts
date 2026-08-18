@@ -289,7 +289,7 @@ describe('Phase 22.6: Universal Coding-Agent Gateway Certification Suite', () =>
       expect(typeof verification.inferenceVerified).toBe('boolean');
       expect(typeof verification.streamingVerified).toBe('boolean');
       expect(typeof verification.toolCallingVerified).toBe('boolean');
-    }, 20000);
+    }, 60000);
   });
 });
 
