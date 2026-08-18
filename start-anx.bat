@@ -14,11 +14,20 @@ rem production `.next` (which causes `middleware-manifest.json missing`
 rem and `__webpack_modules__ is not a function` -> every page 500).
 if exist apps\dashboard\.next rmdir /s /q apps\dashboard\.next >nul 2>nul
 
-rem Start Gateway & Dashboard in dev mode
+rem Start Gateway & Dashboard cleanly
 start "ANX Gateway & Dashboard" cmd /k "pnpm dev"
 
-rem Wait 6 seconds for services to initialize
-timeout /t 6 /nobreak >nul
+rem Wait for Gateway to be ready on port 8787 before launching browser
+echo Waiting for Nexus Gateway on port 8787...
+for /l %%i in (1, 1, 15) do (
+  curl -s -f http://127.0.0.1:8787/health >nul 2>nul
+  if not errorlevel 1 (
+    echo Nexus Gateway is healthy and active on http://127.0.0.1:8787
+    goto :gateway_ready
+  )
+  timeout /t 1 /nobreak >nul
+)
+:gateway_ready
 
 rem Open Dashboard in default browser
 start http://localhost:3000
