@@ -134,10 +134,14 @@ export function useIntegrationActions() {
     [],
   );
   const uninstall = useCallback(
-    (id: string) => action(`/api/v1/integrations/${id}/uninstall`),
+    (id: string) => action(`/api/v1/agents/${id}/uninstall`),
+    [],
+  );
+  const unbuckle = useCallback(
+    (id: string) => action(`/api/v1/agents/${id}/unbuckle`),
     [],
   );
   const restartGateway = useCallback(() => action('/api/v1/system/gateway/restart'), []);
 
-  return { start, stop, restart, rebind, installAgent, verify, uninstall, restartGateway };
+  return { start, stop, restart, rebind, installAgent, verify, uninstall, unbuckle, restartGateway };
 }

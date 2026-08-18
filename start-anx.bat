@@ -5,16 +5,20 @@ echo   Starting ANX Gateway, Dashboard ^& Claude CLI...
 echo ========================================================
 cd /d "%~dp0"
 
+rem Release stale dev servers on port 3000 and 8787 if present
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000 " ^| findstr "LISTENING"') do taskkill /f /pid %%a >nul 2>nul
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8787 " ^| findstr "LISTENING"') do taskkill /f /pid %%a >nul 2>nul
+
 rem Clean the dashboard build cache so `next dev` never reuses a stale
 rem production `.next` (which causes `middleware-manifest.json missing`
 rem and `__webpack_modules__ is not a function` -> every page 500).
-if exist apps\dashboard\.next rmdir /s /q apps\dashboard\.next
+if exist apps\dashboard\.next rmdir /s /q apps\dashboard\.next >nul 2>nul
 
 rem Start Gateway & Dashboard in dev mode
 start "ANX Gateway & Dashboard" cmd /k "pnpm dev"
 
-rem Wait 4 seconds for services to initialize
-timeout /t 4 /nobreak >nul
+rem Wait 6 seconds for services to initialize
+timeout /t 6 /nobreak >nul
 
 rem Open Dashboard in default browser
 start http://localhost:3000

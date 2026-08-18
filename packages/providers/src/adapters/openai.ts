@@ -186,24 +186,27 @@ export class OpenAIAdapter implements ProviderAdapter {
         // provider-enforced free alias (`:free`, `-free`, `_free` …) are
         // quota/rate-limited → FREE_TIER.
         const isLocal = endpoint.providerId === 'ollama';
+        const isNvidia = endpoint.providerId === 'nvidia-nim' || endpoint.providerId === 'nvidia';
+        const isEndpointFree = (endpoint.pricing?.inputPer1K === 0 && endpoint.pricing?.outputPer1K === 0);
+        const hasLivePricing = extra.pricing != null;
         const isFree =
           freeBySuffix
           || isLocal
+          || isNvidia
+          || (isEndpointFree && !hasLivePricing)
           || (extra.pricing?.prompt === '0' && extra.pricing?.completion === '0')
           || extra.per_request_rate === 0;
-        const hasLivePricing = extra.pricing != null;
         const livePricing = {
-          inputPer1M,
-          outputPer1M,
+          inputPer1M: inputPer1M ?? (isFree ? 0 : undefined),
+          outputPer1M: outputPer1M ?? (isFree ? 0 : undefined),
           isFree,
-          // Only a provider-enforced free ALIAS is quota-limited. A local model
-          // (Ollama) or a model merely priced at 0 is unrestricted → no quota.
-          quotaLimited: freeBySuffix,
+          // Provider-enforced free alias, NVIDIA NIM hosted credits, or hosted free endpoint → quota-limited.
+          quotaLimited: freeBySuffix || isNvidia || (isEndpointFree && !isLocal),
           currency: 'USD',
           // Source hierarchy, honestly tagged:
           //  - 'live'            when the provider returned per-token pricing
           //  - 'provider_metadata' when we KNOW the model is free via a provider
-          //                       free alias or a local/self-hosted endpoint
+          //                       free alias or a local/self-hosted endpoint / hosted free tier
           //  - 'unknown'         when the API returned no pricing at all (we
           //                       must NOT fabricate $0 as "free")
           source: (hasLivePricing
@@ -227,6 +230,13 @@ export class OpenAIAdapter implements ProviderAdapter {
             extra.contextLength ??
             extra.maxContextLength ??
             extra.max_model_len ??
+            extra.top_provider?.context_length ??
+            undefined,
+          maxOutputTokens:
+            extra.max_output_tokens ??
+            extra.max_tokens ??
+            extra.max_completion_tokens ??
+            extra.top_provider?.max_completion_tokens ??
             undefined,
           pricing: {
             ...livePricing,
@@ -482,6 +492,13 @@ interface OpenAIModelExtra {
   contextLength?: number;
   maxContextLength?: number;
   max_model_len?: number;
+  max_output_tokens?: number;
+  max_tokens?: number;
+  max_completion_tokens?: number;
+  top_provider?: {
+    context_length?: number;
+    max_completion_tokens?: number;
+  };
   per_request_rate?: number;
   pricing?: {
     prompt?: string;

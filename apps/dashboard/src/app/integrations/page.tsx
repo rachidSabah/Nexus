@@ -14,13 +14,11 @@ import {
   Play,
   Square,
   RotateCw,
-  Settings2,
   Circle,
   Rocket,
   ShieldAlert,
   RefreshCw,
   Server,
-  Download,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useState, useCallback } from 'react';
@@ -36,7 +34,7 @@ import {
 } from '@/hooks/integrations';
 
 function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMutate: () => void }) {
-  const { start, stop, restart, rebind, installAgent, verify } = useIntegrationActions();
+  const { start, stop, restart, rebind, installAgent, verify, uninstall, unbuckle } = useIntegrationActions();
   const detail = useIntegrationStatus(status.id).data;
   const runtime = useIntegrationRuntime(status.id).data;
   const [copied, setCopied] = useState(false);
@@ -174,26 +172,33 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
       {/* Lifecycle controls — gated by adapter capabilities */}
       <div className="mt-4">
         <div className="flex flex-wrap gap-2">
-          {!status.installed && (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => run('install', installAgent)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-nexus-500/40 bg-nexus-500/20 px-3 py-1.5 text-[11px] font-semibold text-nexus-300 transition hover:bg-nexus-500/30 disabled:opacity-40"
-            >
-              <Download className="h-3.5 w-3.5" /> {busy === 'install' ? 'Installing…' : 'Install Agent'}
-            </button>
-          )}
-          {mismatch && caps?.supportsInstall && (
+          {/* 1-Click Buckle / Install Action Button */}
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => run('install', installAgent)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-nexus-500/50 bg-nexus-500/20 px-3 py-1.5 text-[11px] font-semibold text-nexus-200 transition hover:bg-nexus-500/30 disabled:opacity-40"
+            title={`1-Click execute backend integration install/configuration for ${status.displayName}`}
+          >
+            <Rocket className={`h-3.5 w-3.5 ${busy === 'install' ? 'animate-pulse' : ''}`} />
+            {busy === 'install'
+              ? 'Configuring…'
+              : !status.installed
+                ? '1-Click Install & Buckle'
+                : '1-Click Buckle to Nexus'}
+          </button>
+
+          {mismatch && (
             <button
               type="button"
               disabled={busy !== null}
               onClick={() => run('rebind', rebind)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-300 transition hover:bg-cyan-500/20 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/30 disabled:opacity-40"
             >
-              <Rocket className="h-3.5 w-3.5" /> {busy === 'rebind' ? 'Rebinding…' : 'Rebind to Nexus'}
+              <RotateCw className="h-3.5 w-3.5" /> {busy === 'rebind' ? 'Rebinding…' : 'Rebind to Nexus'}
             </button>
           )}
+
           {canStart && (
             <button
               type="button"
@@ -204,6 +209,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               <Play className="h-3.5 w-3.5" /> {busy === 'start' ? '…' : 'Start'}
             </button>
           )}
+
           {canStop && (
             <button
               type="button"
@@ -214,6 +220,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               <Square className="h-3.5 w-3.5" /> {busy === 'stop' ? '…' : 'Stop'}
             </button>
           )}
+
           {canRestart && (
             <button
               type="button"
@@ -224,6 +231,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               <RotateCw className={`h-3.5 w-3.5 ${busy === 'restart' ? 'animate-spin' : ''}`} /> {busy === 'restart' ? 'Restarting…' : 'Restart'}
             </button>
           )}
+
           <button
             type="button"
             disabled={busy !== null}
@@ -232,16 +240,28 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
           >
             <CheckCircle2 className="h-3.5 w-3.5" /> {busy === 'verify' ? '…' : 'Verify'}
           </button>
-          {!caps?.supportsStart && caps?.supportsInstall && status.installed && (
+
+          {status.configured && (
             <button
               type="button"
-              onClick={copyToClipboard}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold text-white/70 transition hover:bg-white/10"
-              title="Copy install command (this agent has no managed-launch support yet)"
+              disabled={busy !== null}
+              onClick={() => setConfirm('unbuckle')}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-1.5 text-[11px] font-semibold text-amber-300/80 transition hover:bg-amber-500/15 hover:text-amber-200 disabled:opacity-40"
+              title={`Revert ${status.displayName} configuration back to standalone/default upstream settings`}
             >
-              <Settings2 className="h-3.5 w-3.5" /> Configure
+              <Plug className="h-3.5 w-3.5 rotate-45" /> {busy === 'unbuckle' ? 'Unbuckling…' : 'Unbuckle'}
             </button>
           )}
+
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => setConfirm('uninstall')}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-1.5 text-[11px] font-semibold text-rose-300/80 transition hover:bg-rose-500/15 hover:text-rose-200 disabled:opacity-40"
+            title={`Cleanly uninstall and restore ${status.displayName}`}
+          >
+            <ShieldAlert className="h-3.5 w-3.5" /> {busy === 'uninstall' ? 'Uninstalling…' : 'Uninstall'}
+          </button>
         </div>
 
         {error && (
@@ -250,36 +270,44 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
           </div>
         )}
 
-        {!caps?.supportsStart && (
-          <button
-            type="button"
-            onClick={copyToClipboard}
-            className="mt-2 flex w-full items-center justify-between rounded-xl border border-white/5 bg-black/50 p-2.5 font-mono text-[11px] text-white/70 hover:bg-black/70 hover:border-nexus-500/30 transition text-left cursor-pointer group"
-            title="Click to copy install command"
-          >
-            <span className="truncate">
-              <span className="text-nexus-400 mr-1.5">$</span>
-              {installCmd}
-            </span>
-            <span className="ml-2 shrink-0 text-white/40 group-hover:text-nexus-400 transition">
-              {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-            </span>
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={copyToClipboard}
+          className="mt-2.5 flex w-full items-center justify-between rounded-xl border border-white/5 bg-black/50 p-2.5 font-mono text-[11px] text-white/70 hover:bg-black/70 hover:border-nexus-500/30 transition text-left cursor-pointer group"
+          title="Click to copy shell command ($ anx integrations install <id>)"
+        >
+          <span className="truncate">
+            <span className="text-nexus-400 mr-1.5">$</span>
+            {installCmd}
+          </span>
+          <span className="ml-2 shrink-0 text-white/40 group-hover:text-nexus-400 transition">
+            {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+          </span>
+        </button>
       </div>
 
       {/* Confirmation dialog for destructive actions */}
       {confirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setConfirm(null)}>
-          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0b0f1a] p-5" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0b0f1a] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
               <ShieldAlert className="h-4 w-4" />
-              {confirm === 'restart' ? `Restart ${status.displayName}?` : `Stop ${status.displayName}?`}
+              {confirm === 'restart'
+                ? `Restart ${status.displayName}?`
+                : confirm === 'stop'
+                  ? `Stop ${status.displayName}?`
+                  : confirm === 'unbuckle'
+                    ? `Unbuckle ${status.displayName}?`
+                    : `Uninstall ${status.displayName}?`}
             </div>
             <p className="mt-2 text-xs text-white/60">
               {confirm === 'restart'
                 ? 'The current agent process will be terminated and relaunched using the Nexus configuration.'
-                : 'The running agent process will be terminated.'}
+                : confirm === 'stop'
+                  ? 'The running agent process will be terminated.'
+                  : confirm === 'unbuckle'
+                    ? 'Nexus configuration endpoints and overrides will be removed from this agent, reverting it to default.'
+                    : 'The agent will be stopped and all Nexus integration settings will be completely removed.'}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -291,10 +319,26 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               </button>
               <button
                 type="button"
-                onClick={() => run(confirm, confirm === 'restart' ? restart : stop)}
+                onClick={() => {
+                  const targetAction =
+                    confirm === 'restart'
+                      ? restart
+                      : confirm === 'stop'
+                        ? stop
+                        : confirm === 'unbuckle'
+                          ? unbuckle
+                          : uninstall;
+                  run(confirm, targetAction);
+                }}
                 className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-300 hover:bg-rose-500/20"
               >
-                {confirm === 'restart' ? 'Restart Agent' : 'Stop Agent'}
+                {confirm === 'restart'
+                  ? 'Restart Agent'
+                  : confirm === 'stop'
+                    ? 'Stop Agent'
+                    : confirm === 'unbuckle'
+                      ? 'Unbuckle Agent'
+                      : 'Uninstall Agent'}
               </button>
             </div>
           </div>

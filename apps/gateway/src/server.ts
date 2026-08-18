@@ -555,12 +555,14 @@ export class HttpServer {
       };
     };
     this.fastify.get('/health', handleHealth);
+    this.fastify.get('/healthz', handleHealth);
     this.fastify.get('/v1/health', handleHealth);
+    this.fastify.get('/v1/healthz', handleHealth);
 
     // ── Readiness (Phase 16 §20) ────────────────────────────────────────
     // Reports whether critical Nexus subsystems are up. A single unhealthy
     // upstream provider must NOT make the whole gateway "not ready".
-    this.fastify.get('/ready', async (_request, reply) => {
+    const handleReady = async (_request: any, reply: any) => {
       const endpoints = this.deps.routing.listEndpoints();
       const subsystems = {
         gateway: true,
@@ -577,7 +579,9 @@ export class HttpServer {
         catalogVersion: this.deps.modelRegistry.getCatalogVersion(),
         subsystems,
       });
-    });
+    };
+    this.fastify.get('/ready', handleReady);
+    this.fastify.get('/readyz', handleReady);
 
     // ── Liveness (Phase 19 §20) ───────────────────────────────────────────
     // Process is alive. Does NOT expose secrets. Distinct from /ready (which
@@ -5767,6 +5771,80 @@ let optMessages: never[] | undefined;
         metadata: { agentId: id, message: result.message },
       });
       return reply.code(result.ok ? 200 : 400).send(result);
+    });
+
+    this.fastify.post('/v1/agents/:id/unbuckle', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      // If currently running, stop process first
+      try {
+        await manager.stopAgent(id);
+      } catch {
+        // ignore if not running
+      }
+      const result = await manager.restoreAgent(id);
+      await this.deps.events.publish(agentEvent('agent.unbuckled', { agentId: id, ok: result.restored, message: result.message }) as any);
+      await this.deps.events.publish(agentEvent('agent.binding.changed', { agentId: id, configured: false }) as any);
+      await this.getAuditLogger().record({
+        event: 'config.changed',
+        principal: 'system',
+        action: 'agent.unbuckle',
+        resource: id,
+        agentId: id,
+        success: result.restored,
+        metadata: { agentId: id, message: result.message },
+      });
+      return reply.code(result.restored ? 200 : 400).send({ ok: result.restored, unbuckled: result.restored, message: result.message });
+    });
+
+    this.fastify.post('/v1/agents/:id/uninstall', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      try {
+        await manager.stopAgent(id);
+      } catch {
+        // ignore if not running
+      }
+      const result = await manager.restoreAgent(id);
+      await this.deps.events.publish(agentEvent('agent.uninstalled', { agentId: id, ok: result.restored, message: result.message }) as any);
+      await this.deps.events.publish(agentEvent('agent.binding.changed', { agentId: id, configured: false }) as any);
+      return reply.code(result.restored ? 200 : 400).send({ ok: result.restored, uninstalled: result.restored, message: result.message });
+    });
+
+    this.fastify.post('/v1/integrations/:id/unbuckle', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      try {
+        await manager.stopAgent(id);
+      } catch {
+        // ignore if not running
+      }
+      const result = await manager.restoreAgent(id);
+      return reply.code(result.restored ? 200 : 400).send({ ok: result.restored, unbuckled: result.restored, message: result.message });
+    });
+
+    this.fastify.post('/v1/runtime-agents/:id/unbuckle', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      try {
+        await manager.stopAgent(id);
+      } catch {
+        // ignore
+      }
+      const result = await manager.restoreAgent(id);
+      return reply.code(result.restored ? 200 : 400).send({ ok: result.restored, unbuckled: result.restored, message: result.message });
+    });
+
+    this.fastify.post('/v1/runtime-agents/:id/uninstall', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const manager = new AgentRuntimeManager();
+      try {
+        await manager.stopAgent(id);
+      } catch {
+        // ignore
+      }
+      const result = await manager.restoreAgent(id);
+      return reply.code(result.restored ? 200 : 400).send({ ok: result.restored, uninstalled: result.restored, message: result.message });
     });
 
     this.fastify.post('/v1/agents/:id/rebind', async (request, reply) => {

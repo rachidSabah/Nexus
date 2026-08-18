@@ -79,6 +79,9 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
   ];
   const map = new Map<string, ProviderAdapter>();
   for (const a of adapters) map.set(a.providerId, a);
+  // Alias common shorthand provider IDs
+  const nvidia = map.get('nvidia-nim');
+  if (nvidia) map.set('nvidia', nvidia);
   return map;
 }
 
@@ -103,6 +106,7 @@ export const SUPPORTED_PROVIDERS = [
   'opencode-zen',
   'opencode-go',
   'nvidia-nim',
+  'nvidia',
   // Stubs for adapters to be implemented in a future release:
   'aws-bedrock',
   'vertex-ai',

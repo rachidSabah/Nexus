@@ -1,6 +1,6 @@
 'use client';
 
-import { Cpu, RefreshCw, Sparkles, Zap, CircleDollarSign, AlertTriangle, CheckCircle2, Search, Eye, Brain, Wrench, Copy, Check, Terminal, X } from 'lucide-react';
+import { Cpu, RefreshCw, Sparkles, Zap, CircleDollarSign, AlertTriangle, Search, Eye, Brain, Wrench, Copy, Check, Terminal, X, Layers } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 
@@ -40,7 +40,7 @@ interface StatsResponse {
 }
 
 export default function ModelsPage() {
-  const [filter, setFilter] = useState<'all' | 'free' | 'paid' | 'vision' | 'reasoning' | 'tools' | 'stale'>('all');
+  const [filter, setFilter] = useState<'all' | 'free' | 'paid' | 'vision' | 'reasoning' | 'tools' | 'large-context' | 'stale'>('all');
   const [query, setQuery] = useState('');
   const [selectedModel, setSelectedModel] = useState<DiscoveredModel | null>(null);
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
@@ -54,27 +54,30 @@ export default function ModelsPage() {
     const all = discover?.models ?? [];
     const q = query.trim().toLowerCase();
     return all.filter((m) => {
-      if (filter === 'free') return m.isFree === true || m.freeTier === 'FREE' || m.pricing?.isFree === true;
-      if (filter === 'paid') return m.freeTier === 'PAID' || (m.isFree !== true && m.pricing?.isFree !== true);
+      if (filter === 'free') return m.isFree === true || m.freeTier === 'FREE' || m.freeTier === 'FREE_TIER' || m.pricing?.isFree === true || m.pricing?.freeTier === 'FREE' || m.pricing?.freeTier === 'FREE_TIER';
+      if (filter === 'paid') return m.freeTier === 'PAID' || (m.isFree !== true && m.pricing?.isFree !== true && m.freeTier !== 'FREE_TIER' && m.pricing?.freeTier !== 'FREE_TIER');
       if (filter === 'vision') return m.capabilities?.vision === true;
       if (filter === 'reasoning') return m.capabilities?.reasoning === true || m.id.includes('think') || m.id.includes('r1') || m.id.includes('reason');
       if (filter === 'tools') return m.capabilities?.toolCalling === true || m.capabilities?.functionCalling === true || m.capabilities?.tools === true;
+      if (filter === 'large-context') return (m.contextWindow ?? 0) >= 65536;
       if (filter === 'stale') return m.stale === true;
       return true;
     }).filter((m) => {
       if (!q) return true;
       const caps = Object.keys(m.capabilities ?? {}).join(' ').toLowerCase();
+      const ctxStr = m.contextWindow ? `${Math.round(m.contextWindow / 1024)}k` : '';
       return (
         m.id.toLowerCase().includes(q) ||
         (m.nativeModelId ?? '').toLowerCase().includes(q) ||
         m.providerId.toLowerCase().includes(q) ||
+        ctxStr.includes(q) ||
         caps.includes(q)
       );
     });
   }, [discover, filter, query]);
 
   const freeCount = useMemo(
-    () => (discover?.models ?? []).filter((m) => m.isFree === true || m.freeTier === 'FREE' || m.pricing?.isFree === true).length,
+    () => (discover?.models ?? []).filter((m) => m.isFree === true || m.freeTier === 'FREE' || m.freeTier === 'FREE_TIER' || m.pricing?.isFree === true || m.pricing?.freeTier === 'FREE' || m.pricing?.freeTier === 'FREE_TIER').length,
     [discover],
   );
   const paidCount = (discover?.models ?? []).length - freeCount;
@@ -175,6 +178,7 @@ export default function ModelsPage() {
               { id: 'vision', label: 'Vision', icon: Eye },
               { id: 'reasoning', label: 'Reasoning', icon: Brain },
               { id: 'tools', label: 'Tools', icon: Wrench },
+              { id: 'large-context', label: '64K+ Ctx', icon: Layers },
               { id: 'stale', label: `Stale (${statStale})` },
             ].map((f) => (
               <button
@@ -214,17 +218,17 @@ export default function ModelsPage() {
             <table className="w-full text-left text-sm table-fixed">
               <thead>
                 <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-white/50">
-                  <th className="w-[30%] pb-3 pr-4 font-semibold">Model</th>
-                  <th className="w-[15%] pb-3 pr-4 font-semibold">Provider</th>
+                  <th className="w-[28%] pb-3 pr-4 font-semibold">Model</th>
+                  <th className="w-[14%] pb-3 pr-4 font-semibold">Provider</th>
                   <th className="w-[10%] pb-3 pr-4 font-semibold">Tier</th>
-                  <th className="w-[12%] pb-3 pr-4 font-semibold">Context</th>
+                  <th className="w-[16%] pb-3 pr-4 font-semibold">Token Limits</th>
                   <th className="w-[18%] pb-3 pr-4 font-semibold">Capabilities</th>
-                  <th className="w-[15%] pb-3 font-semibold">Pricing / Action</th>
+                  <th className="w-[14%] pb-3 font-semibold">Pricing / Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {models.map((m, index) => {
-                  const isFree = m.isFree === true || m.freeTier === 'FREE' || m.pricing?.isFree === true;
+                  const isFree = m.isFree === true || m.freeTier === 'FREE' || m.freeTier === 'FREE_TIER' || m.pricing?.isFree === true || m.pricing?.freeTier === 'FREE' || m.pricing?.freeTier === 'FREE_TIER';
                   const caps = m.capabilities ?? {};
                   const capsList = Object.entries(caps)
                     .filter(([, v]) => v === true)
@@ -258,12 +262,19 @@ export default function ModelsPage() {
                         </span>
                       </td>
                       <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
-                        <ContextWindowEditor
-                          provider={m.providerId}
-                          modelId={m.nativeModelId ?? m.id}
-                          contextWindow={m.contextWindow}
-                          onChanged={() => mutate()}
-                        />
+                        <div className="space-y-1">
+                          <ContextWindowEditor
+                            provider={m.providerId}
+                            modelId={m.nativeModelId ?? m.id}
+                            contextWindow={m.contextWindow}
+                            onChanged={() => mutate()}
+                          />
+                          {m.maxOutputTokens && (
+                            <div className="text-[10px] font-mono text-white/40">
+                              max out: <span className="text-white/70">{m.maxOutputTokens.toLocaleString()}</span>
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 pr-4">
                         <div className="flex flex-wrap gap-1">
@@ -299,7 +310,7 @@ export default function ModelsPage() {
       {/* Model Details Modal / Drawer */}
       {selectedModel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
-          <div className="relative w-full max-w-2xl rounded-2xl border border-white/15 bg-neutral-950 p-6 shadow-2xl space-y-5">
+          <div className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border border-white/15 bg-neutral-950 p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-white/10 pb-4">
               <div>
                 <div className="text-xs text-nexus-400 font-mono uppercase">{selectedModel.providerId}</div>
@@ -313,26 +324,31 @@ export default function ModelsPage() {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                <div className="text-white/40 text-[10px] uppercase font-semibold">Context Window</div>
-                <div className="text-sm font-bold text-white mt-0.5">{(selectedModel.contextWindow ?? 8192).toLocaleString()} tokens</div>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                <div className="text-white/40 text-[10px] uppercase font-semibold">Pricing Tier</div>
-                <div className="text-sm font-bold text-emerald-400 mt-0.5">{selectedModel.isFree ? 'FREE TIER' : 'PAID'}</div>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                <div className="text-white/40 text-[10px] uppercase font-semibold">Health Status</div>
-                <div className="text-sm font-bold text-emerald-400 mt-0.5 flex items-center gap-1">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Healthy
+            {(() => {
+              const isFreeModal = selectedModel.isFree === true || selectedModel.freeTier === 'FREE' || selectedModel.freeTier === 'FREE_TIER' || selectedModel.pricing?.isFree === true || selectedModel.pricing?.freeTier === 'FREE' || selectedModel.pricing?.freeTier === 'FREE_TIER';
+              return (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                    <div className="text-white/40 text-[10px] uppercase font-semibold">Context Window</div>
+                    <div className="text-sm font-bold text-white mt-0.5">{(selectedModel.contextWindow ?? 8192).toLocaleString()} tokens</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                    <div className="text-white/40 text-[10px] uppercase font-semibold">Max Output Limit</div>
+                    <div className="text-sm font-bold text-white mt-0.5">{(selectedModel.maxOutputTokens ?? 4096).toLocaleString()} tokens</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                    <div className="text-white/40 text-[10px] uppercase font-semibold">Pricing Tier</div>
+                    <div className={`text-sm font-bold mt-0.5 ${isFreeModal ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {isFreeModal ? 'FREE TIER' : (selectedModel.freeTier ?? selectedModel.pricing?.freeTier ?? 'PAID')}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                    <div className="text-white/40 text-[10px] uppercase font-semibold">Nexus Model URI</div>
+                    <div className="text-xs font-mono font-bold text-cyan-300 truncate mt-0.5">nexus/{selectedModel.providerId}/{selectedModel.id}</div>
+                  </div>
                 </div>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                <div className="text-white/40 text-[10px] uppercase font-semibold">Nexus Model URI</div>
-                <div className="text-xs font-mono font-bold text-cyan-300 truncate mt-0.5">nexus/{selectedModel.providerId}/{selectedModel.id}</div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Coding Agent Configs */}
             <div className="space-y-3 pt-2">
@@ -348,11 +364,118 @@ export default function ModelsPage() {
                   },
                   {
                     name: 'OpenAI Codex CLI',
-                    snippet: `codex --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                    snippet: `export OPENAI_BASE_URL="http://127.0.0.1:8787/v1"\nexport OPENAI_API_KEY="nexus"\ncodex --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'Gemini CLI',
+                    snippet: `export GEMINI_API_BASE="http://127.0.0.1:8787"\ngemini --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'Qwen Code CLI',
+                    snippet: `export OPENAI_BASE_URL="http://127.0.0.1:8787/v1"\nexport OPENAI_API_KEY="nexus"\nqwen --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
                   },
                   {
                     name: 'Hermes CLI',
                     snippet: `hermes -m nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'OpenCode',
+                    snippet: `opencode --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'OpenCode Go',
+                    snippet: `opencode-go --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'OpenCode Zen',
+                    snippet: `opencode-zen --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'Aider AI Pair Programmer',
+                    snippet: `export OPENAI_API_BASE="http://127.0.0.1:8787/v1"\nexport OPENAI_API_KEY="nexus"\naider --model openai/nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'Cursor IDE',
+                    snippet: JSON.stringify({
+                      title: `Nexus ${selectedModel.id}`,
+                      model: `nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                      apiBase: 'http://127.0.0.1:8787/v1',
+                      apiKey: 'nexus',
+                      provider: 'openai',
+                    }, null, 2),
+                  },
+                  {
+                    name: 'Continue (VS Code & JetBrains)',
+                    snippet: JSON.stringify({
+                      models: [
+                        {
+                          title: `Nexus ${selectedModel.id}`,
+                          provider: 'openai',
+                          model: `nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                          apiBase: 'http://127.0.0.1:8787/v1',
+                          apiKey: 'nexus',
+                        },
+                      ],
+                    }, null, 2),
+                  },
+                  {
+                    name: 'Cline (VS Code)',
+                    snippet: JSON.stringify({
+                      apiProvider: 'openai',
+                      openAiBaseUrl: 'http://127.0.0.1:8787/v1',
+                      openAiApiKey: 'nexus',
+                      openAiModelId: `nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                    }, null, 2),
+                  },
+                  {
+                    name: 'Roo Code',
+                    snippet: JSON.stringify({
+                      apiProvider: 'openai',
+                      openAiBaseUrl: 'http://127.0.0.1:8787/v1',
+                      openAiApiKey: 'nexus',
+                      openAiModelId: `nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                    }, null, 2),
+                  },
+                  {
+                    name: 'Zed Editor',
+                    snippet: JSON.stringify({
+                      language_models: {
+                        openai: {
+                          version: '1',
+                          api_url: 'http://127.0.0.1:8787/v1',
+                          available_models: [{ name: `nexus/${selectedModel.providerId}/${selectedModel.id}` }],
+                        },
+                      },
+                    }, null, 2),
+                  },
+                  {
+                    name: 'Neovim (CodeCompanion & Avante)',
+                    snippet: `require("codecompanion").setup({\n  adapters = {\n    openai = function()\n      return require("codecompanion.adapters").extend("openai", {\n        env = { url = "http://127.0.0.1:8787/v1", api_key = "nexus" },\n        schema = { model = { default = "nexus/${selectedModel.providerId}/${selectedModel.id}" } }\n      })\n    end\n  }\n})`,
+                  },
+                  {
+                    name: 'Emacs (gptel)',
+                    snippet: `(gptel-make-openai "Nexus"\n  :host "127.0.0.1:8787"\n  :endpoint "/v1/chat/completions"\n  :stream t\n  :key "nexus"\n  :models '("nexus/${selectedModel.providerId}/${selectedModel.id}"))`,
+                  },
+                  {
+                    name: 'VS Code (Global)',
+                    snippet: JSON.stringify({
+                      'chat.defaultModel': `nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                      'github.copilot.advanced': {
+                        'debug.overrideProxyUrl': 'http://127.0.0.1:8787',
+                      },
+                    }, null, 2),
+                  },
+                  {
+                    name: 'JetBrains IDEs (IntelliJ, PyCharm, WebStorm, CLion)',
+                    snippet: `export OPENAI_BASE_URL="http://127.0.0.1:8787/v1"\nexport OPENAI_API_KEY="nexus"\n# Custom OpenAI API Server URL: http://127.0.0.1:8787/v1\n# Model ID: nexus/${selectedModel.providerId}/${selectedModel.id}`,
+                  },
+                  {
+                    name: 'OpenHands (OpenDevin)',
+                    snippet: `export LLM_BASE_URL="http://127.0.0.1:8787/v1"\nexport LLM_API_KEY="nexus"\nexport LLM_MODEL="nexus/${selectedModel.providerId}/${selectedModel.id}"`,
+                  },
+                  {
+                    name: 'DeepSeek Harness (DSH)',
+                    snippet: `dsh --base-url http://127.0.0.1:8787/v1 --api-key nexus --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
                   },
                   {
                     name: 'AGY Builder',
@@ -360,7 +483,7 @@ export default function ModelsPage() {
                   },
                   {
                     name: 'cURL / REST API',
-                    snippet: `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "nexus/${selectedModel.providerId}/${selectedModel.id}", "messages": [{"role": "user", "content": "Hello"}]}'`,
+                    snippet: `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer nexus" \\\n  -d '{"model": "nexus/${selectedModel.providerId}/${selectedModel.id}", "messages": [{"role": "user", "content": "Hello"}]}'`,
                   },
                 ].map((agent) => (
                   <div key={agent.name} className="rounded-xl border border-white/10 bg-black/60 p-3">

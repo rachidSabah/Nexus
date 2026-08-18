@@ -129,6 +129,11 @@ const PROVIDER_DEFAULT_CAPS: Record<string, ProviderCapabilities> = {
     embeddings: false, reasoning: false, jsonMode: true,
     maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
   },
+  nvidia: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
 };
 
 const FALLBACK_CAPS: ProviderCapabilities = {
@@ -165,6 +170,7 @@ const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = {
   cerebras: 'https://api.cerebras.ai/v1',
   cloudflare: 'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1',
   'nvidia-nim': 'https://integrate.api.nvidia.com/v1',
+  nvidia: 'https://integrate.api.nvidia.com/v1',
   'opencode-zen': 'https://opencode.ai/zen/v1',
   'opencode-go': 'https://opencode.ai/zen/go/v1',
   ollama: 'http://localhost:11434/v1',
@@ -192,6 +198,7 @@ const PROVIDER_DEFAULT_PRICING: Record<string, { inputPer1K: number; outputPer1K
   fireworks: { inputPer1K: 0.002, outputPer1K: 0.008, currency: 'USD' },
   cerebras: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   'nvidia-nim': { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  nvidia: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   'opencode-zen': { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   'opencode-go': { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   ollama: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },

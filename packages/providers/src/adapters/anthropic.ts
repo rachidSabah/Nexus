@@ -232,13 +232,20 @@ export class AnthropicAdapter implements ProviderAdapter {
     if (req.topP !== undefined) body['top_p'] = req.topP;
     if (req.stop !== undefined) body['stop_sequences'] = Array.isArray(req.stop) ? req.stop : [req.stop];
     if (req.tools !== undefined) {
-      body['tools'] = (req.tools as Array<{ function?: { name: string; description?: string; parameters?: unknown } }>)
+      const toolList = (req.tools as Array<{ function?: { name: string; description?: string; parameters?: unknown } }>)
         .filter((t) => t.function)
         .map((t) => ({
           name: t.function!.name,
           description: t.function!.description,
           input_schema: t.function!.parameters,
         }));
+      if (toolList.length > 0) {
+        // Attach cache_control to the final tool so Anthropic caches both
+        // the system prompt and the entire tool catalog across turns.
+        const last = toolList[toolList.length - 1] as typeof toolList[0] & { cache_control?: { type: 'ephemeral' } };
+        last.cache_control = { type: 'ephemeral' };
+      }
+      body['tools'] = toolList;
     }
     if (req.toolChoice !== undefined) {
       if (req.toolChoice === 'auto') body['tool_choice'] = { type: 'auto' };
