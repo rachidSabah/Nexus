@@ -14,6 +14,7 @@ import {
   type ProviderRequestStartedEvent,
   type ProviderRequestSucceededEvent,
   type RequestReceivedEvent,
+  type SpeculativeRaceWonEvent,
 } from '../domain/events.js';
 import type {
   ChatCompletionChunk,
@@ -334,9 +335,26 @@ export class ChatCompletionUseCase {
           }
         }
 
-        const response = effectiveRequest.stream
-          ? await this.streamAndCollect(adapter, endpointWithKey, effectiveRequest, guardedSink, effectiveSignal)
-          : await adapter.chatCompletion(endpointWithKey, effectiveRequest, effectiveSignal);
+        const useSpeculativeHedge =
+          effectiveRequest.stream &&
+          attempt === 0 &&
+          decision.alternatives.length > 0 &&
+          (effectiveRequest.routing?.speculativeFallback || effectiveRequest.routing?.hedgedDelayMs);
+
+        const response = useSpeculativeHedge
+          ? await this.streamAndCollectHedged(
+              decision,
+              adapter,
+              endpointWithKey,
+              effectiveRequest,
+              guardedSink,
+              effectiveSignal,
+              requestId,
+              correlationId,
+            )
+          : effectiveRequest.stream
+            ? await this.streamAndCollect(adapter, endpointWithKey, effectiveRequest, guardedSink, effectiveSignal)
+            : await adapter.chatCompletion(endpointWithKey, effectiveRequest, effectiveSignal);
 
         // ─── Plugin hook: onProviderEnd ───────────────────────────────────
         if (this.plugins) {
@@ -594,6 +612,178 @@ export class ChatCompletionUseCase {
       provider: endpoint.providerId,
       endpoint: endpoint.id,
       latencyMs: 0, // set by caller
+    };
+  }
+
+  /**
+   * Hedged speculative streaming: launches request to primary, and if no token
+   * is emitted within hedgedDelayMs (default: 800ms), speculatively starts a
+   * concurrent stream to the first alternative endpoint. Whichever yields the
+   * first token wins the race; the slower/stalled connection is aborted immediately.
+   */
+  private async streamAndCollectHedged(
+    decision: RoutingDecision,
+    primaryAdapter: ProviderAdapter,
+    primaryEndpoint: ProviderEndpoint,
+    request: ChatCompletionRequest,
+    sink: ChunkSink | undefined,
+    signal: AbortSignal,
+    requestId: string,
+    correlationId?: string,
+  ): Promise<ChatCompletionResponse> {
+    const hedgedDelayMs = request.routing?.hedgedDelayMs ?? 800;
+    const altEndpoint = decision.alternatives[0];
+    const altAdapter = altEndpoint ? this.adapters.get(altEndpoint.providerId) : undefined;
+
+    if (!altEndpoint || !altAdapter) {
+      return this.streamAndCollect(primaryAdapter, primaryEndpoint, request, sink, signal);
+    }
+
+    let altEndpointWithKey: ProviderEndpoint = altEndpoint;
+    if (this.keyRegistry) {
+      const altKeyId = this.keyRegistry.select(altEndpoint.providerId, {
+        strategy: this.keyRotationStrategy,
+      });
+      if (altKeyId) {
+        const altPlaintext = await this.keyRegistry.getPlaintext(altKeyId);
+        if (altPlaintext) {
+          altEndpointWithKey = { ...altEndpoint, apiKey: altPlaintext } as ProviderEndpoint & { apiKey: string };
+        }
+      }
+    }
+
+    const primaryCtrl = new AbortController();
+    const altCtrl = new AbortController();
+
+    const onParentAbort = () => {
+      primaryCtrl.abort();
+      altCtrl.abort();
+    };
+    signal.addEventListener('abort', onParentAbort);
+
+    try {
+      const primaryIter = primaryAdapter.streamChatCompletion(primaryEndpoint, request, primaryCtrl.signal)[Symbol.asyncIterator]();
+      const primaryFirstPromise = primaryIter.next();
+
+      let hedgedTimer: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
+        hedgedTimer = setTimeout(() => resolve({ isTimeout: true }), hedgedDelayMs);
+      });
+
+      const firstRace = await Promise.race([
+        primaryFirstPromise.then((res) => ({ isTimeout: false as const, res })),
+        timeoutPromise,
+      ]);
+
+      if (!firstRace.isTimeout) {
+        if (hedgedTimer) clearTimeout(hedgedTimer);
+        // Primary yielded first token within delay window! Complete stream normally with primary.
+        return await this.consumeStream(primaryIter, firstRace.res, primaryEndpoint, request, sink);
+      }
+
+      // Timer elapsed before primary emitted a token! Launch speculative hedged stream to alternative
+      const altIter = altAdapter.streamChatCompletion(altEndpointWithKey, request, altCtrl.signal)[Symbol.asyncIterator]();
+      const altFirstPromise = altIter.next();
+
+      const secondRace = await Promise.race([
+        primaryFirstPromise.then((res) => ({ winner: 'primary' as const, res })),
+        altFirstPromise.then((res) => ({ winner: 'alt' as const, res })),
+      ]);
+
+      if (hedgedTimer) clearTimeout(hedgedTimer);
+
+      if (secondRace.winner === 'primary') {
+        altCtrl.abort();
+        return await this.consumeStream(primaryIter, secondRace.res, primaryEndpoint, request, sink);
+      } else {
+        primaryCtrl.abort();
+        await this.events.publish(
+          buildEvent<SpeculativeRaceWonEvent>(
+            'speculative.race.won',
+            {
+              requestId,
+              winnerEndpointId: altEndpoint.id,
+              loserEndpointId: primaryEndpoint.id,
+              winnerProviderId: altEndpoint.providerId,
+              loserProviderId: primaryEndpoint.providerId,
+              hedgedDelayMs,
+              timeSavedMs: hedgedDelayMs,
+            },
+            correlationId,
+          ),
+        );
+        return await this.consumeStream(altIter, secondRace.res, altEndpoint, request, sink);
+      }
+    } finally {
+      signal.removeEventListener('abort', onParentAbort);
+    }
+  }
+
+  private async consumeStream(
+    iter: AsyncIterator<ChatCompletionChunk>,
+    firstRes: IteratorResult<ChatCompletionChunk>,
+    endpoint: ProviderEndpoint,
+    request: ChatCompletionRequest,
+    sink: ChunkSink | undefined,
+  ): Promise<ChatCompletionResponse> {
+    const chunks: ChatCompletionChunk[] = [];
+    let contentBuffer = '';
+    let reasoningBuffer = '';
+    let lastUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let finishReason = 'stop';
+    const id = randomUUID();
+
+    const processChunk = async (chunk: ChatCompletionChunk) => {
+      let c = chunk;
+      if (this.plugins) {
+        const results = await this.plugins.invokeHook<ChatCompletionChunk>('onProviderChunk', c);
+        for (let i = results.length - 1; i >= 0; i--) {
+          if (results[i] !== undefined) {
+            c = results[i]!;
+            break;
+          }
+        }
+      }
+      chunks.push(c);
+      if (c.choices[0]?.delta?.content) contentBuffer += c.choices[0].delta.content;
+      if (c.choices[0]?.delta?.reasoning) reasoningBuffer += c.choices[0].delta.reasoning;
+      if (c.usage) lastUsage = c.usage;
+      if (c.choices[0]?.finish_reason) finishReason = c.choices[0].finish_reason;
+      if (sink) await sink.write(c);
+    };
+
+    if (!firstRes.done && firstRes.value) {
+      await processChunk(firstRes.value);
+    }
+
+    let next = await iter.next();
+    while (!next.done) {
+      await processChunk(next.value);
+      next = await iter.next();
+    }
+
+    if (sink) await sink.end();
+
+    return {
+      id,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: request.model,
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: contentBuffer,
+            ...(reasoningBuffer ? { reasoningContent: reasoningBuffer } : {}),
+          },
+          finish_reason: finishReason,
+        },
+      ],
+      usage: lastUsage,
+      provider: endpoint.providerId,
+      endpoint: endpoint.id,
+      latencyMs: 0,
     };
   }
 

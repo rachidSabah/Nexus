@@ -124,6 +124,10 @@ export interface RoutingRequest {
   readonly region?: string;
   readonly tags?: readonly string[];
   readonly budgetRemainingUsd?: number;
+  /** When true, launches a hedged speculative request to alternative endpoint if primary TTFT stalls. */
+  readonly speculativeFallback?: boolean;
+  /** Milliseconds to wait before launching speculative hedged request (default: 800ms). */
+  readonly hedgedDelayMs?: number;
 }
 
 /**

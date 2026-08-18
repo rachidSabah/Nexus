@@ -126,6 +126,19 @@ export interface CacheMissEvent extends DomainEvent {
   };
 }
 
+export interface SpeculativeRaceWonEvent extends DomainEvent {
+  readonly type: 'speculative.race.won';
+  readonly payload: {
+    readonly requestId: string;
+    readonly winnerEndpointId: string;
+    readonly loserEndpointId: string;
+    readonly winnerProviderId: string;
+    readonly loserProviderId: string;
+    readonly hedgedDelayMs: number;
+    readonly timeSavedMs: number;
+  };
+}
+
 export interface BudgetThresholdEvent extends DomainEvent {
   readonly type: 'budget.threshold';
   readonly payload: {
