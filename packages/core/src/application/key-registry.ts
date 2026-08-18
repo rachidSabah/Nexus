@@ -33,9 +33,19 @@ export type KeyRotationStrategy =
   | 'lru'
   | 'latency'
   | 'health'
+  | 'weighted'
   | 'adaptive';
 
 export type KeyStatus = 'active' | 'cooldown' | 'exhausted' | 'invalid';
+
+export interface KeyRotationPolicy {
+  readonly providerId: string;
+  readonly maxAgeDays?: number;
+  readonly autoRotate?: boolean;
+  readonly rotationSchedule?: string;
+  readonly lastRotatedAt?: number;
+  readonly notifyWebhook?: string;
+}
 
 export interface KeyDescriptor {
   /** Stable id for this key (e.g. "openai-key-01"). User-supplied or auto-generated. */
@@ -46,6 +56,8 @@ export interface KeyDescriptor {
   readonly label?: string;
   /** Last 4 chars of the plaintext key, for display (`sk-••••••abcd`). */
   readonly lastFour: string;
+  /** Relative routing weight (1-100) for weighted multi-key selection. Default 1. */
+  weight?: number;
 
   status: KeyStatus;
   /** Total requests sent using this key. */
@@ -91,6 +103,8 @@ export class KeyRegistry {
   private readonly byProvider = new Map<string, string[]>();
   /** round-robin cursor per provider. */
   private readonly cursors = new Map<string, number>();
+  /** providerId → rotation policy. */
+  private readonly rotationPolicies = new Map<string, KeyRotationPolicy>();
   /** Reference to the encrypted credential vault (stores plaintexts). */
   private readonly vault: CredentialVaultPort;
   private readonly cooldownMs: number;
@@ -301,6 +315,8 @@ export class KeyRegistry {
         return this.selectLatency(candidates);
       case 'health':
         return this.selectHealth(candidates);
+      case 'weighted':
+        return this.selectWeighted(candidates);
       case 'adaptive':
       default:
         return this.selectAdaptive(candidates);
@@ -460,6 +476,59 @@ export class KeyRegistry {
       }
     }
     return best.id;
+  }
+
+  private selectWeighted(candidates: readonly KeyDescriptor[]): string | undefined {
+    if (candidates.length === 0) return undefined;
+    if (candidates.length === 1) return candidates[0]!.id;
+    const totalWeight = candidates.reduce((sum, k) => sum + (k.weight ?? 1), 0);
+    let rand = Math.random() * totalWeight;
+    for (const k of candidates) {
+      rand -= (k.weight ?? 1);
+      if (rand <= 0) return k.id;
+    }
+    return candidates[0]!.id;
+  }
+
+  setKeyWeight(keyId: string, weight: number): boolean {
+    const k = this.keys.get(keyId);
+    if (!k) return false;
+    k.weight = Math.max(1, Math.min(100, Math.floor(weight)));
+    return true;
+  }
+
+  setRotationPolicy(providerId: string, policy: Partial<KeyRotationPolicy>): KeyRotationPolicy {
+    const existing = this.rotationPolicies.get(providerId) ?? { providerId };
+    const merged: KeyRotationPolicy = {
+      ...existing,
+      ...policy,
+      providerId,
+    };
+    this.rotationPolicies.set(providerId, merged);
+    return merged;
+  }
+
+  getRotationPolicy(providerId: string): KeyRotationPolicy | undefined {
+    return this.rotationPolicies.get(providerId);
+  }
+
+  listRotationPolicies(): readonly KeyRotationPolicy[] {
+    return Array.from(this.rotationPolicies.values());
+  }
+
+  getExpiringKeys(maxAgeDays = 90): Array<{ key: KeyDescriptor; ageDays: number; status: 'expired' | 'expiring_soon' | 'valid' }> {
+    const now = Date.now();
+    const results: Array<{ key: KeyDescriptor; ageDays: number; status: 'expired' | 'expiring_soon' | 'valid' }> = [];
+    for (const key of this.keys.values()) {
+      const policy = this.rotationPolicies.get(key.providerId);
+      const limitDays = policy?.maxAgeDays ?? maxAgeDays;
+      const ageMs = now - key.registeredAt;
+      const ageDays = Math.max(0, Math.floor(ageMs / (24 * 60 * 60 * 1000)));
+      const status: 'expired' | 'expiring_soon' | 'valid' =
+        ageDays >= limitDays ? 'expired' : ageDays >= Math.max(1, limitDays - 14) ? 'expiring_soon' : 'valid';
+      results.push({ key, ageDays, status });
+    }
+    return results;
   }
 
   private successRate(k: KeyDescriptor): number {

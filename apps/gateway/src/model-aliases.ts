@@ -94,6 +94,7 @@ export const FAMILY_PATTERNS: ReadonlyArray<readonly [RegExp, FamilyId]> = [
   [/^minimax/i, 'minimax'],
   [/^glm-/i, 'zhipu'],
   [/^kimi/i, 'moonshot'],
+  [/^(?:gateway|gateway-routed|default|auto|agent|nexus|custom)/i, 'default'],
 ];
 
 export interface FamilyDefaults {
@@ -543,6 +544,20 @@ export class ModelAliasRegistry {
 
     const family = matchFamily(model);
     if (family) return this.resolveClaudeFamily(model, family);
+
+    const fallback = this.resolve('nexus/best-coding') ?? this.resolve('nexus/best') ?? this.resolve('nexus/auto') ?? this.resolve('local/coding') ?? this.resolve('local/best');
+    if (fallback) {
+      return {
+        model: fallback.modelId,
+        resolution: {
+          modelId: fallback.modelId,
+          providerId: fallback.providerId,
+          reason: `Unmatched model name '${model}' -> fallback '${fallback.modelId}' on provider '${fallback.providerId}'`,
+          candidateCount: fallback.candidateCount,
+        },
+      };
+    }
+
     return { model };
   }
 
