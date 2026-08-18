@@ -5102,6 +5102,45 @@ let optMessages: never[] | undefined;
       return reply.send({ ok: true, bundle });
     });
 
+    this.fastify.get('/v1/vault/export/file', async (request, reply) => {
+      const q = (request.query as { passphrase?: string }) ?? {};
+      const passphrase = q.passphrase || 'nexus-default-vault-backup';
+      const keys = this.deps.keyRegistry.listAll();
+      const vaultData: Array<{ id: string; providerId: string; label?: string; plaintext: string; weight?: number; registeredAt: number }> = [];
+      for (const k of keys) {
+        const plaintext = await this.deps.keyRegistry.getPlaintext(k.id);
+        if (plaintext) {
+          vaultData.push({
+            id: k.id,
+            providerId: k.providerId,
+            label: k.label,
+            plaintext,
+            weight: k.weight,
+            registeredAt: k.registeredAt,
+          });
+        }
+      }
+      const salt = randomBytes(16);
+      const iv = randomBytes(12);
+      const encKey = pbkdf2Sync(passphrase, salt, 100000, 32, 'sha256');
+      const cipher = createCipheriv('aes-256-gcm', encKey, iv);
+      const encrypted = Buffer.concat([cipher.update(JSON.stringify(vaultData), 'utf8'), cipher.final()]);
+      const tag = cipher.getAuthTag();
+      const bundle = {
+        version: 1,
+        format: 'anx-vault-v1',
+        salt: salt.toString('base64'),
+        iv: iv.toString('base64'),
+        tag: tag.toString('base64'),
+        ciphertext: encrypted.toString('base64'),
+        exportedAt: new Date().toISOString(),
+        keyCount: vaultData.length,
+      };
+      reply.header('Content-Type', 'application/octet-stream');
+      reply.header('Content-Disposition', 'attachment; filename=".anx-vault.enc"');
+      return reply.send(JSON.stringify(bundle, null, 2));
+    });
+
     this.fastify.post('/v1/vault/import', async (request, reply) => {
       const body = request.body as { bundle: { salt: string; iv: string; tag: string; ciphertext: string }; passphrase?: string };
       if (!body?.bundle?.ciphertext || !body?.bundle?.iv || !body?.bundle?.tag || !body?.bundle?.salt) {
