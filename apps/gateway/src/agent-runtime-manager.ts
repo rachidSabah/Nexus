@@ -625,7 +625,7 @@ export class AgentRuntimeManager {
     } else if (catalog?.installRecipe?.type === 'pip' && catalog.installRecipe.packageName) {
       actions.push(`Uninstalling pip package ${catalog.installRecipe.packageName}...`);
       try {
-        await new Promise<void>((resolve, reject) => {
+        await new Promise<void>((resolve) => {
           const child = spawn(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'pip', 'uninstall', '-y', catalog.installRecipe.packageName!], {
             stdio: 'pipe',
             timeout: 120_000,

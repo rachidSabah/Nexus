@@ -14,7 +14,7 @@ describe('Hedged Speculative Fallback Streaming', () => {
     displayName: 'Primary Provider',
     baseUrl: 'https://primary.ai/v1',
     capabilities: { streaming: true, toolCalling: true, vision: false, audio: false, speech: false, embeddings: false, reasoning: false, jsonMode: true, maxOutputTokens: 4096, maxInputTokens: 8192, supportedModalities: ['text'] },
-    priority: 10,
+    priority: 1,
     weight: 10,
     tags: ['cloud'],
     timeoutMs: 5000,
@@ -31,7 +31,7 @@ describe('Hedged Speculative Fallback Streaming', () => {
     displayName: 'Alternative Provider',
     baseUrl: 'https://alt.ai/v1',
     capabilities: { streaming: true, toolCalling: true, vision: false, audio: false, speech: false, embeddings: false, reasoning: false, jsonMode: true, maxOutputTokens: 4096, maxInputTokens: 8192, supportedModalities: ['text'] },
-    priority: 5,
+    priority: 10,
     weight: 5,
     tags: ['cloud'],
     timeoutMs: 5000,
@@ -92,6 +92,7 @@ describe('Hedged Speculative Fallback Streaming', () => {
       stream: true,
       messages: [{ role: 'user', content: 'hello' }],
       routing: {
+        strategy: 'priority',
         speculativeFallback: true,
         hedgedDelayMs: 200,
       },
@@ -162,6 +163,7 @@ describe('Hedged Speculative Fallback Streaming', () => {
       stream: true,
       messages: [{ role: 'user', content: 'hello' }],
       routing: {
+        strategy: 'priority',
         speculativeFallback: true,
         hedgedDelayMs: 50, // hedged alternative kicks in after 50ms
       },

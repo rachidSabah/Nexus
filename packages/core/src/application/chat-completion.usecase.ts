@@ -26,6 +26,7 @@ import type {
   TokenUsage,
 } from '../domain/types.js';
 
+import { repairJson, repairToolCallArguments } from './json-repair.js';
 import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
 import type {
   CachePort,
@@ -40,7 +41,6 @@ import type {
 import type { PrivacyConfig } from './privacy.js';
 import { DEFAULT_PRIVACY } from './privacy.js';
 import type { RequestTracer } from './request-tracer.js';
-import { repairJson, repairToolCallArguments } from './json-repair.js';
 
 export interface ChatCompletionUseCaseOptions {
   /** Optional cache. When provided, exact-match cache is consulted before routing. */

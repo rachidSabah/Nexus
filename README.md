@@ -158,36 +158,53 @@ Gateway: `http://127.0.0.1:8787` · Dashboard: `http://127.0.0.1:3000`
 
 ---
 
-## Connecting Coding Agents
+## Advanced Gateway Capabilities
 
-Nexus provides drop-in compatibility for all major coding agents:
+### ⚡ 1. Speculative Hedged Streaming (<800ms TTFT)
+When an upstream provider experiences transient lag, queue buildup, or stalled first-token delivery, Nexus speculatively starts a concurrent stream to the next best alternative provider after an adaptive threshold (`hedgedDelayMs`, default 800ms). The first provider to emit tokens wins the race; the slower upstream socket is instantly aborted via `AbortController`, preventing double billing and eliminating waiting time.
 
-| Agent | Config File | Setting | Protocol |
+### 🛡️ 2. Self-Healing JSON & Tool Schema Repair Middleware
+LLM reasoning models occasionally truncate closing braces or emit markdown fences around JSON outputs. Nexus transparently repairs responses before returning them to your coding agents:
+- Strips markdown fences (```` ```json ````) and preamble commentary.
+- Converts single-quoted keys and unquoted identifiers into strict RFC-8259 JSON.
+- Auto-closes unclosed quotes, brackets (`]`), and braces (`}`).
+- Eliminates illegal trailing commas in objects and arrays.
+
+### 🔌 3. Universal Cross-Agent Shared Context Bus & MCP Tool Bridge
+All connected coding agents (Claude Code, Cursor, Aider, OpenCode, Codex) can share context, architectural decisions, and bug investigations in real time via the Nexus Context Bus and native Model Context Protocol (MCP) server:
+- **`broadcast_context`**: Publish architectural discoveries, test results, or refactoring constraints across all active agent sessions.
+- **`query_shared_context`**: Query shared knowledge by topic or tag to prevent duplicate work.
+- **REST Endpoints**: `/v1/context/broadcast`, `/v1/context/query`, `/v1/context/shared`.
+
+### 🖥️ 4. Air-Gapped Local Inference & Circuit-Aware Failover
+When cloud providers experience 5xx outages, rate limit saturation, or network disconnects, Nexus seamlessly shifts traffic to local inference backends (`ollama`, `vllm`, `lmstudio`) without breaking active coding sessions.
+
+---
+
+## Connecting Coding Agents & IDEs
+
+Nexus provides drop-in compatibility for 20+ coding agents and IDEs with **1-Click Install, Auto-Update, Buckle to Nexus, and Complete Uninstall**:
+
+| Agent / IDE | Config File / Settings | Protocol | 1-Click Dashboard Support |
 |---|---|---|---|
-| **Claude Code** | `~/.claude/settings.json` | `"apiBaseUrl": "http://127.0.0.1:8787"` | Anthropic `/v1/messages` |
-| **Codex CLI** | `~/.codex/config.json` | `"baseUrl": "http://127.0.0.1:8787/v1"` | OpenAI `/v1/chat/completions` |
-| **Gemini CLI** | `~/.gemini/settings.json` | `"baseUrl": "http://127.0.0.1:8787/v1"` | OpenAI-compatible |
-| **OpenCode** | `~/.opencode.json` | `"url": "http://127.0.0.1:8787/v1"` | OpenAI-compatible |
-| **Qwen Code / Kimi Code** | Agent config / env | `OPENAI_BASE_URL=http://127.0.0.1:8787/v1` | OpenAI-compatible |
-| **Aider** | Command-line | `--openai-api-base http://127.0.0.1:8787/v1` | OpenAI-compatible |
-| **Cursor / Windsurf** | Settings → Models | Override Base URL: `http://127.0.0.1:8787/v1` | OpenAI-compatible |
-| **Cline / Roo Code** | Extension Settings | API Provider: OpenAI-compatible, URL: `http://127.0.0.1:8787/v1` | OpenAI-compatible |
-| **AGY** | Native Port | Auto-bound via `AgyBuilderAdapter` | Control Plane Native |
+| **Claude Code** | `~/.claude/settings.json` (`apiBaseUrl`) | Anthropic `/v1/messages` | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Cursor / Windsurf** | Settings → Models (Base URL) | OpenAI `/v1/chat/completions` | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Aider** | `--openai-api-base http://127.0.0.1:8787/v1` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **OpenCode / OpenCode Zen** | `~/.opencode.json` (`url`) | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Codex CLI** | `~/.codex/config.json` (`baseUrl`) | OpenAI `/v1/chat/completions` | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Gemini CLI** | `~/.gemini/settings.json` (`baseUrl`) | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Hermes CLI** | `~/.hermes/config.json` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Qwen Code / Kimi Code** | `OPENAI_BASE_URL=http://127.0.0.1:8787/v1` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Cline / Roo Code** | VS Code Extension Settings | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **VS Code / Continue** | `~/.continue/config.json` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Neovim (Avante/CodeCompanion)** | `~/.config/nvim/lua/...` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **Emacs (gptel/ellama)** | `~/.emacs.d/init.el` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **JetBrains (AI Assistant/Continue)** | IDE Plugin Settings | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **OpenHands / Devin-CLI** | Agent config / env | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **DeepSeek Harness** | CLI config / env | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
 
-> **Tip:** You can also auto-configure detected agents with one command:  
-> `node apps/gateway/dist/bin.js integrations install --all`
-
-## One-Minute Automated Install
-
-### Windows (PowerShell)
-```powershell
-irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/install.ps1 | iex
-```
-
-### Linux & macOS (Bash)
-```bash
-curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/install.sh | bash
-```
+> **CLI Helper:** You can also auto-configure all detected agents in one command:  
+> `anx integrations install --all` or via Dashboard at `http://127.0.0.1:3000/integrations`.
 
 ---
 
@@ -219,23 +236,24 @@ Nexus v0.5.0 features a local-first **Durable Persistence & Recovery Engine**:
 
 ---
 
-## REST API Summary
+## REST & MCP API Summary
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions with routing extensions |
-| `POST` | `/v1/messages` | Anthropic-compatible Messages API |
-| `GET` | `/v1/models` | All discovered models across all healthy providers |
-| `GET` | `/v1/providers` | Configured provider health, models, and latency |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions with speculative hedged streaming |
+| `POST` | `/v1/messages` | Anthropic-compatible Messages API with transparent protocol translation |
+| `GET` | `/v1/models` | All dynamically discovered models across all healthy providers |
+| `GET` | `/v1/providers` | Configured provider health, models, and latency metrics |
+| `POST` | `/v1/context/broadcast` | Broadcast shared architecture context to all connected agents |
+| `POST` | `/v1/context/query` | Query cross-agent shared context bus |
+| `POST` | `/v1/agents/:id/install` | Install agent CLI package in background |
+| `POST` | `/v1/agents/:id/update` | Update agent CLI package to latest upstream release |
+| `POST` | `/v1/agents/:id/rebind` | Configure agent to route through Nexus Gateway |
+| `POST` | `/v1/agents/:id/unbuckle` | Restore agent configuration to upstream standalone defaults |
+| `POST` | `/v1/agents/:id/uninstall` | Terminate process and completely uninstall agent package |
 | `POST` | `/v1/missions` | Dispatch autonomous multi-agent engineering missions (Idempotent) |
-| `GET` | `/v1/missions/:id/checkpoints` | Inspect immutable DAG execution checkpoints |
 | `GET` | `/v1/system/health` | Truthful 14-subsystem health matrix |
 | `GET` | `/v1/system/diagnostics` | Deep system diagnostics with automated root-cause analysis |
-| `GET` | `/v1/system/recovery` | Crash recovery status & in-flight interrupted missions |
-| `POST` | `/v1/system/recovery/reconcile` | Operator mission recovery actions (RESUME, RETRY, CANCEL) |
-| `POST` | `/v1/system/backup` | Generate verified system backup snapshot bundle |
-| `POST` | `/v1/system/restore` | Restore platform state from backup bundle |
-| `GET` | `/v1/system/events` | Real-time Server-Sent Events (SSE) telemetry stream |
 
 Full API reference: [`docs/API.md`](docs/API.md)
 
@@ -243,7 +261,7 @@ Full API reference: [`docs/API.md`](docs/API.md)
 
 ## Official 32-Topic Wiki Documentation
 
-The complete, in-depth documentation is available in [`docs/wiki/`](docs/wiki/):
+The complete, in-depth documentation is available in [`docs/wiki/`](docs/wiki/) and [GitHub Wiki](https://github.com/rachidSabah/codingghosts/wiki):
 
 | Chapter | Topic | Link |
 |---|---|---|

@@ -71,7 +71,7 @@ export function repairJson(input: string): JsonRepairResult {
   }
 
   // 4. Clean trailing commas in objects and arrays
-  text = text.replace(/,\s*([\}\]])/g, '$1');
+  text = text.replace(/,\s*([}\]])/g, '$1');
 
   // 5. Replace single quotes around keys or strings with double quotes
   // Handles {'key': 'value'} -> {"key": "value"} safely
@@ -119,7 +119,7 @@ export function repairJson(input: string): JsonRepairResult {
   }
 
   // Clean trailing commas again if closure produced any
-  text = text.replace(/,\s*([\}\]])/g, '$1');
+  text = text.replace(/,\s*([}\]])/g, '$1');
 
   // 7. Verify repaired JSON
   try {
