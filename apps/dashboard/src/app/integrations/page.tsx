@@ -172,30 +172,39 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
       {/* Lifecycle controls — gated by adapter capabilities */}
       <div className="mt-4">
         <div className="flex flex-wrap gap-2">
-          {/* 1-Click Buckle / Install Action Button */}
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => run('install', installAgent)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-nexus-500/50 bg-nexus-500/20 px-3 py-1.5 text-[11px] font-semibold text-nexus-200 transition hover:bg-nexus-500/30 disabled:opacity-40"
-            title={`1-Click execute backend integration install/configuration for ${status.displayName}`}
-          >
-            <Rocket className={`h-3.5 w-3.5 ${busy === 'install' ? 'animate-pulse' : ''}`} />
-            {busy === 'install'
-              ? 'Configuring…'
-              : !status.installed
-                ? '1-Click Install & Buckle'
-                : '1-Click Buckle to Nexus'}
-          </button>
-
-          {mismatch && (
+          {/* Action 1: Install Binary Package if not present on system */}
+          {!status.installed ? (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => run('install', installAgent)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-nexus-500/50 bg-nexus-500/20 px-3 py-1.5 text-[11px] font-semibold text-nexus-200 transition hover:bg-nexus-500/30 disabled:opacity-40"
+              title={`Install ${status.displayName} binary package on system`}
+            >
+              <Rocket className={`h-3.5 w-3.5 ${busy === 'install' ? 'animate-pulse' : ''}`} />
+              {busy === 'install' ? 'Installing…' : 'Install Agent'}
+            </button>
+          ) : !status.configured ? (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => run('rebind', rebind)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-nexus-500/50 bg-nexus-500/20 px-3 py-1.5 text-[11px] font-semibold text-nexus-200 transition hover:bg-nexus-500/30 disabled:opacity-40"
+              title={`Configure ${status.displayName} to route through Nexus Gateway`}
+            >
+              <Rocket className={`h-3.5 w-3.5 ${busy === 'rebind' ? 'animate-pulse' : ''}`} />
+              {busy === 'rebind' ? 'Buckling…' : 'Buckle to Nexus'}
+            </button>
+          ) : (
             <button
               type="button"
               disabled={busy !== null}
               onClick={() => run('rebind', rebind)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/30 disabled:opacity-40"
+              title={`Re-apply Nexus gateway configuration for ${status.displayName}`}
             >
-              <RotateCw className="h-3.5 w-3.5" /> {busy === 'rebind' ? 'Rebinding…' : 'Rebind to Nexus'}
+              <RotateCw className={`h-3.5 w-3.5 ${busy === 'rebind' ? 'animate-spin' : ''}`} />
+              {busy === 'rebind' ? 'Rebinding…' : 'Rebind to Nexus'}
             </button>
           )}
 
@@ -258,7 +267,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
             disabled={busy !== null}
             onClick={() => setConfirm('uninstall')}
             className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/20 bg-rose-500/5 px-3 py-1.5 text-[11px] font-semibold text-rose-300/80 transition hover:bg-rose-500/15 hover:text-rose-200 disabled:opacity-40"
-            title={`Cleanly uninstall and restore ${status.displayName}`}
+            title={`Completely uninstall package binary and remove all configurations for ${status.displayName}`}
           >
             <ShieldAlert className="h-3.5 w-3.5" /> {busy === 'uninstall' ? 'Uninstalling…' : 'Uninstall'}
           </button>

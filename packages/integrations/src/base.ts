@@ -297,35 +297,6 @@ export abstract class BaseIntegration implements IntegrationAdapter {
         continue;
       }
 
-      if (file.merge === 'json-merge') {
-        if (ctx.dryRun) {
-          actions.push(`would unbind gateway settings from: ${fullPath}`);
-          continue;
-        }
-        try {
-          const existing = JSON.parse(await readFile(fullPath, 'utf8')) as Record<string, unknown>;
-          delete existing['apiBaseUrl'];
-          delete existing['apiKeyHelper'];
-          delete existing['baseUrl'];
-          delete existing['base_url'];
-          if (existing['env'] && typeof existing['env'] === 'object') {
-            const envObj = existing['env'] as Record<string, unknown>;
-            delete envObj['ANTHROPIC_BASE_URL'];
-            delete envObj['ANTHROPIC_AUTH_TOKEN'];
-            delete envObj['CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY'];
-            delete envObj['CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT'];
-            delete envObj['OPENAI_BASE_URL'];
-            delete envObj['OPENAI_API_KEY'];
-            delete envObj['GEMINI_API_BASE'];
-          }
-          await writeFile(fullPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
-          actions.push(`unbound gateway config from: ${fullPath}`);
-        } catch (err) {
-          errors.push(`failed to clean ${fullPath}: ${(err as Error).message}`);
-        }
-        continue;
-      }
-
       if (ctx.dryRun) {
         actions.push(`would remove: ${fullPath}`);
         continue;

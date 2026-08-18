@@ -5801,15 +5801,19 @@ let optMessages: never[] | undefined;
     this.fastify.post('/v1/agents/:id/uninstall', async (request, reply) => {
       const { id } = request.params as { id: string };
       const manager = new AgentRuntimeManager();
-      try {
-        await manager.stopAgent(id);
-      } catch {
-        // ignore if not running
-      }
-      const result = await manager.restoreAgent(id);
-      await this.deps.events.publish(agentEvent('agent.uninstalled', { agentId: id, ok: result.restored, message: result.message }) as any);
+      const result = await manager.uninstallAgent(id);
+      await this.deps.events.publish(agentEvent('agent.uninstalled', { agentId: id, ok: result.ok, message: result.message }) as any);
       await this.deps.events.publish(agentEvent('agent.binding.changed', { agentId: id, configured: false }) as any);
-      return reply.code(result.restored ? 200 : 400).send({ ok: result.restored, uninstalled: result.restored, message: result.message });
+      await this.getAuditLogger().record({
+        event: 'config.changed',
+        principal: 'system',
+        action: 'agent.uninstall',
+        resource: id,
+        agentId: id,
+        success: result.ok,
+        metadata: { agentId: id, message: result.message, actions: result.actions },
+      });
+      return reply.code(result.ok ? 200 : 400).send({ ok: result.ok, uninstalled: result.ok, message: result.message, actions: result.actions });
     });
 
     this.fastify.post('/v1/integrations/:id/unbuckle', async (request, reply) => {
@@ -5839,13 +5843,8 @@ let optMessages: never[] | undefined;
     this.fastify.post('/v1/runtime-agents/:id/uninstall', async (request, reply) => {
       const { id } = request.params as { id: string };
       const manager = new AgentRuntimeManager();
-      try {
-        await manager.stopAgent(id);
-      } catch {
-        // ignore
-      }
-      const result = await manager.restoreAgent(id);
-      return reply.code(result.restored ? 200 : 400).send({ ok: result.restored, uninstalled: result.restored, message: result.message });
+      const result = await manager.uninstallAgent(id);
+      return reply.code(result.ok ? 200 : 400).send({ ok: result.ok, uninstalled: result.ok, message: result.message, actions: result.actions });
     });
 
     this.fastify.post('/v1/agents/:id/rebind', async (request, reply) => {

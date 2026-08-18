@@ -578,6 +578,74 @@ export class AgentRuntimeManager {
     return { restored: res.ok, message: res.message };
   }
 
+  async uninstallAgent(agentId: string): Promise<{ ok: boolean; message: string; actions: string[] }> {
+    const catalog = getAgentCatalogEntry(agentId);
+    const actions: string[] = [];
+
+    // 1. Terminate any running process
+    try {
+      await this.stopAgent(agentId);
+      actions.push(`Terminated active process for ${agentId}`);
+    } catch {
+      // ignore
+    }
+
+    // 2. Unbind / restore configuration files
+    const adapter = this.integrationMap.get(agentId);
+    if (adapter) {
+      const res = await adapter.uninstall({ gatewayUrl: 'http://127.0.0.1:8787', apiKey: 'nexus-local-key', defaultModel: 'nexus/auto' });
+      actions.push(...res.actions);
+    }
+
+    // 3. Perform real package / binary uninstall if installed via package manager
+    if (catalog?.installRecipe?.type === 'npm' && catalog.installRecipe.packageName) {
+      actions.push(`Uninstalling npm package ${catalog.installRecipe.packageName}...`);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn('npm', ['uninstall', '-g', catalog.installRecipe.packageName!], {
+            stdio: 'pipe',
+            timeout: 120_000,
+            shell: true,
+          });
+          let errOut = '';
+          child.stderr?.on('data', (d) => (errOut += String(d)));
+          child.on('error', (err) => reject(err));
+          child.on('close', (code) => {
+            if (code === 0) {
+              actions.push(`Successfully removed npm package ${catalog.installRecipe.packageName}`);
+              resolve();
+            } else {
+              reject(new Error(`npm uninstall exited with code ${code}: ${errOut}`));
+            }
+          });
+        });
+      } catch (err) {
+        actions.push(`npm uninstall info: ${(err as Error).message}`);
+      }
+    } else if (catalog?.installRecipe?.type === 'pip' && catalog.installRecipe.packageName) {
+      actions.push(`Uninstalling pip package ${catalog.installRecipe.packageName}...`);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'pip', 'uninstall', '-y', catalog.installRecipe.packageName!], {
+            stdio: 'pipe',
+            timeout: 120_000,
+            shell: true,
+          });
+          child.on('close', () => resolve());
+        });
+      } catch (err) {
+        actions.push(`pip uninstall info: ${(err as Error).message}`);
+      }
+    }
+
+    AgentRuntimeManager.verificationCache.delete(agentId);
+    return {
+      ok: true,
+      message: `Agent ${catalog?.displayName ?? agentId} completely uninstalled.`,
+      actions,
+    };
+  }
+
   getProtocol(agentId: string): 'Anthropic/OpenAI CLI' | 'OpenAI-compatible' | 'unknown' {
     const adapter = this.integrationMap.get(agentId);
     if (!adapter) return 'unknown';
