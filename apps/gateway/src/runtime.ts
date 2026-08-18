@@ -847,11 +847,23 @@ export class GatewayRuntime {
   }
 
   async start(): Promise<void> {
+    // §41: bind the HTTP listener FIRST so the dashboard (and any client)
+    // never sees ECONNREFUSED during the slow startup tasks below. Model
+    // discovery and agent detection are async and consumed lazily by request
+    // handlers, so they can run after the port is already accepting traffic.
+    await this.server.listen(this.config.server.port, this.config.server.host);
+    this.logger.info('gateway listening', {
+      port: this.config.server.port,
+      host: this.config.server.host,
+      endpoints: this.routing.listEndpoints().length,
+    });
+
     await this.mcpClient.connect();
+    // modelRegistry.start() kicks off (and awaits) the initial model
+    // discovery; it runs after listen() so the port is already open.
     await this.modelRegistry.start();
     this.autoHealer.start();
     await this.localAgentBridge.discoverAll();
-    await this.server.listen(this.config.server.port, this.config.server.host);
     this.logger.info('gateway started', {
       port: this.config.server.port,
       host: this.config.server.host,

@@ -331,17 +331,24 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     supportedProtocols: ['OpenAI-compatible'],
   },
   {
-    id: 'kimi-code',
-    displayName: 'Kimi Code',
-    description: "Moonshot AI's Kimi coding agent CLI",
-    category: 'cli',
-    homepage: 'https://github.com/Moonshot-AI/Kimi-Code',
-    binaryNames: ['kimi'],
+    id: 'deepseek-harness',
+    displayName: 'DeepSeek Harness',
+    description: "DeepSeek's plugin-based agent harness (dsh) — serves a web UI",
+    category: 'agent',
+    homepage: 'https://github.com/deepseek-ai/deepseek-harness',
+    binaryNames: ['dsh'],
     installRecipe: {
-      type: 'manual',
-      guideUrl: 'https://github.com/Moonshot-AI/Kimi-Code',
+      type: 'npm',
+      packageName: '@deepseek-ai/dsh',
+      guideUrl: 'https://github.com/deepseek-ai/deepseek-harness',
     },
-    supportedProtocols: ['OpenAI-compatible'],
+    // DeepSeek Harness is a plugin harness that runs a web UI via `dsh web`
+    // (default http://127.0.0.1:3080). It is NOT an OpenAI-compatible CLI that
+    // accepts OPENAI_BASE_URL the way Codex does, so model binding through the
+    // Nexus OpenAI proxy is unsupported for now. It does support real process
+    // lifecycle (start `dsh web`, stop the PID), hence lifecycle-capable.
+    supportedProtocols: [],
+    configPaths: ['.deepseek/harness'],
   },
 ];
 
