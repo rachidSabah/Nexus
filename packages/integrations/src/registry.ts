@@ -5,6 +5,7 @@ import { ClineIntegration } from './adapters/cline.js';
 import { CodexCliIntegration } from './adapters/codex-cli.js';
 import { ContinueIntegration } from './adapters/continue.js';
 import { CursorIntegration } from './adapters/cursor.js';
+import { DeepSeekHarnessIntegration } from './adapters/deepseek-harness.js';
 import { EmacsIntegration } from './adapters/emacs.js';
 import { GeminiCliIntegration } from './adapters/gemini-cli.js';
 import { HermesCliIntegration } from './adapters/hermes-cli.js';
@@ -38,6 +39,7 @@ export const BUILTIN_INTEGRATIONS: IntegrationAdapter[] = [
   new OpenCodeZenIntegration(),
   new AiderIntegration(),
   new OpenHandsIntegration(),
+  new DeepSeekHarnessIntegration(),
 
   // ─── Editors ─────────────────────────────────────────────────────────────
   new CursorIntegration(),

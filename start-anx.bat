@@ -3,7 +3,12 @@ title ANX - Agent Nexus Gateway ^& Dashboard
 echo ========================================================
 echo   Starting ANX Gateway, Dashboard ^& Claude CLI...
 echo ========================================================
-cd /d "E:\CodingGhost"
+cd /d "F:\codingghosts"
+
+rem Clean the dashboard build cache so `next dev` never reuses a stale
+rem production `.next` (which causes `middleware-manifest.json missing`
+rem and `__webpack_modules__ is not a function` -> every page 500).
+if exist apps\dashboard\.next rmdir /s /q apps\dashboard\.next
 
 rem Start Gateway & Dashboard in dev mode
 start "ANX Gateway & Dashboard" cmd /k "pnpm dev"
