@@ -430,20 +430,28 @@ export class ChatCompletionUseCase {
           decision.alternatives.length > 0 &&
           (effectiveRequest.routing?.speculativeFallback || effectiveRequest.routing?.hedgedDelayMs);
 
-        const response = useSpeculativeHedge
-          ? await this.streamAndCollectHedged(
-              decision,
-              adapter,
-              endpointWithKey,
-              effectiveRequest,
-              guardedSink,
-              effectiveSignal,
-              requestId,
-              correlationId,
-            )
-          : effectiveRequest.stream
-            ? await this.streamAndCollect(adapter, endpointWithKey, effectiveRequest, guardedSink, effectiveSignal)
-            : await adapter.chatCompletion(endpointWithKey, effectiveRequest, effectiveSignal);
+        let response: ChatCompletionResponse;
+        try {
+          response = useSpeculativeHedge
+            ? await this.streamAndCollectHedged(
+                decision,
+                adapter,
+                endpointWithKey,
+                effectiveRequest,
+                guardedSink,
+                effectiveSignal,
+                requestId,
+                correlationId,
+              )
+            : effectiveRequest.stream
+              ? await this.streamAndCollect(adapter, endpointWithKey, effectiveRequest, guardedSink, effectiveSignal)
+              : await adapter.chatCompletion(endpointWithKey, effectiveRequest, effectiveSignal);
+        } finally {
+          // P5: release the concurrency reservation made by keyRegistry.select().
+          if (this.keyRegistry && selectedKeyId) {
+            this.keyRegistry.release(selectedKeyId);
+          }
+        }
 
         // ─── Plugin hook: onProviderEnd ───────────────────────────────────
         if (this.plugins) {

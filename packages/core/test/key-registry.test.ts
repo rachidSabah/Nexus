@@ -272,3 +272,62 @@ describe('KeyRegistry', () => {
     expect(registry.get('openai-key-1')!.cooldownUntil).toBe(0);
   });
 });
+
+describe('KeyRegistry concurrency cap (P5, master prompt #15)', () => {
+  it('acquire/release track in-flight requests without going negative', async () => {
+    const vault = new FakeVault();
+    const reg = new KeyRegistry(vault as never, { defaultConcurrencyLimit: 2 });
+    await reg.register({ id: 'k1', providerId: 'p', plaintext: 'sk-1' });
+    expect(reg.acquire('k1')).toBe(true);
+    expect(reg.acquire('k1')).toBe(true);
+    expect(reg.acquire('k1')).toBe(false); // at cap
+    reg.release('k1');
+    expect(reg.acquire('k1')).toBe(true); // freed a slot
+    reg.release('k1');
+    reg.release('k1');
+    reg.release('k1'); // clamp at 0
+  });
+
+  it('select() skips a saturated key and picks an available one', async () => {
+    const vault = new FakeVault();
+    const reg = new KeyRegistry(vault as never, { defaultConcurrencyLimit: 1 });
+    await reg.register({ id: 'k1', providerId: 'p', plaintext: 'sk-1' });
+    await reg.register({ id: 'k2', providerId: 'p', plaintext: 'sk-2' });
+
+    const first = reg.select('p', { strategy: 'round_robin' });
+    expect(first).toBe('k1');
+    // k1 is reserved (activeRequests=1 == cap=1). select must skip it and pick k2.
+    const second = reg.select('p', { strategy: 'round_robin' });
+    expect(second).toBe('k2');
+
+    reg.release('k1');
+    reg.release('k2');
+    // Now both free again; round-robin advanced so the next pick is k2.
+    const third = reg.select('p', { strategy: 'round_robin' });
+    expect(third).toBe('k2');
+  });
+
+  it('select() returns undefined when every key is saturated (caller fails over)', async () => {
+    const vault = new FakeVault();
+    const reg = new KeyRegistry(vault as never, { defaultConcurrencyLimit: 1 });
+    await reg.register({ id: 'k1', providerId: 'p', plaintext: 'sk-1' });
+    reg.select('p'); // reserves k1
+    expect(reg.select('p')).toBeUndefined(); // k1 saturated, no other key
+  });
+
+  it('respects a per-key concurrencyLimit over the registry default', async () => {
+    const vault = new FakeVault();
+    const reg = new KeyRegistry(vault as never, { defaultConcurrencyLimit: 5 });
+    await reg.register({ id: 'k1', providerId: 'p', plaintext: 'sk-1', concurrencyLimit: 1 });
+    expect(reg.select('p')).toBe('k1');
+    expect(reg.acquire('k1')).toBe(false); // per-key cap is 1, not 5
+  });
+
+  it('is uncapped when no default and no per-key limit are set', async () => {
+    const vault = new FakeVault();
+    const reg = new KeyRegistry(vault as never);
+    await reg.register({ id: 'k1', providerId: 'p', plaintext: 'sk-1' });
+    for (let i = 0; i < 50; i++) expect(reg.acquire('k1')).toBe(true);
+    for (let i = 0; i < 50; i++) reg.release('k1');
+  });
+});

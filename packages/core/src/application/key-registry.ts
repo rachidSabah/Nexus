@@ -80,6 +80,12 @@ export interface KeyDescriptor {
   cooldownUntil: number;
   /** When this key was registered. */
   readonly registeredAt: number;
+  /** In-flight request count — used to honor per-key concurrency caps (P5). */
+  activeRequests: number;
+  /** Optional per-key concurrency cap. When set, select() skips this key once
+   *  activeRequests reaches the cap, spreading load across keys instead of
+   *  hammering a single one. Undefined → governed by the registry default. */
+  concurrencyLimit?: number;
 }
 
 export interface KeyRegistryOptions {
@@ -89,12 +95,21 @@ export interface KeyRegistryOptions {
   defaultStrategy?: KeyRotationStrategy;
   /** EWMA alpha for latency smoothing (0..1). Default: 0.3. */
   latencyAlpha?: number;
+  /**
+   * Default per-key concurrency cap (max simultaneous in-flight requests per
+   * key). When exceeded, select() routes to a different key. Default:
+   * undefined (uncapped) — set this to spread load across a multi-key pool
+   * instead of hammering a single key (master prompt #15).
+   */
+  defaultConcurrencyLimit?: number;
 }
 
 export interface SelectKeyOptions {
   strategy?: KeyRotationStrategy;
   /** If true, only return keys whose status is 'active' (skip cooldown). */
   skipCooldown?: boolean;
+  /** Per-call concurrency cap override (defaults to the registry/global cap). */
+  concurrencyLimit?: number;
 }
 
 export class KeyRegistry {
@@ -110,12 +125,15 @@ export class KeyRegistry {
   private readonly cooldownMs: number;
   private readonly defaultStrategy: KeyRotationStrategy;
   private readonly latencyAlpha: number;
+  /** Default per-key concurrency cap; undefined = uncapped. */
+  private readonly defaultConcurrencyLimit?: number;
 
   constructor(vault: CredentialVaultPort, opts: KeyRegistryOptions = {}) {
     this.vault = vault;
     this.cooldownMs = opts.cooldownMs ?? 60_000;
     this.defaultStrategy = opts.defaultStrategy ?? 'adaptive';
     this.latencyAlpha = opts.latencyAlpha ?? 0.3;
+    this.defaultConcurrencyLimit = opts.defaultConcurrencyLimit;
   }
 
   /**
@@ -129,6 +147,8 @@ export class KeyRegistry {
     providerId: string;
     plaintext: string;
     label?: string;
+    /** Optional per-key concurrency cap (P5). */
+    concurrencyLimit?: number;
   }): Promise<KeyDescriptor> {
     if (this.keys.has(params.id)) {
       throw new Error(`Key '${params.id}' is already registered`);
@@ -156,6 +176,8 @@ export class KeyRegistry {
       lastFailureAt: 0,
       cooldownUntil: 0,
       registeredAt: Date.now(),
+      activeRequests: 0,
+      concurrencyLimit: params.concurrencyLimit,
     };
     this.keys.set(params.id, descriptor);
 
@@ -228,6 +250,8 @@ export class KeyRegistry {
         lastFailureAt: 0,
         cooldownUntil: 0,
         registeredAt: Date.now(),
+        activeRequests: 0,
+        concurrencyLimit: undefined,
       };
       this.keys.set(id, descriptor);
 
@@ -288,6 +312,7 @@ export class KeyRegistry {
   select(providerId: string, opts: SelectKeyOptions = {}): string | undefined {
     const strategy = opts.strategy ?? this.defaultStrategy;
     const skipCooldown = opts.skipCooldown ?? true;
+    const cap = opts.concurrencyLimit ?? this.defaultConcurrencyLimit;
     let candidates = this.listByProvider(providerId);
 
     // Expire cooldowns.
@@ -302,25 +327,67 @@ export class KeyRegistry {
     if (skipCooldown) {
       candidates = candidates.filter((k) => k.status === 'active');
     }
+
+    // Honor per-key concurrency caps (P5): skip keys already at their limit so
+    // load spreads across the pool instead of hammering one key. When a cap is
+    // configured, a saturated-only pool still returns undefined (caller fails
+    // over) rather than violating the cap.
+    if (cap !== undefined) {
+      const eligible = candidates.filter((k) => k.activeRequests < (k.concurrencyLimit ?? cap));
+      if (eligible.length > 0) candidates = eligible;
+    }
     if (candidates.length === 0) return undefined;
 
+    let chosen: string | undefined;
     switch (strategy) {
       case 'round_robin':
-        return this.selectRoundRobin(providerId, candidates);
+        chosen = this.selectRoundRobin(providerId, candidates);
+        break;
       case 'least_used':
-        return this.selectLeastUsed(candidates);
+        chosen = this.selectLeastUsed(candidates);
+        break;
       case 'lru':
-        return this.selectLRU(candidates);
+        chosen = this.selectLRU(candidates);
+        break;
       case 'latency':
-        return this.selectLatency(candidates);
+        chosen = this.selectLatency(candidates);
+        break;
       case 'health':
-        return this.selectHealth(candidates);
+        chosen = this.selectHealth(candidates);
+        break;
       case 'weighted':
-        return this.selectWeighted(candidates);
+        chosen = this.selectWeighted(candidates);
+        break;
       case 'adaptive':
       default:
-        return this.selectAdaptive(candidates);
+        chosen = this.selectAdaptive(candidates);
+        break;
     }
+
+    // Atomically reserve the chosen key so concurrent selections don't collide.
+    if (chosen && !this.acquire(chosen)) return undefined;
+    return chosen;
+  }
+
+  /**
+   * Increments a key's in-flight counter. Returns false (and does NOT increment)
+   * if the key is unknown or already at its concurrency cap — callers should
+   * treat that as "not acquirable" and either retry selection or fail over.
+   */
+  acquire(keyId: string): boolean {
+    const k = this.keys.get(keyId);
+    if (!k) return false;
+    const limit = k.concurrencyLimit ?? this.defaultConcurrencyLimit;
+    if (limit !== undefined && k.activeRequests >= limit) return false;
+    k.activeRequests++;
+    return true;
+  }
+
+  /** Decrements a key's in-flight counter (call when the request completes). Clamped at 0. */
+  release(keyId: string): void {
+    const k = this.keys.get(keyId);
+    if (!k) return;
+    if (k.activeRequests > 0) k.activeRequests--;
   }
 
   /** Retrieves the plaintext key from the vault. Call just before the provider call. */
