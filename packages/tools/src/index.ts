@@ -35,7 +35,7 @@ import { buildEvent, type EventBusPort, type ToolExecutedEvent } from '@anx/core
 export interface ToolDefinition {
   readonly name: string;           // e.g. "filesystem.read"
   readonly description: string;
-  readonly category: 'filesystem' | 'terminal' | 'git' | 'browser' | 'database' | 'http' | 'mcp' | 'custom';
+  readonly category: 'filesystem' | 'terminal' | 'git' | 'browser' | 'database' | 'http' | 'mcp' | 'sandbox' | 'custom';
   readonly inputSchema: Record<string, unknown>;  // JSON Schema
   readonly outputSchema?: Record<string, unknown>;
   /** Whether this tool is destructive (write, delete, deploy). */
@@ -540,6 +540,32 @@ export const BUILTIN_TOOL_DEFINITIONS: readonly ToolDefinition[] = [
       required: ['serverId', 'toolName'],
     },
     defaultPolicy: 'allow',
+  },
+  {
+    name: 'sandbox.execute',
+    description:
+      'Execute code in an isolated, ephemeral sandbox. The sandbox has no access to the ' +
+      'host filesystem or network by default (network can be opted in per call) and is ' +
+      'resource-limited, so it is safe for untrusted code. Backed by the platform sandbox ' +
+      'runtime (isolated Docker containers / e2b). Prefer this over terminal.execute for ' +
+      'untrusted or third-party code.',
+    category: 'sandbox',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'Source code to execute' },
+        language: {
+          type: 'string',
+          description: 'Runtime/language, e.g. python, node, bash, go',
+        },
+        timeoutMs: { type: 'number', description: 'Execution timeout in milliseconds' },
+        network: { type: 'boolean', description: 'Allow outbound network (default false)' },
+      },
+      required: ['code'],
+    },
+    destructive: true,
+    requiresNetwork: false,
+    defaultPolicy: 'ask',
   },
 ];
 

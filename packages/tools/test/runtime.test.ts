@@ -183,7 +183,7 @@ describe('ToolRuntime', () => {
     expect(result.error).toBe('boom');
   });
 
-  it('BUILTIN_TOOL_DEFINITIONS includes filesystem, terminal, git, browser, database, http, mcp', () => {
+  it('BUILTIN_TOOL_DEFINITIONS includes filesystem, terminal, git, browser, database, http, mcp, sandbox', () => {
     const names = BUILTIN_TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toContain('filesystem.read');
     expect(names).toContain('filesystem.write');
@@ -194,6 +194,7 @@ describe('ToolRuntime', () => {
     expect(names).toContain('database.query');
     expect(names).toContain('http.fetch');
     expect(names).toContain('mcp.invoke');
+    expect(names).toContain('sandbox.execute');
   });
 
   it('registerBuiltinToolDefinitions registers all built-in tools', () => {
@@ -208,6 +209,9 @@ describe('ToolRuntime', () => {
     expect(fs.length).toBe(3);
     const git = runtime.listByCategory('git');
     expect(git.length).toBe(3);
+    const sandbox = runtime.listByCategory('sandbox');
+    expect(sandbox.length).toBe(1);
+    expect(sandbox[0]!.name).toBe('sandbox.execute');
   });
 
   it('expired permissions are ignored', async () => {
