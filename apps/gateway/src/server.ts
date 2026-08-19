@@ -1096,6 +1096,12 @@ export class HttpServer {
         pricing?: unknown;
         capabilities?: unknown;
         context_window?: number;
+        /** Live health of the serving endpoint (truthful: never masks downtime). */
+        health?: string;
+        /** Why the model is in its current health state (e.g. billing/quota). */
+        health_reason?: string;
+        /** Last upstream error seen for this model's provider, if any. */
+        last_error?: string;
         agentSnippets?: {
           claudeCode?: string;
           codexCli?: string;
@@ -1104,6 +1110,27 @@ export class HttpServer {
           curl?: string;
         };
       }>();
+
+      // Truthful per-provider endpoint health, surfaced on every model so
+      // consumers (and the user) can see at a glance which models are live
+      // vs. degraded/dead — never advertised as healthy when they are not.
+      const HEALTH_RANK: Record<string, number> = {
+        healthy: 0, degraded: 1, unknown: 2, unhealthy: 3, circuit_open: 4,
+      };
+      const endpointHealth = new Map<string, { health: string; reason?: string; lastError?: string }>();
+      for (const e of this.deps.routing.listEndpoints()) {
+        const existing = endpointHealth.get(e.providerId);
+        // Prefer the worst-known state for the provider so a single dead
+        // endpoint is not hidden by a healthy sibling.
+        if (!existing || (HEALTH_RANK[e.health] ?? -1) > (HEALTH_RANK[existing.health as string] ?? -1)) {
+          endpointHealth.set(e.providerId, {
+            health: e.health,
+            reason: (e as unknown as { lastFailureReason?: string }).lastFailureReason,
+            lastError: (e as unknown as { lastError?: string }).lastError,
+          });
+        }
+      }
+      const healthFor = (providerId: string) => endpointHealth.get(providerId);
 
       // Dynamically discovered real models (from ModelRegistry).
       const selectableProviders = new Set(this.deps.routing.getSelectableProviders());
@@ -1127,6 +1154,13 @@ export class HttpServer {
           pricing: m.pricing,
           capabilities: m.capabilities,
           context_window: m.contextWindow,
+          ...(healthFor(m.providerId)
+            ? {
+                health: healthFor(m.providerId)!.health,
+                health_reason: healthFor(m.providerId)!.reason,
+                last_error: healthFor(m.providerId)!.lastError,
+              }
+            : {}),
           agentSnippets: {
             claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"\nexport ANTHROPIC_AUTH_TOKEN="nexus"\nclaude --model ${m.id}`,
             codexCli: `codex --model ${m.id}`,
@@ -1153,6 +1187,13 @@ export class HttpServer {
             pricing: e.pricing,
             capabilities: e.capabilities,
             context_window: e.context_window,
+            ...(healthFor(checkProvider)
+              ? {
+                  health: healthFor(checkProvider)!.health,
+                  health_reason: healthFor(checkProvider)!.reason,
+                  last_error: healthFor(checkProvider)!.lastError,
+                }
+              : {}),
             agentSnippets: {
               claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"\nexport ANTHROPIC_AUTH_TOKEN="nexus"\nclaude --model ${e.id}`,
               codexCli: `codex --model ${e.nativeId ?? e.id}`,
@@ -1189,10 +1230,24 @@ export class HttpServer {
       for (const cm of codexFrontierModels) {
         if (!models.has(cm)) {
           if (!virtualFrontier.has(cm) && !openaiFamilySelectable) continue;
+          // Concrete frontier models (gpt-5.6-sol, etc.) are REAL opencode-zen
+          // models, so their health must reflect the opencode family's actual
+          // state — not the unrelated auto-openai endpoint. Pure routing
+          // directives (auto/default/gateway-routed/codex) reflect openai.
+          const frontierHealth = virtualFrontier.has(cm)
+            ? healthFor('openai')
+            : (healthFor('opencode-zen') ?? healthFor('opencode-go') ?? healthFor('openai'));
           models.set(cm, {
             id: cm,
             object: 'model',
             owned_by: 'openai',
+            ...(frontierHealth
+              ? {
+                  health: frontierHealth.health,
+                  health_reason: frontierHealth.reason,
+                  last_error: frontierHealth.lastError,
+                }
+              : {}),
             capabilities: {
               streaming: true,
               toolCalling: true,
@@ -3634,11 +3689,42 @@ export class HttpServer {
         });
       }
       const providerHint = this.preferredProviderFor(aliasResolution.model, aliasResolution.resolution);
+
+      // ─── Per-request provider pinning (B4) ─────────────────────────────
+      // x-nexus-provider header or ?provider= query forces a specific
+      // provider; it takes highest precedence over alias-derived hints.
+      const pinnedProvider =
+        (request.headers['x-nexus-provider'] as string | undefined)?.trim()
+        || (request.query as { provider?: string })?.provider?.trim()
+        || undefined;
+
+      // ─── Free-model preference (B3) ───────────────────────────────────
+      // When NEXUS_PREFER_FREE is not explicitly 'false', the gateway prefers
+      // free-serving providers so it keeps running on $0 models non-stop. An
+      // explicit provider pin (header) overrides this preference.
+      const preferFree = process.env['NEXUS_PREFER_FREE'] !== 'false' && !pinnedProvider;
       const bodyRouting = (body as { routing?: Record<string, unknown> }).routing ?? {};
+      const routingExtra: Record<string, unknown> = { ...bodyRouting };
+      if (pinnedProvider) {
+        routingExtra.preferredProviders = [pinnedProvider];
+      } else if (providerHint && !preferFree) {
+        routingExtra.preferredProviders = [providerHint];
+      }
+      if (preferFree) {
+        const freeProviders = Array.from(
+          new Set(this.deps.modelRegistry.listFree().map((m) => m.providerId)),
+        );
+        if (freeProviders.length > 0) {
+          routingExtra.freeProviderIds = freeProviders;
+          // Only auto-switch to free_only when the caller didn't ask for a
+          // specific strategy, so explicit strategies stay respected.
+          if (!bodyRouting.strategy) routingExtra.strategy = 'free_only';
+        }
+      }
       const effectiveBody = {
         ...body,
         model: aliasResolution.model,
-        ...(providerHint ? { routing: { ...bodyRouting, preferredProviders: [providerHint] } } : {}),
+        routing: routingExtra,
       };
 
       // AuthN + AuthZ. If security principals are configured, require gateway:chat.

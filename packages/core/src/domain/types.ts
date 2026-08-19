@@ -108,7 +108,8 @@ export type RoutingStrategy =
   | 'highest_quality'
   | 'capability_match'
   | 'priority'
-  | 'budget_aware';
+  | 'budget_aware'
+  | 'free_only';
 
 /**
  * The full route-resolution request payload.
@@ -124,6 +125,9 @@ export interface RoutingRequest {
   readonly region?: string;
   readonly tags?: readonly string[];
   readonly budgetRemainingUsd?: number;
+  /** Provider IDs that currently serve a free (no-cost) model. When set and
+   *  the strategy is 'free_only', route only to these providers. */
+  readonly freeProviderIds?: readonly string[];
   /** When true, launches a hedged speculative request to alternative endpoint if primary TTFT stalls. */
   readonly speculativeFallback?: boolean;
   /** Milliseconds to wait before launching speculative hedged request (default: 800ms). */

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   AllProvidersExhaustedError,
+  BudgetExceededError,
   NoEligibleProviderError,
   ProviderResponseError,
 } from '../domain/errors.js';
@@ -26,6 +27,7 @@ import type {
   TokenUsage,
 } from '../domain/types.js';
 
+import type { BudgetManager, BudgetMode } from './budget-manager.js';
 import { repairJson, repairToolCallArguments } from './json-repair.js';
 import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
 import type {
@@ -63,6 +65,9 @@ export interface ChatCompletionUseCaseOptions {
   privacy?: PrivacyConfig;
   /** Optional request tracer. When provided, full request traces are recorded for inspection via /v1/traces/:id. */
   tracer?: RequestTracer;
+  /** Optional budget manager. When provided, budget mode (normal | cost_aware | free_only | blocked)
+   *  shapes routing preference and spend is recorded on success. Disabled budgets are a no-op. */
+  budgetManager?: BudgetManager;
 }
 
 /**
@@ -96,6 +101,7 @@ export class ChatCompletionUseCase {
   private readonly keyRotationStrategy: KeyRotationStrategy;
   private readonly privacy: PrivacyConfig;
   private readonly tracer?: RequestTracer;
+  private readonly budgetManager?: BudgetManager;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -116,6 +122,7 @@ export class ChatCompletionUseCase {
     this.keyRotationStrategy = options.keyRotationStrategy ?? 'adaptive';
     this.privacy = options.privacy ?? DEFAULT_PRIVACY;
     this.tracer = options.tracer;
+    this.budgetManager = options.budgetManager;
   }
 
   async execute(
@@ -239,6 +246,35 @@ export class ChatCompletionUseCase {
       ...effectiveRequest.routing,
       capabilities: effectiveRequest.routing?.capabilities,
     };
+
+    // ─── Budget-aware routing preference ──────────────────────────────────
+    // When a BudgetManager is configured AND enabled, its current mode shapes
+    // routing without ever blocking a request unless the budget is truly
+    // exhausted (blocked). This is what makes "use free/cheap models non-stop"
+    // the default behaviour once a budget is set — the gateway prefers the
+    // cheapest/free endpoints automatically. Disabled budgets are a no-op.
+    let budgetMode: BudgetMode = 'normal';
+    if (this.budgetManager) {
+      budgetMode = this.budgetManager.getMode();
+      if (budgetMode === 'blocked') {
+        await this.events.publish(
+          buildEvent('request.blocked', { requestId, model: effectiveRequest.model, reason: 'budget_exceeded' }, correlationId),
+        );
+        const snap = this.budgetManager.getSnapshot();
+        throw new BudgetExceededError(snap.remainingUsd, snap.config.limitUsd);
+      }
+      if (budgetMode === 'free_only' || budgetMode === 'cost_aware') {
+        // free_only → only free-serving providers are eligible. The gateway
+        // populates routing.freeProviderIds from the model registry; we just
+        // switch the strategy and let freeProviderIds (if present on the
+        // incoming request) do the filtering.
+        routingReq.strategy = budgetMode === 'free_only' ? 'free_only' : 'budget_aware';
+        // free_only → no budget remaining, so the engine prefers the cheapest
+        // (free) endpoints; cost_aware → pass the real remaining budget.
+        routingReq.budgetRemainingUsd =
+          budgetMode === 'free_only' ? 0 : this.budgetManager.getSnapshot().remainingUsd;
+      }
+    }
     let decision = await this.routing.resolve(routingReq);
 
     // Trace: record routing decision.
@@ -390,6 +426,11 @@ export class ChatCompletionUseCase {
           outputPer1K: endpoint.pricing?.outputPer1K ?? 0,
           cachedInputPer1K: endpoint.pricing?.cachedInputPer1K,
         });
+
+        // Record spend against the budget (no-op when budget disabled/unset).
+        if (this.budgetManager) {
+          this.budgetManager.recordSpend(cost.totalCostUsd);
+        }
 
         // Self-Healing JSON & Tool Call Schema Repair:
         const isJsonMode = effectiveRequest.responseFormat?.type === 'json_object'

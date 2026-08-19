@@ -460,13 +460,11 @@ export class GatewayRuntime {
     const costPredictor = new CostPredictor();
     const autoHealer = new AutoHealer(routing, keyRegistry, { intervalMs: 30_000 });
 
-    // The ChatCompletionUseCase options interface doesn't yet have fields
-    // for the budget manager, prompt compressor, or rate-limit tracker
-    // (they're consumed directly by the server endpoints). We attach them
-    // as extra fields on the options object so the use case has a reference
-    // to them when it's eventually upgraded to consult them. TypeScript
-    // excess-property checks only fire on fresh literals, so we build the
-    // options in a named const first.
+    // The chat use case is now wired to consult the BudgetManager (when
+    // enabled) to prefer free/cheap endpoints and to record spend, and to
+    // honor the prompt compressor + rate-limit tracker. They're attached as
+    // named options fields. TypeScript excess-property checks only fire on
+    // fresh literals, so we build the options in a named const first.
     const chatUseCaseOptions = {
       cache,
       plugins,
@@ -478,8 +476,6 @@ export class GatewayRuntime {
       keyRotationStrategy: 'adaptive' as const,
       privacy,
       tracer,
-      // Extra fields — currently ignored by ChatCompletionUseCase, used
-      // directly by the server endpoints.
       budgetManager,
       promptCompressor,
       rateLimitTracker,

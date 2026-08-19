@@ -10,9 +10,9 @@ import type { EventBusPort, RoutingEnginePort } from './ports.js';
  * ───────────────────────────────────────────────────────────────────────────
  * RoutingEngine — default implementation of RoutingEnginePort.
  *
- * Supports 8 strategies:
+ * Supports 9 strategies:
  *   weighted, round_robin, least_latency, least_cost, highest_quality,
- *   capability_match, priority, budget_aware
+ *   capability_match, priority, budget_aware, free_only
  *
  * Maintains EWMA latency per endpoint and a sliding-window failure counter
  * for circuit breaking.
@@ -293,6 +293,17 @@ export class RoutingEngine implements RoutingEnginePort {
         return copy.sort((a, b) => this.capabilityScore(b, request) - this.capabilityScore(a, request));
       case 'priority':
         return copy.sort((a, b) => a.priority - b.priority);
+      case 'free_only': {
+        const freeSet = request.freeProviderIds
+          ? new Set(request.freeProviderIds)
+          : new Set<string>();
+        const free = copy.filter((e) => freeSet.has(e.providerId));
+        // When a free-provider set is supplied, only those are eligible;
+        // otherwise (no free providers known) fall back to all candidates
+        // so the request still has a chance rather than throwing immediately.
+        const pool = freeSet.size > 0 && free.length > 0 ? free : copy;
+        return pool.sort((a, b) => b.priority - a.priority);
+      }
       case 'budget_aware':
         return copy.sort((a, b) => {
           const remaining = request.budgetRemainingUsd ?? Number.MAX_SAFE_INTEGER;
