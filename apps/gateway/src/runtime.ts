@@ -49,6 +49,77 @@ import { PluginRuntime } from '@anx/plugins';
 import { createDefaultAdapters } from '@anx/providers';
 import { AgentRuntime, type TaskExecutor } from '@anx/runtime';
 import { EncryptedCredentialVault, RbacService, BUILTIN_ROLES, JwtService, hashApiKey } from '@anx/security';
+
+/**
+ * Build the handler for the `sandbox.execute` agent tool.
+ *
+ * The tool is registered (in @anx/tools) with a stub handler; this replaces it
+ * with a handler that delegates untrusted code execution to the platform's
+ * isolated sandbox backend — the `mcp-docker-sandbox` integration (ephemeral
+ * Docker containers) or any connected server exposing a code-execution tool.
+ *
+ * Safety contract:
+ *  - Execution is always isolated (no host filesystem/network by default).
+ *  - If no sandbox backend is connected, it returns a clear, safe error and
+ *    NEVER falls back to host `terminal.execute`.
+ *
+ * The target tool is discovered at call time (by server id / capability), so
+ * this stays robust against the sandbox package's tool-name drift.
+ */
+export function buildSandboxToolHandler(mcpClient: McpClient): import('@anx/tools').ToolHandler {
+  const SUPPORTED_SERVERS = new Set(['mcp-docker-sandbox', 'e2b', 'sandbox']);
+  const CODE_EXEC_RE = /(sandbox|isolat|run_?code|execute_?code|code_?exec|run_?command)/i;
+
+  return async (input: Record<string, unknown>) => {
+    const startedAt = Date.now();
+    const tools = mcpClient.listTools();
+    const target = tools.find(
+      (t) =>
+        SUPPORTED_SERVERS.has(t.serverId) ||
+        (t.serverId.toLowerCase().includes('sandbox') && CODE_EXEC_RE.test(`${t.name} ${t.description}`)) ||
+        CODE_EXEC_RE.test(`${t.name} ${t.description}`),
+    );
+
+    if (!target) {
+      return {
+        success: false,
+        output: null,
+        error:
+          'Isolated sandbox not available. Enable the mcp-docker-sandbox integration ' +
+          '(or configure e2b) to execute untrusted code in isolation.',
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
+    try {
+      const result = (await mcpClient.invokeTool(target.name, {
+        code: input['code'],
+        source: input['code'],
+        language: input['language'],
+        timeout_ms: input['timeoutMs'],
+        timeoutMs: input['timeoutMs'],
+        network: input['network'] ?? false,
+        allow_network: input['network'] ?? false,
+      })) as { content?: Array<{ type?: string; text?: string }>; isError?: boolean };
+
+      const text = result?.content?.map((c) => c.text ?? '').join('\n') ?? JSON.stringify(result);
+      const failed = result?.isError === true;
+      return {
+        success: !failed,
+        output: text,
+        error: failed ? text : undefined,
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: null,
+        error: `Sandbox execution failed: ${(err as Error).message}`,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+  };
+}
 import { createPlanner } from '@anx/task-router';
 import { ToolRuntime, registerBuiltinToolDefinitions } from '@anx/tools';
 import { WorkflowEngine, InMemoryWorkflowRepository, WORKFLOW_TEMPLATES } from '@anx/workflow';
@@ -974,6 +1045,15 @@ export class GatewayRuntime {
     });
 
     const mcpClient = new McpClient(config.mcp.servers ?? []);
+
+    // Wire sandbox.execute to delegate to the connected isolated sandbox
+    // backend (Docker/e2b via mcp-docker-sandbox). The builtin registration
+    // installs a stub; replace it with the real delegating handler.
+    const sandboxDef = tools.get('sandbox.execute');
+    if (sandboxDef) {
+      tools.unregister('sandbox.execute');
+      tools.register(sandboxDef, buildSandboxToolHandler(mcpClient));
+    }
 
     const localAgentBridge = new LocalAgentBridge({
       gatewayUrl: `http://${config.server.host}:${config.server.port}`,
