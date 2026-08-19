@@ -284,7 +284,46 @@ export class ChatCompletionUseCase {
           budgetMode === 'free_only' ? 0 : this.budgetManager.getSnapshot().remainingUsd;
       }
     }
-    let decision = await this.routing.resolve(routingReq);
+    let decision: RoutingDecision;
+    try {
+      decision = await this.routing.resolve(routingReq);
+    } catch (resolveErr) {
+      // P3 (master prompt #10): a request for a *concrete* model that no
+      // provider can currently serve would otherwise dead-end with
+      // NoEligibleProviderError. The `nexus/auto` alias is already resilient
+      // (it filters unhealthy/cooldown/no-key models), so — but only when the
+      // caller asked for a specific model and the alias wasn't already used —
+      // retry resolution through the auto chain before giving up. This never
+      // re-masks a BudgetExceededError or other non-routing failures, and the
+      // recursive retry only happens once (the fallback model is the alias).
+      if (
+        resolveErr instanceof NoEligibleProviderError &&
+        routingReq.model &&
+        !String(routingReq.model).startsWith('nexus/')
+      ) {
+        const autoReq: typeof routingReq = {
+          // Drop model-specific provider pinning so the auto chain can pick any
+          // healthy provider (the whole point of dead-route recovery). Other
+          // constraints (region, tags, capabilities, budget) are preserved.
+          ...routingReq,
+          model: 'nexus/auto',
+          preferredProviders: undefined,
+          excludedProviders: undefined,
+        };
+        if (this.tracer) {
+          this.tracer.recordRoutingDecision(
+            requestId,
+            'nexus/auto',
+            'alias-fallback',
+            0,
+            'dead-route-recovery',
+          );
+        }
+        decision = await this.routing.resolve(autoReq);
+      } else {
+        throw resolveErr;
+      }
+    }
 
     // Trace: record routing decision.
     if (this.tracer) {

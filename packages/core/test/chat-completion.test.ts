@@ -395,4 +395,51 @@ describe('ChatCompletionUseCase streaming (TEST 9/10)', () => {
     expect(classification.keyAction).toBe('cooldown');
     expect(classification.retryable).toBe(true);
   });
+
+  it('P3: concrete-model dead-route recovers via nexus/auto when preferred provider is down', async () => {
+    // Scenario (master prompt #10): a request names a concrete model `gpt-4`
+    // that the model registry maps to `openai` (expressed as preferredProviders),
+    // but openai is currently in a billing-blocked circuit_open state while
+    // anthropic is healthy. A naive resolve would dead-end with
+    // NoEligibleProviderError; the use case must fall back through nexus/auto
+    // (which drops the model-specific preferredProviders) and recover.
+    const openai = new FakeAdapter('openai', 'OpenAI');
+    const anthropic = new FakeAdapter('anthropic', 'Anthropic');
+    anthropic.nextResponse = {
+      id: 'resp-3',
+      object: 'chat.completion',
+      created: 1,
+      model: 'claude-3',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'Recovered via auto!' }, finish_reason: 'stop' }],
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      provider: 'anthropic',
+      endpoint: 'ep-anthropic',
+      latencyMs: 0,
+    };
+
+    const bus = new InMemoryEventBus();
+    const engine = new RoutingEngine(bus);
+    engine.registerEndpoint({ ...makeEndpoint('ep-openai', 'openai'), priority: 1 });
+    engine.registerEndpoint({ ...makeEndpoint('ep-anthropic', 'anthropic'), priority: 2 });
+    // Open openai's circuit (billing) so it is permanently excluded until a real success.
+    await engine.recordFailure('ep-openai', new Error('billing dead'), true, 'mark_unavailable');
+
+    const usecase = new ChatCompletionUseCase(
+      engine,
+      new DefaultFailover(),
+      new Map([['openai', openai], ['anthropic', anthropic]]),
+      bus,
+      new DefaultCostCalculator(),
+    );
+
+    const response = await usecase.execute({
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: 'hi' }],
+      routing: { preferredProviders: ['openai'], strategy: 'priority' },
+    });
+
+    // Recovered via nexus/auto to the healthy anthropic endpoint.
+    expect(response.choices[0]?.message.content).toBe('Recovered via auto!');
+    expect(response.endpoint).toBe('ep-anthropic');
+  });
 });
