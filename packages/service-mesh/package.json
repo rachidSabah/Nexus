@@ -48,11 +48,11 @@
     "@anx/shared": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
-    "typescript": "^5.7.2",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
     "tsup": "^8.3.5",
-    "vitest": "^2.1.8",
-    "eslint": "^8.57.0",
+    "vitest": "^4.1.10",
+    "eslint": "^10.8.1",
     "rimraf": "^6.0.1"
   },
   "engines": {
