@@ -32,6 +32,12 @@ export class AutoHealer {
   private readonly intervalMs: number;
   private readonly probeTimeoutMs: number;
   private timer: ReturnType<typeof setInterval> | null = null;
+  // Last observed reachability per endpoint. We only promote an unhealthy
+  // endpoint back to `healthy` on a genuine network recovery
+  // (unreachable -> reachable). A billing/quota-dead endpoint keeps its base
+  // URL reachable, so a bare reachability probe must NOT mask it as healthy —
+  // that would re-advertise an unusable model and lie about endpoint health.
+  private readonly lastReachability = new Map<string, boolean>();
 
   constructor(routing: RoutingEnginePort, keyRegistry: KeyRegistry, opts: AutoHealerOptions = {}) {
     this.routing = routing;
@@ -59,9 +65,18 @@ export class AutoHealer {
     let keysHealed = 0;
 
     for (const endpoint of this.routing.listEndpoints() as readonly ProviderEndpoint[]) {
-      if (endpoint.health === 'healthy') continue;
+      if (endpoint.health === 'healthy') {
+        this.lastReachability.set(endpoint.id, true);
+        continue;
+      }
       const reachable = await this.probe(endpoint.baseUrl);
-      if (reachable) {
+      const wasUnreachable = this.lastReachability.get(endpoint.id) === false;
+      this.lastReachability.set(endpoint.id, reachable);
+      // Promote to `healthy` ONLY on a genuine unreachable -> reachable
+      // transition (real transient outage recovery). Billing/quota/upstream-auth
+      // failures keep the base URL reachable, so they must stay down until a
+      // real successful request (recordSuccess) clears them.
+      if (reachable && wasUnreachable) {
         this.routing.updateEndpoint(endpoint.id, { health: 'healthy' });
         endpointsHealed++;
       }

@@ -39,7 +39,10 @@ describe('Integrations registry', () => {
       'claude-code', 'codex-cli', 'qwen-code', 'hermes-cli',
       'opencode', 'opencode-go',
       'cursor', 'continue', 'cline', 'roo-code',
-      'openhands', 'aider',
+      // NOTE: 'openhands' is intentionally NOT bundled — the user installs it
+      // externally and routes it through the gateway, so it is excluded from
+      // the built-in registry by design.
+      'aider',
       'zed', 'vscode', 'jetbrains', 'neovim', 'emacs',
     ];
     const registry = createIntegrationRegistry();

@@ -28,6 +28,12 @@ export class RoutingEngine implements RoutingEnginePort {
   private readonly failureWindowMs: number;
   private readonly cooldownMs: number;
   private readonly cooldowns = new Map<string, number>();
+  // Endpoints closed by an explicit `mark_unavailable` (billing/quota/auth)
+  // action. These must NOT be half-open re-admitted on cooldown expiry — the
+  // upstream is dead until the operator fixes billing, so re-admitting only
+  // produces an endless healthy↔circuit_open oscillation and re-advertises an
+  // unusable model. Cleared on a genuine successful request (recordSuccess).
+  private readonly billingBlocked = new Set<string>();
 
   constructor(
     private readonly events: EventBusPort,
@@ -84,6 +90,15 @@ export class RoutingEngine implements RoutingEnginePort {
     const prev = this.latency.get(endpointId) ?? latencyMs;
     this.latency.set(endpointId, prev * 0.7 + latencyMs * 0.3); // EWMA
     this.failures.set(endpointId, []);
+    // A real success proves the upstream recovered: clear any billing/quota
+    // block and cooldown, then restore the endpoint to healthy so it re-enters
+    // selection and its models are advertised again.
+    this.billingBlocked.delete(endpointId);
+    this.cooldowns.delete(endpointId);
+    const endpoint = this.endpoints.get(endpointId);
+    if (endpoint && (endpoint.health === 'degraded' || endpoint.health === 'circuit_open')) {
+      this.setHealth(endpoint, 'healthy', 'real success cleared failure state');
+    }
   }
 
   recordFailure(
@@ -101,6 +116,7 @@ export class RoutingEngine implements RoutingEnginePort {
         const now = Date.now();
         this.setHealth(endpoint, 'circuit_open', 'endpoint marked unavailable (billing/quota)');
         this.cooldowns.set(endpointId, now + this.cooldownMs);
+        this.billingBlocked.add(endpointId);
         void this.events.publish(
           buildEvent('circuit_breaker.tripped', {
             endpointId,
@@ -205,6 +221,9 @@ export class RoutingEngine implements RoutingEnginePort {
       const cooldownUntil = this.cooldowns.get(e.id);
       if (cooldownUntil && now < cooldownUntil) return false;
       if (cooldownUntil && now >= cooldownUntil && e.health === 'circuit_open') {
+        // A billing/quota-closed endpoint stays down until a real success
+        // proves the upstream recovered — never half-open re-admit it.
+        if (this.billingBlocked.has(e.id)) return false;
         // Half-open: allow it back into the pool.
         this.setHealth(e, 'degraded', 'circuit half-open probe');
         this.cooldowns.delete(e.id);

@@ -61,6 +61,11 @@ export class DeepSeekHarnessIntegration extends BaseIntegration {
         DSH_WEB_PORT: '3080',
       },
       display: `dsh web → http://127.0.0.1:3080 (gateway ${ctx.gatewayUrl})`,
+      // Real web UI endpoint, exactly what `dsh web` prints and serves (see the
+      // DeepSeek Harness README/Web-UI guide). The browser opens this URL
+      // directly — a clean top-level navigation, identical to the user opening
+      // it by hand, so the SPA renders correctly.
+      webUrl: 'http://127.0.0.1:3080',
     };
   }
 }

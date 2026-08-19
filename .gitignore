@@ -3,6 +3,10 @@ node_modules/
 .pnp
 .pnp.js
 
+# pnpm content-addressable store & turbo cache (local, never commit)
+.pnpm-store/
+.turbo/
+
 # Build artifacts
 dist/
 build/

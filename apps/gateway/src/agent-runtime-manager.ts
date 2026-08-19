@@ -250,6 +250,33 @@ export class AgentRuntimeManager {
   }
 
   /**
+   * Install a single pip package (or version spec) into the runtime's Python.
+   * Resolves on success; rejects with the captured stderr on failure. Used by
+   * the pip install recipe. Best-effort callers should `.catch()` so a
+   * non-applicable pre-step never aborts the whole install.
+   */
+  private pipInstall(spec: string, actions: string[]): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const child = spawn(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'pip', 'install', '-U', spec], {
+        stdio: 'pipe',
+        timeout: 300_000,
+        shell: true,
+      });
+      let errOut = '';
+      child.stderr?.on('data', (d) => (errOut += String(d)));
+      child.on('error', (err) => reject(err));
+      child.on('close', (code) => {
+        if (code === 0) {
+          actions.push(`pip installed ${spec}`);
+          resolve();
+        } else {
+          reject(new Error(`pip install ${spec} exited with code ${code}: ${errOut}`));
+        }
+      });
+    });
+  }
+
+  /**
    * Safely installs an agent binary using the trusted catalog recipe.
    * NEVER accepts arbitrary shell commands from the client.
    */
@@ -304,24 +331,19 @@ export class AgentRuntimeManager {
         actions.push(`Installing ${catalog.displayName} via pip package: ${catalog.installRecipe.packageName}...`);
         // Python agents (Aider, OpenHands, …) install through pip from the
         // trusted catalog only — never a browser-supplied command.
-        await new Promise<void>((resolve, reject) => {
-          const child = spawn(process.platform === 'win32' ? 'python' : 'python3', ['-m', 'pip', 'install', '-U', catalog.installRecipe.packageName!], {
-            stdio: 'pipe',
-            timeout: 300_000,
-            shell: true,
-          });
-          let errOut = '';
-          child.stderr?.on('data', (d) => (errOut += String(d)));
-          child.on('error', (err) => reject(err));
-          child.on('close', (code) => {
-            if (code === 0) {
-              actions.push(`Successfully installed ${catalog.installRecipe.packageName}`);
-              resolve();
-            } else {
-              reject(new Error(`pip install exited with code ${code}: ${errOut}`));
-            }
-          });
+        //
+        // Some packages (e.g. openhands-ai) hard-pin a transitive dependency
+        // (e2b>=0.17.1,<0.18.0) whose only matching release (0.17.1) is
+        // *yanked* on PyPI. pip's resolver excludes yanked versions by default,
+        // so a plain `pip install openhands-ai` fails with ResolutionImpossible
+        // ("e2b has no matching distributions"). Pre-satisfying the pinned e2b
+        // version (explicit yanked-version installs are allowed) lets the main
+        // install resolve. Best-effort: if e2b isn't the culprit for a given
+        // package, this step is a harmless no-op.
+        await this.pipInstall('e2b==0.17.1', actions).catch(() => {
+          /* non-fatal: only relevant for packages that require it */
         });
+        await this.pipInstall(catalog.installRecipe.packageName!, actions);
       } else if (catalog.installRecipe.type === 'manual') {
         actions.push(`Manual installation required for ${catalog.displayName}. See: ${catalog.installRecipe.guideUrl}`);
       }

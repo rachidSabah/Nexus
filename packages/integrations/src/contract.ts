@@ -61,6 +61,9 @@ export interface IntegrationStatus {
     readonly type: 'npm' | 'pip' | 'binary' | 'manual';
     readonly packageName?: string;
     readonly guideUrl?: string;
+    /** Extra args appended to the install command (e.g. pip dependency pins
+     *  to resolve an upstream ResolutionImpossible for a specific package). */
+    readonly pipConstraints?: readonly string[];
   };
 }
 
@@ -190,6 +193,13 @@ export interface LaunchSpec {
   readonly interactive: boolean;
   /** Human-readable command, for logging/display only. */
   readonly display?: string;
+  /**
+   * Optional web UI URL. When set, the process manager opens it in the
+   * OS default browser right after the process starts (cross-platform), so
+   * web-UI agents (e.g. DeepSeek Harness `dsh web`) auto-surface instead of
+   * requiring the user to manually navigate.
+   */
+  readonly webUrl?: string;
 }
 
 /**

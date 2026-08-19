@@ -89,7 +89,7 @@ describe('Nexus Full System Certification & Diagnostics', () => {
     it('every supported integration (continue, neovim, emacs, jetbrains, etc.) is recognized in catalog', () => {
       const supported = [
         'claude-code', 'codex-cli', 'qwen-code', 'hermes-cli',
-        'opencode', 'opencode-go', 'aider', 'openhands',
+        'opencode', 'opencode-go', 'aider',
         'cursor', 'continue', 'cline', 'roo-code', 'zed', 'neovim', 'emacs',
         'vscode', 'jetbrains', 'deepseek-harness',
       ];

@@ -31,7 +31,7 @@ describe('Nexus One-Click Agent & IDE Harness: Link Integrity & Navigation Harde
   describe('1. Integration Registry Integrity & Link Safety', () => {
     it('A. Contains exactly all built-in integrations without duplicates', () => {
       expect(BUILTIN_INTEGRATIONS.length).toBe(BUILTIN_INTEGRATIONS_COUNT);
-      expect(BUILTIN_INTEGRATIONS_COUNT).toBe(18);
+      expect(BUILTIN_INTEGRATIONS_COUNT).toBe(17);
       const registry = createIntegrationRegistry();
       expect(registry.size).toBe(BUILTIN_INTEGRATIONS_COUNT);
       const ids = BUILTIN_INTEGRATIONS.map((i) => i.id);

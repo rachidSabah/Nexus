@@ -1176,8 +1176,19 @@ export class HttpServer {
         'default',
         'auto',
       ];
+      // Pure routing directives are always available (they resolve dynamically
+      // to whatever endpoint is healthy). Concrete OpenAI-family models must
+      // ONLY be advertised when an OpenAI-family endpoint is actually
+      // selectable — otherwise we advertise a dead, unroutable model (mission
+      // rule: never present a stale/dead model as healthy and routable).
+      const virtualFrontier = new Set(['gateway-routed', 'default', 'auto', 'codex']);
+      const openaiFamilySelectable =
+        selectableProviders.has('openai') ||
+        selectableProviders.has('opencode-zen') ||
+        selectableProviders.has('opencode-go');
       for (const cm of codexFrontierModels) {
         if (!models.has(cm)) {
+          if (!virtualFrontier.has(cm) && !openaiFamilySelectable) continue;
           models.set(cm, {
             id: cm,
             object: 'model',

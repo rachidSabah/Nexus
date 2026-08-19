@@ -390,6 +390,16 @@ export abstract class BaseIntegration implements IntegrationAdapter {
   protected async detectVersion(executable?: string): Promise<string | undefined> {
     if (!executable) return undefined;
     const { spawn } = await import('node:child_process');
+
+    // Windows cannot spawn a `.cmd` / `.bat` shim directly with `spawn()` —
+    // it throws `EINVAL` synchronously (uncatchable by `.on('error')`), which
+    // would crash the whole integrations list / Runtime Agent Matrix. Route
+    // those through `cmd /c` so the OS shell launches them instead.
+    const isBatch =
+      /\.(cmd|bat)$/i.test(executable) || /\.(cmd|bat)$/i.test(executable.split(/[\\/]/).pop() ?? '');
+    const cmd = isBatch ? process.env.ComSpec || 'cmd.exe' : executable;
+    const args = isBatch ? ['/c', executable, '--version'] : ['--version'];
+
     return new Promise<string | undefined>((resolve) => {
       let done = false;
       const finish = (v?: string) => {
@@ -398,10 +408,20 @@ export abstract class BaseIntegration implements IntegrationAdapter {
           resolve(v);
         }
       };
-      const child = spawn(executable, ['--version'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 1500,
-      });
+
+      let child: ReturnType<typeof spawn>;
+      try {
+        child = spawn(cmd, args, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 1500,
+          windowsHide: true,
+        });
+      } catch {
+        // Synchronous spawn failure (e.g. EINVAL on a batch shim) — never
+        // let it break the integrations matrix; just report no version.
+        return finish(undefined);
+      }
+
       let out = '';
       child.stdout?.on('data', (d) => (out += String(d)));
       child.stderr?.on('data', (d) => (out += String(d)));
@@ -410,8 +430,13 @@ export abstract class BaseIntegration implements IntegrationAdapter {
         const m = out.match(/([0-9]+\.[0-9]+(?:\.[0-9]+)?)/);
         finish(m ? m[1] : undefined);
       });
+      // Hard floor in case `close` never fires (e.g. interactive prompt).
       setTimeout(() => {
-        child.kill('SIGKILL');
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* already gone */
+        }
         finish(undefined);
       }, 1600);
     });
@@ -490,7 +515,15 @@ export abstract class BaseIntegration implements IntegrationAdapter {
   }
 
   async start(ctx: IntegrationContext): Promise<IntegrationResult> {
-    const spec = await this.getLaunchSpec(ctx);
+    let spec: LaunchSpec | null;
+    try {
+      spec = await this.getLaunchSpec(ctx);
+    } catch (e) {
+      // Adapters may throw during launch-spec construction to surface a
+      // blocking prerequisite (e.g. OpenHands requires a Docker daemon).
+      // Surface that as a clean failure instead of an unhandled rejection.
+      return fail(`cannot start ${this.displayName}`, [(e as Error).message]);
+    }
     if (!spec) {
       return fail(`${this.displayName} does not support managed start (no launch spec).`);
     }
@@ -512,7 +545,12 @@ export abstract class BaseIntegration implements IntegrationAdapter {
   }
 
   async restart(ctx: IntegrationContext): Promise<IntegrationResult> {
-    const spec = await this.getLaunchSpec(ctx);
+    let spec: LaunchSpec | null;
+    try {
+      spec = await this.getLaunchSpec(ctx);
+    } catch (e) {
+      return fail(`cannot restart ${this.displayName}`, [(e as Error).message]);
+    }
     if (!spec) {
       return fail(`${this.displayName} does not support managed restart (no launch spec).`);
     }

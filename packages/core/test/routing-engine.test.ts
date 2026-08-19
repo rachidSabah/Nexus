@@ -223,4 +223,36 @@ describe('RoutingEngine', () => {
     await new Promise((r) => queueMicrotask(r));
     expect(events.length).toBe(1);
   });
+
+  it('keeps a billing-blocked (mark_unavailable) endpoint excluded until a real success', () => {
+    engine.recordFailure(
+      'ep-openai',
+      Object.assign(new Error('CreditsError'), { status: 402 }),
+      true,
+      'mark_unavailable',
+    );
+    expect(engine.listEndpoints().find((e) => e.id === 'ep-openai')?.health).toBe('circuit_open');
+    // A billing-dead endpoint must not be advertised as routable.
+    expect(engine.getSelectableProviders()).not.toContain('openai');
+
+    // Operator fixes billing; a genuine successful request arrives.
+    engine.recordSuccess('ep-openai', 120);
+    expect(engine.listEndpoints().find((e) => e.id === 'ep-openai')?.health).toBe('healthy');
+    expect(engine.getSelectableProviders()).toContain('openai');
+  });
+
+  it('does NOT half-open re-admit a billing-blocked endpoint back to degraded', () => {
+    engine.recordFailure(
+      'ep-openai',
+      Object.assign(new Error('CreditsError'), { status: 402 }),
+      true,
+      'mark_unavailable',
+    );
+    // filterEligible performs the half-open re-admit for non-billing endpoints.
+    // A billing-blocked endpoint must stay excluded from selection.
+    const candidates = (engine as unknown as { filterEligible: (r: unknown) => unknown[] }).filterEligible({
+      model: 'anything',
+    });
+    expect(candidates.find((e: unknown) => (e as { id: string }).id === 'ep-openai')).toBeUndefined();
+  });
 });

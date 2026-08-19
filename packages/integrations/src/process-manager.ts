@@ -111,7 +111,118 @@ export class IntegrationProcessManager {
       };
     }
 
+    // Web-UI integrations: open their UI in the OS default browser. We open the
+    // real web UI URL directly (spec.webUrl, e.g. http://127.0.0.1:3080) — the
+    // address `dsh web` itself prints and serves. This is a clean top-level
+    // navigation, identical to the user opening it by hand, so the SPA renders
+    // correctly. Best-effort: a failure to open the browser must never fail the
+    // start.
+    //
+    // IMPORTANT: the browser must NOT be opened the instant the OS process
+    // spawns. At that moment the SPA's HTML shell is served but its CSS/JS
+    // bundles are still warming up; an automated open then grabs the HTML but
+    // fails the subsequent assets (transparent text / first-glyph-only). We
+    // wait until the UI is genuinely ready to serve its assets before opening.
+    if (spec.webUrl && !tracked.exited && this.isAlive(child)) {
+      this.openUIWhenReady(spec.webUrl).catch(() => {
+        /* ignore — UI is still reachable at the URL */
+      });
+    }
+
     return this.toState(id, tracked, gatewayTarget);
+  }
+
+  /**
+   * Wait until a web UI is genuinely ready to serve its assets (not merely when
+   * the OS process exists), then open it in the default browser. This prevents
+   * the classic automated-open race: the SPA shell is served instantly, but its
+   * CSS/JS bundles are still warming up. Opening too early grabs the HTML but
+   * fails the subsequent assets (transparent text / first-glyph-only), which is
+   * exactly the broken-UI symptom. A short readiness wait makes the automated
+   * open behave like a manual paste. Best-effort and time-bounded: if the UI
+   * never reports ready within the cap, we still try to open it.
+   */
+  private async openUIWhenReady(url: string): Promise<void> {
+    const capMs = 6000;
+    const start = Date.now();
+    while (Date.now() - start < capMs) {
+      if (await this.isUiReady(url)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return this.openInBrowser(url);
+  }
+
+  /** Probe whether the UI is serving both its HTML and a CSS asset. */
+  private async isUiReady(url: string): Promise<boolean> {
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      if (res.status !== 200) return false;
+      const body = await res.text();
+      if (!/<html/i.test(body)) return false;
+      const cssMatch = body.match(/href="(\/[^"]+\.css)"/);
+      if (!cssMatch) return true; // no linked CSS in shell — good enough
+      const cssUrl = new URL(cssMatch[1]!, url).toString();
+      const cssRes = await fetch(cssUrl);
+      return cssRes.status === 200;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Open a URL in the OS default browser, cross-platform. Best-effort:
+   * resolves regardless of whether the launch succeeded (the URL is the
+   * documented UI endpoint, reachable as long as the process is serving).
+   */
+  private async openInBrowser(url: string): Promise<void> {
+    const { spawn } = await import('node:child_process');
+    if (process.platform === 'win32') {
+      // Force-open a specific, known-good browser (Chrome) rather than the OS
+      // default handler. The default browser can differ from the one the user
+      // pastes the URL into; some default handlers fail to load the SPA's
+      // CSS/JS (transparent text / missing UI). Launching Chrome explicitly
+      // makes the automated open identical to a manual paste, which renders
+      // correctly. Fall back to the default handler if Chrome isn't present.
+      const chromePaths = [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      ];
+      const fs = await import('node:fs');
+      const chrome = chromePaths.find((p) => fs.existsSync(p));
+      if (chrome) {
+        // Open in an incognito window: a fresh, isolated cache. Earlier broken
+        // loads (redirect/race era) poisoned the normal-profile cache, leaving
+        // transparent text / missing composer until a hard reload. Incognito
+        // guarantees a clean load every time, matching a Ctrl+F5.
+        return new Promise<void>((resolve) => {
+          const child = spawn(chrome, ['--incognito', url], { stdio: 'ignore', windowsHide: true });
+          child.on('error', () => resolve());
+          child.on('close', () => resolve());
+        });
+      }
+      // Fallback: OS default handler via `cmd /c start`.
+      return new Promise<void>((resolve) => {
+        const child = spawn(process.env.ComSpec || 'cmd.exe', ['/c', 'start', '', url], {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.on('error', () => resolve());
+        child.on('close', () => resolve());
+      });
+    }
+    if (process.platform === 'darwin') {
+      return new Promise<void>((resolve) => {
+        const child = spawn('open', [url], { stdio: 'ignore' });
+        child.on('error', () => resolve());
+        child.on('close', () => resolve());
+      });
+    }
+    // Linux / other POSIX
+    return new Promise<void>((resolve) => {
+      const child = spawn('xdg-open', [url], { stdio: 'ignore' });
+      child.on('error', () => resolve());
+      child.on('close', () => resolve());
+    });
   }
 
   /**
@@ -238,6 +349,24 @@ export class IntegrationProcessManager {
     }
 
     // Headless / background spawn.
+    // Windows cannot spawn a `.cmd` / `.bat` shim directly with `spawn()` —
+    // it throws `EINVAL` synchronously (the same class of bug as in
+    // `BaseIntegration.detectVersion`). Route those through `cmd /c` so the
+    // OS shell launches them, mirroring the interactive branch above.
+    const isBatch =
+      process.platform === 'win32' &&
+      /\.(cmd|bat)$/i.test(spec.executable.split(/[\\/]/).pop() ?? '');
+    if (isBatch) {
+      const child = spawn(process.env.ComSpec || 'cmd.exe', ['/c', spec.executable, ...spec.args], {
+        env,
+        cwd: spec.cwd,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.unref();
+      return child;
+    }
     const child = spawn(spec.executable, [...spec.args], {
       env,
       cwd: spec.cwd,

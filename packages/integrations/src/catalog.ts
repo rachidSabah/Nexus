@@ -161,20 +161,6 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     supportedProtocols: ['OpenAI-compatible'],
   },
   {
-    id: 'openhands',
-    displayName: 'OpenHands',
-    description: 'Open source platform for software development agents',
-    category: 'agent',
-    homepage: 'https://github.com/All-Hands-AI/OpenHands',
-    binaryNames: ['openhands', 'opendevin'],
-    installRecipe: {
-      type: 'pip',
-      packageName: 'openhands-ai',
-      guideUrl: 'https://github.com/All-Hands-AI/OpenHands',
-    },
-    supportedProtocols: ['OpenAI-compatible'],
-  },
-  {
     id: 'cursor',
     displayName: 'Cursor',
     description: 'AI-first code editor built on VS Code',

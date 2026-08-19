@@ -396,18 +396,6 @@ export const BUILTIN_AGENT_TEMPLATES: ReadonlyArray<AgentDefinition> = [
     costMultiplier: 1.0,
   },
   {
-    id: 'openhands',
-    name: 'OpenHands',
-    description: 'Autonomous AI software engineer — end-to-end feature delivery.',
-    capabilities: ['coding', 'architecture', 'testing', 'deployment', 'autonomous'],
-    tools: ['filesystem', 'terminal', 'git', 'browser', 'database'],
-    models: ['claude-3-5-sonnet', 'gpt-4o', 'deepseek-coder'],
-    permissions: ['filesystem.*', 'terminal.*', 'git.*', 'browser.*'],
-    tags: ['coding', 'autonomous'],
-    concurrencyLimit: 1,
-    costMultiplier: 1.5,
-  },
-  {
     id: 'aider',
     name: 'Aider',
     description: 'Pair-programming CLI — surgical edits, git-native workflow.',

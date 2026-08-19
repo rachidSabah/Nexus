@@ -14,7 +14,6 @@ import {
   OpenCodeIntegration,
   OpenCodeGoIntegration,
 } from './adapters/opencode.js';
-import { OpenHandsIntegration } from './adapters/openhands.js';
 import { QwenCodeIntegration } from './adapters/qwen-code.js';
 import { RooCodeIntegration } from './adapters/roo-code.js';
 import { VsCodeIntegration } from './adapters/vscode.js';
@@ -34,7 +33,6 @@ export const BUILTIN_INTEGRATIONS: IntegrationAdapter[] = [
   new OpenCodeIntegration(),
   new OpenCodeGoIntegration(),
   new AiderIntegration(),
-  new OpenHandsIntegration(),
   new DeepSeekHarnessIntegration(),
 
   // ─── Editors ─────────────────────────────────────────────────────────────

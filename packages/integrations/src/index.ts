@@ -59,7 +59,6 @@ export { CursorIntegration } from './adapters/cursor.js';
 export { ContinueIntegration } from './adapters/continue.js';
 export { ClineIntegration } from './adapters/cline.js';
 export { RooCodeIntegration } from './adapters/roo-code.js';
-export { OpenHandsIntegration } from './adapters/openhands.js';
 export { AiderIntegration } from './adapters/aider.js';
 export { ZedIntegration } from './adapters/zed.js';
 export { VsCodeIntegration } from './adapters/vscode.js';

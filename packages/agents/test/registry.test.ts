@@ -178,7 +178,9 @@ describe('AgentRegistry', () => {
     expect(ids).toContain('codex-cli');
     expect(ids).toContain('hermes-cli');
     expect(ids).toContain('opencode');
-    expect(ids).toContain('openhands');
+    // NOTE: 'openhands' is intentionally NOT bundled — the user installs it
+    // externally and routes it through the gateway. It is excluded from the
+    // built-in catalog by design, so it must not appear here.
     expect(ids).toContain('aider');
     expect(ids).toContain('continue');
     expect(ids).toContain('deepseek-coder');

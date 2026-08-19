@@ -68,7 +68,7 @@ describe('Phase 34: Agent Buckle & Machine Agent Integration Truthfulness Harden
     }, 30000);
 
     it('verifies supported integrations are available as adapters without claiming they are installed', () => {
-      expect(BUILTIN_INTEGRATIONS.length).toBe(18);
+      expect(BUILTIN_INTEGRATIONS.length).toBe(17);
       const ids = BUILTIN_INTEGRATIONS.map((i) => i.id);
       expect(ids).toContain('claude-code');
       expect(ids).toContain('codex-cli');
