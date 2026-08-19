@@ -11,8 +11,9 @@ sleep 2
 echo "Processes stopped."
 rm -f "$HOME/.local/bin/anx" 2>/dev/null
 INSTALL_DIR="${ANX_HOME:-$HOME/.agent-nexus}"
-rm -rf "$INSTALL_DIR/codingghosts" 2>/dev/null
-rmdir "$INSTALL_DIR" 2>/dev/null || true
+# The installer clones the repo into $INSTALL_DIR/repo (REPO_DIR). Remove the
+# whole install dir so the repo + all built packages are fully uninstalled.
+rm -rf "$INSTALL_DIR" 2>/dev/null
 for PROFILE in "$HOME/.bashrc" "$HOME/.zshrc"; do
   if [ -f "$PROFILE" ]; then sed -i '/\.local\/bin/d' "$PROFILE" 2>/dev/null || true; fi
 done

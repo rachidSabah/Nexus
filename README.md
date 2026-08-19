@@ -179,6 +179,9 @@ All connected coding agents (Claude Code, Cursor, Aider, OpenCode, Codex) can sh
 ### 🖥️ 4. Air-Gapped Local Inference & Circuit-Aware Failover
 When cloud providers experience 5xx outages, rate limit saturation, or network disconnects, Nexus seamlessly shifts traffic to local inference backends (`ollama`, `vllm`, `lmstudio`) without breaking active coding sessions.
 
+### 🧰 5. Sandboxed Code Execution & Isolated Debugging
+Nexus exposes a `sandbox.execute` agent tool that runs untrusted code in a connected isolated backend (Docker/MCP sandbox) instead of the host — keeping your machine and gateway credentials out of agent-executed code. When an agent is debugging the gateway itself, use the isolated debug workflow (`scripts/debug-isolated.sh`): it copies your vault + key into a throwaway sandbox and runs a separate gateway instance there, so probing a dead route or a 402 provider never touches your live config or credentials.
+
 ---
 
 ## Connecting Coding Agents & IDEs
@@ -190,7 +193,7 @@ Nexus provides drop-in compatibility for 20+ coding agents and IDEs with **1-Cli
 | **Claude Code** | `~/.claude/settings.json` (`apiBaseUrl`) | Anthropic `/v1/messages` | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Cursor / Windsurf** | Settings → Models (Base URL) | OpenAI `/v1/chat/completions` | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Aider** | `--openai-api-base http://127.0.0.1:8787/v1` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
-| **OpenCode / OpenCode Zen** | `~/.opencode.json` (`url`) | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **OpenCode / OpenCode Go** | `~/.opencode.json` (`url`) | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Codex CLI** | `~/.codex/config.json` (`baseUrl`) | OpenAI `/v1/chat/completions` | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Gemini CLI** | `~/.gemini/settings.json` (`baseUrl`) | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Hermes CLI** | `~/.hermes/config.json` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
@@ -244,6 +247,8 @@ Nexus v0.5.0 features a local-first **Durable Persistence & Recovery Engine**:
 | `POST` | `/v1/messages` | Anthropic-compatible Messages API with transparent protocol translation |
 | `GET` | `/v1/models` | All dynamically discovered models across all healthy providers |
 | `GET` | `/v1/providers` | Configured provider health, models, and latency metrics |
+| `GET` | `/v1/rate-limits` | Per-key rate-limit state (tokens remaining / reset / Retry-After) — truthful, derived from live upstream headers (P1) |
+| `GET` | `/v1/routing/metrics` | Per-provider key health (active/cooldown/invalid, 429 rate) + free-model availability — derived, no fabricated quota (P4) |
 | `POST` | `/v1/context/broadcast` | Broadcast shared architecture context to all connected agents |
 | `POST` | `/v1/context/query` | Query cross-agent shared context bus |
 | `POST` | `/v1/agents/:id/install` | Install agent CLI package in background |

@@ -111,7 +111,7 @@ sleep 4
 step "Done."
 echo ""
 echo "  Gateway   : http://127.0.0.1:${GATEWAY_PORT}"
-echo "  Dashboard : http://127.0.0.1:${GATEWAY_PORT}/dashboard"
+echo "  Dashboard : http://127.0.0.1:3000"
 echo "  Config    : ${INSTALL_DIR}/config.json"
 echo "  Logs      : ${INSTALL_DIR}/gateway.log"
 echo "  Repo      : ${REPO_DIR}"
