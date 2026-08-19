@@ -214,7 +214,7 @@ Nexus provides drop-in compatibility for 20+ coding agents and IDEs with **1-Cli
 | **Claude Code** | `~/.claude/settings.json` (`apiBaseUrl`) | Anthropic `/v1/messages` | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Cursor / Windsurf** | Settings → Models (Base URL) | OpenAI `/v1/chat/completions` | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Aider** | `--openai-api-base http://127.0.0.1:8787/v1` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
-| **OpenCode / OpenCode Go** | `~/.opencode.json` (`url`) | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
+| **OpenCode / OpenCode Zen / OpenCode Go** | `~/.opencode.json` (`url`) | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Codex CLI** | `~/.codex/config.json` (`baseUrl`) | OpenAI `/v1/chat/completions` | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Gemini CLI** | `~/.gemini/settings.json` (`baseUrl`) | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
 | **Hermes CLI** | `~/.hermes/config.json` | OpenAI-compatible | Install · Update · Buckle · Unbuckle · Uninstall |
