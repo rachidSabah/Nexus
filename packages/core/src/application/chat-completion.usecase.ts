@@ -65,6 +65,13 @@ export interface ChatCompletionUseCaseOptions {
   privacy?: PrivacyConfig;
   /** Optional request tracer. When provided, full request traces are recorded for inspection via /v1/traces/:id. */
   tracer?: RequestTracer;
+  /**
+   * Optional proactive rate-limit tracker. When provided, response headers
+   * (`X-RateLimit-*`, `Retry-After`) are fed into it after every provider
+   * call so key selection can prefer keys with remaining quota. The tracker
+   * is otherwise dormant (it was previously constructed but never fed).
+   */
+  rateLimitTracker?: import('./rate-limit-tracker.js').ProactiveRateLimitTracker;
   /** Optional budget manager. When provided, budget mode (normal | cost_aware | free_only | blocked)
    *  shapes routing preference and spend is recorded on success. Disabled budgets are a no-op. */
   budgetManager?: BudgetManager;
@@ -102,6 +109,7 @@ export class ChatCompletionUseCase {
   private readonly privacy: PrivacyConfig;
   private readonly tracer?: RequestTracer;
   private readonly budgetManager?: BudgetManager;
+  private readonly rateLimitTracker?: import('./rate-limit-tracker.js').ProactiveRateLimitTracker;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -123,6 +131,7 @@ export class ChatCompletionUseCase {
     this.privacy = options.privacy ?? DEFAULT_PRIVACY;
     this.tracer = options.tracer;
     this.budgetManager = options.budgetManager;
+    this.rateLimitTracker = options.rateLimitTracker;
   }
 
   async execute(
@@ -421,6 +430,14 @@ export class ChatCompletionUseCase {
           this.keyRegistry.recordSuccess(selectedKeyId, latencyMs, tokens);
         }
 
+        // Feed upstream rate-limit headers into the proactive tracker so key
+        // selection can prefer keys with remaining quota (master prompt #5).
+        // `responseHeaders` is optional — only populated by adapters that
+        // surface raw headers — so absence is a no-op, not an error.
+        if (this.rateLimitTracker && selectedKeyId && response.responseHeaders) {
+          this.rateLimitTracker.recordHeaders(selectedKeyId, response.responseHeaders);
+        }
+
         const cost = this.costs.calculate(response.usage, {
           inputPer1K: endpoint.pricing?.inputPer1K ?? 0,
           outputPer1K: endpoint.pricing?.outputPer1K ?? 0,
@@ -545,7 +562,7 @@ export class ChatCompletionUseCase {
         const error = err as Error;
         const classification = classifyFailure(error);
         const retryable = classification.retryable;
-        await this.routing.recordFailure(endpoint.id, error, retryable, classification.endpointAction);
+        await this.routing.recordFailure(endpoint.id, error, retryable, classification.endpointAction, classification.retryAfterMs);
 
         // Trace: record failed attempt.
         if (this.tracer) {
@@ -566,7 +583,7 @@ export class ChatCompletionUseCase {
         // 401/403 → invalidate (handled by KeyRegistry.recordFailure with status=401)
         // Other → no key action
         if (this.keyRegistry && selectedKeyId) {
-          this.keyRegistry.recordFailure(selectedKeyId, classification.status || classification.code || 'error', retryable);
+          this.keyRegistry.recordFailure(selectedKeyId, classification.status || classification.code || 'error', retryable, classification.retryAfterMs);
         }
 
         // ─── Plugin hook: onError ────────────────────────────────────────
@@ -936,12 +953,58 @@ export interface FailureClassification {
   readonly endpointAction: 'record_failure' | 'mark_degraded' | 'mark_unavailable' | 'none';
   /** Human-readable reason for the classification (for the request trace). */
   readonly reason: string;
+  /**
+   * Provider-supplied `Retry-After` in milliseconds, when the error response
+   * included one (typically on HTTP 429). Drives adaptive, provider-honoring
+   * cooldowns instead of a fixed 60s penalty (master prompt #5). Undefined
+   * when the provider did not advertise a retry window.
+   */
+  readonly retryAfterMs?: number;
+}
+
+/**
+ * Extracts a `Retry-After` value (in milliseconds) from a provider error's
+ * captured response headers, when the upstream advertised one. Honors both
+ * the delta-seconds form (`Retry-After: 30`) and the HTTP-date form
+ * (`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`). Returns undefined when no
+ * usable value is present. This is what lets the router apply an *adaptive*,
+ * provider-honoring cooldown instead of a fixed penalty (master prompt #5).
+ */
+function parseRetryAfterMs(error: Error): number | undefined {
+  const ctx = (error as { context?: Record<string, unknown> }).context;
+  if (!ctx) return undefined;
+  const raw = ctx['retryAfter'] ?? ctx['retry-after'] ?? ctx['headers'];
+  if (raw === undefined || raw === null) return undefined;
+  // Headers may be a Record<string, string | string[]>; normalize the value
+  // and lowercase keys so `Retry-After` and `retry-after` both match.
+  const getHeader = (name: string): string | undefined => {
+    if (typeof raw === 'object' && !Array.isArray(raw) && raw !== null) {
+      const lower = new Map<string, unknown>();
+      for (const [k, v] of Object.entries(raw)) lower.set(k.toLowerCase(), v);
+      const v = lower.get(name.toLowerCase());
+      if (Array.isArray(v)) return v[0];
+      return typeof v === 'string' ? v : undefined;
+    }
+    return undefined;
+  };
+  const value = getHeader('retry-after');
+  if (!value) return undefined;
+  // HTTP-date form.
+  const asDate = Date.parse(value);
+  if (!Number.isNaN(asDate) && asDate > Date.now()) {
+    return Math.max(0, asDate - Date.now());
+  }
+  // Delta-seconds form.
+  const asNum = parseInt(value, 10);
+  if (!Number.isNaN(asNum)) return Math.max(0, asNum * 1000);
+  return undefined;
 }
 
 export function classifyFailure(error: Error): FailureClassification {
   // ProviderResponseError carries an HTTP status.
   if (error instanceof ProviderResponseError) {
     const status = error.status;
+    const retryAfterMs = parseRetryAfterMs(error);
     // Billing / quota errors (402 Payment Required, or a 401 whose body
     // reports a billing problem such as "CreditsError" / "No payment method")
     // are NOT an auth failure — the key is valid, the account simply has no
@@ -1003,7 +1066,8 @@ export function classifyFailure(error: Error): FailureClassification {
         retryable: true,
         keyAction: 'cooldown',
         endpointAction: 'record_failure',
-        reason: `HTTP 429: rate limited — key on cooldown, failing over`,
+        retryAfterMs,
+        reason: `HTTP 429: rate limited${retryAfterMs ? ` — Retry-After ${Math.round(retryAfterMs / 1000)}s honored` : ''} — key on cooldown, failing over`,
       };
     }
     // 413 Request Entity Too Large — context window exceeded. Not retryable

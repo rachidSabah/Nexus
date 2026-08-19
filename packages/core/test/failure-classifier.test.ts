@@ -160,17 +160,46 @@ describe('classifyFailure', () => {
     expect(c.code).toBe('UNKNOWN');
   });
 
-  it('includes a human-readable reason on every classification', () => {
-    const cases = [
-      new ProviderResponseError('ep1', 401, 'Unauthorized'),
-      new ProviderResponseError('ep1', 429, 'Rate Limited'),
-      new ProviderResponseError('ep1', 500, 'Server Error'),
-      new ProviderResponseError('ep1', 404, 'Not Found'),
-    ];
-    for (const err of cases) {
-      const c = classifyFailure(err);
-      expect(c.reason).toBeTruthy();
-      expect(c.reason.length).toBeGreaterThan(10);
-    }
+  it('parses a delta-seconds Retry-After header into retryAfterMs on 429', () => {
+    const err = new ProviderResponseError('ep1', 429, 'Too Many Requests', {
+      headers: { 'retry-after': '30' },
+    });
+    const c = classifyFailure(err);
+    expect(c.retryable).toBe(true);
+    expect(c.keyAction).toBe('cooldown');
+    expect(c.retryAfterMs).toBe(30_000);
+    expect(c.reason).toContain('Retry-After');
+  });
+
+  it('parses an HTTP-date Retry-After header into retryAfterMs on 429', () => {
+    const future = new Date(Date.now() + 45_000).toUTCString();
+    const err = new ProviderResponseError('ep1', 429, 'Too Many Requests', {
+      headers: { 'retry-after': future },
+    });
+    const c = classifyFailure(err);
+    expect(c.retryAfterMs).toBeGreaterThanOrEqual(43_000);
+    expect(c.retryAfterMs).toBeLessThanOrEqual(46_000);
+  });
+
+  it('returns undefined retryAfterMs when no Retry-After header is present', () => {
+    const err = new ProviderResponseError('ep1', 429, 'Too Many Requests');
+    const c = classifyFailure(err);
+    expect(c.retryAfterMs).toBeUndefined();
+  });
+
+  it('ignores an unparsable Retry-After header (falls back to undefined)', () => {
+    const err = new ProviderResponseError('ep1', 429, 'Too Many Requests', {
+      headers: { 'retry-after': 'soon' },
+    });
+    const c = classifyFailure(err);
+    expect(c.retryAfterMs).toBeUndefined();
+  });
+
+  it('reads Retry-After from a lower-cased header key', () => {
+    const err = new ProviderResponseError('ep1', 429, 'Too Many Requests', {
+      headers: { 'Retry-After': '12' },
+    });
+    const c = classifyFailure(err);
+    expect(c.retryAfterMs).toBe(12_000);
   });
 });

@@ -47,13 +47,15 @@ export class OpenAIAdapter implements ProviderAdapter {
     const url = `${this.resolveBase(endpoint)}/chat/completions`;
     const body = this.translateRequest(request, false);
 
+    let responseHeaders: Record<string, string> | undefined;
     const raw = await fetchJson<OpenAIChatResponse>(url, {
       method: 'POST',
       headers: this.headers(endpoint, apiKey),
       body: JSON.stringify(body),
-    }, endpoint, signal);
+    }, endpoint, signal, (h) => { responseHeaders = h; });
 
-    return this.translateResponse(raw, endpoint);
+    const response = this.translateResponse(raw, endpoint, responseHeaders);
+    return response;
   }
 
   async *streamChatCompletion(
@@ -364,7 +366,11 @@ export class OpenAIAdapter implements ProviderAdapter {
     return body;
   }
 
-  protected translateResponse(raw: OpenAIChatResponse, endpoint: ProviderEndpoint): ChatCompletionResponse {
+  protected translateResponse(
+    raw: OpenAIChatResponse,
+    endpoint: ProviderEndpoint,
+    responseHeaders?: Record<string, string>,
+  ): ChatCompletionResponse {
     return {
       id: raw.id,
       object: 'chat.completion',
@@ -386,6 +392,7 @@ export class OpenAIAdapter implements ProviderAdapter {
       provider: this.providerId,
       endpoint: endpoint.id,
       latencyMs: 0,
+      ...(responseHeaders ? { responseHeaders } : {}),
     };
   }
 

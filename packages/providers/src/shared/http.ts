@@ -27,6 +27,8 @@ export async function fetchJson<T>(
   init: RequestInit,
   endpoint: ProviderEndpoint,
   signal?: AbortSignal,
+  /** Optional sink for normalized response headers (used for Retry-After / rate-limit tracking). */
+  onHeaders?: (headers: Record<string, string>) => void,
 ): Promise<T> {
   const controller = new AbortController();
   const timeout = AbortSignal.timeout(endpoint.timeoutMs);
@@ -37,15 +39,30 @@ export async function fetchJson<T>(
   try {
     const response = await fetch(url, {
       ...init,
+      method: init.method ?? 'GET',
       signal: controller.signal,
     });
     if (!response.ok) {
       const body = await response.text().catch(() => '');
+      // Capture response headers so the failure classifier can honor a
+      // provider-supplied `Retry-After` (master prompt #5). Headers are
+      // normalized to a plain Record<string,string> for stable downstream
+      // access. Guarded: some test/mock environments omit `headers` entirely.
+      const headers: Record<string, string> = {};
+      const rh = (response as { headers?: { forEach?: (cb: (v: string, k: string) => void) => void } }).headers;
+      rh?.forEach?.((v, k) => { headers[k] = v; });
+      onHeaders?.(headers);
       throw new ProviderResponseError(endpoint.id, response.status, body || response.statusText, {
         url,
         body,
+        headers,
       });
     }
+    // Surface successful response headers for proactive rate-limit tracking.
+    const headers: Record<string, string> = {};
+    const rh2 = (response as { headers?: { forEach?: (cb: (v: string, k: string) => void) => void } }).headers;
+    rh2?.forEach?.((v, k) => { headers[k] = v; });
+    onHeaders?.(headers);
     const text = await response.text().catch(() => '');
     if (!text) {
       throw new ProviderResponseError(endpoint.id, response.status, 'Empty response body', {

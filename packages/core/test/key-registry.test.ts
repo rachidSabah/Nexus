@@ -230,4 +230,45 @@ describe('KeyRegistry', () => {
       }
     }
   });
+
+  it('honors provider Retry-After for a precise 429 cooldown (master prompt #5)', async () => {
+    await registry.register({ id: 'openai-key-1', providerId: 'openai', plaintext: 'sk-aaa' });
+    registry.recordFailure('openai-key-1', 429, true, 30_000);
+    const k = registry.get('openai-key-1')!;
+    expect(k.status).toBe('cooldown');
+    // Cooldown should end ~30s out, NOT the default 100ms.
+    expect(k.cooldownUntil).toBeGreaterThan(Date.now() + 20_000);
+  });
+
+  it('falls back to the configured default cooldown when no Retry-After is given', async () => {
+    await registry.register({ id: 'openai-key-1', providerId: 'openai', plaintext: 'sk-aaa' });
+    registry.recordFailure('openai-key-1', 429, true);
+    const k = registry.get('openai-key-1')!;
+    expect(k.status).toBe('cooldown');
+    // Default cooldownMs is 100 in this suite.
+    expect(k.cooldownUntil).toBeGreaterThanOrEqual(Date.now());
+    expect(k.cooldownUntil).toBeLessThanOrEqual(Date.now() + 200);
+  });
+
+  it('escalates a repeated 429 cooldown while already cooling down', async () => {
+    await registry.register({ id: 'openai-key-1', providerId: 'openai', plaintext: 'sk-aaa' });
+    registry.recordFailure('openai-key-1', 429, true, 5_000);
+    const first = registry.get('openai-key-1')!;
+    expect(first.cooldownUntil).toBeGreaterThan(Date.now() + 4_000);
+    // Second 429 before cooldown expires → escalate (>= 5s, capped logic).
+    registry.recordFailure('openai-key-1', 429, true, 5_000);
+    const second = registry.get('openai-key-1')!;
+    // Should be at least as far out as the first window.
+    expect(second.cooldownUntil).toBeGreaterThanOrEqual(first.cooldownUntil);
+    expect(second.status).toBe('cooldown');
+  });
+
+  it('a successful request clears a Retry-After cooldown immediately', async () => {
+    await registry.register({ id: 'openai-key-1', providerId: 'openai', plaintext: 'sk-aaa' });
+    registry.recordFailure('openai-key-1', 429, true, 60_000);
+    expect(registry.get('openai-key-1')!.status).toBe('cooldown');
+    registry.recordSuccess('openai-key-1', 200, 10);
+    expect(registry.get('openai-key-1')!.status).toBe('active');
+    expect(registry.get('openai-key-1')!.cooldownUntil).toBe(0);
+  });
 });

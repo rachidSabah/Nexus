@@ -352,12 +352,17 @@ export class KeyRegistry {
 
   /**
    * Records a failed request. Classifies the failure:
-   *   - 429 → cooldown (default 60s)
+   *   - 429 → cooldown (honors provider `Retry-After` when supplied; escalates
+   *           on repeated rate-limits; falls back to the configured default)
    *   - 401/403 → invalid (removed from rotation until re-registered)
    *   - 5xx → increment errors; status stays active (transient)
    *   - network error → increment errors
+   *
+   * @param retryAfterMs Optional provider-supplied `Retry-After` (ms). When
+   *        present on a 429 it sets a precise cooldown rather than a fixed
+   *        penalty; repeated 429s within a cooldown escalate the window.
    */
-  recordFailure(keyId: string, status: number | string, retryable: boolean): void {
+  recordFailure(keyId: string, status: number | string, retryable: boolean, retryAfterMs?: number): void {
     const k = this.keys.get(keyId);
     if (!k) return;
     k.requests++;
@@ -368,8 +373,17 @@ export class KeyRegistry {
     const sNum = typeof status === 'number' ? status : parseInt(status, 10);
     if (sNum === 429 || status === '429') {
       k.rateLimitedCount++;
+      // Adaptive cooldown: prefer the provider's own Retry-After; otherwise
+      // the configured default. Repeated 429s escalate (backoff) so a stuck
+      // key doesn't thrash, but a genuine success always clears it.
+      let cooldown = retryAfterMs && retryAfterMs > 0 ? retryAfterMs : this.cooldownMs;
+      if (k.status === 'cooldown' && k.cooldownUntil > Date.now()) {
+        // Already cooling down → extend with escalating backoff, capped at 10m.
+        const escalated = Math.min(cooldown * 2, 10 * 60_000);
+        cooldown = Math.max(cooldown, escalated);
+      }
       k.status = 'cooldown';
-      k.cooldownUntil = Date.now() + this.cooldownMs;
+      k.cooldownUntil = Date.now() + cooldown;
       return;
     }
     if (sNum === 401 || sNum === 403 || sNum === 402 || status === '401' || status === '403' || status === '402' || status === 'AUTH_ERROR') {

@@ -270,6 +270,14 @@ export interface ChatCompletionResponse {
   readonly endpoint: string;
   readonly latencyMs: number;
   readonly costUsd?: number;
+  /**
+   * Raw upstream response headers, captured by the provider adapter when the
+   * transport exposes them. OPTIONAL — adapters that don't surface headers
+   * simply omit this. Consumed by the ProactiveRateLimitTracker so the
+   * gateway can honor `Retry-After` and `X-RateLimit-*` without re-probing
+   * providers. Adding this field is strictly backward-compatible.
+   */
+  readonly responseHeaders?: Record<string, string>;
 }
 
 /**

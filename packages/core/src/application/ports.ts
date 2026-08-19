@@ -126,6 +126,12 @@ export interface RoutingEnginePort {
     error: Error,
     retryable: boolean,
     action?: 'mark_unavailable' | 'mark_degraded' | 'record_failure' | 'none',
+    /**
+     * Provider-supplied `Retry-After` in milliseconds, when the failed
+     * response advertised one (e.g. HTTP 429). Drives an adaptive,
+     * provider-honoring cooldown instead of the fixed default.
+     */
+    retryAfterMs?: number,
   ): void;
 
   /**
