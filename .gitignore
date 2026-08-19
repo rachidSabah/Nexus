@@ -77,6 +77,5 @@ tmp/
 .test-island/
 .tmp_*.json
 
-# User WIP backup (broken in-progress refactor, preserved not committed)
-server.ts.wip-backup
-.aider*
+# Isolated debug worktrees (agentic debug playground — never commit)
+.worktrees/
