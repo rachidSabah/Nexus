@@ -1,28 +1,58 @@
 import type { RoutingDecision, ProviderEndpoint } from '../domain/types.js';
 
-import type { FailoverPort } from './ports.js';
+import type { FailoverPort, FailoverContext } from './ports.js';
 
 /**
- * Default failover implementation — walks the alternatives list in order.
+ * Default failover implementation.
  *
- * More sophisticated implementations could:
- *  - consult circuit-breaker state
- *  - re-run routing with relaxed constraints
- *  - prefer endpoints in different regions from the failed one
+ * Walks the alternatives list, but — when given failure context — biases the
+ * choice by error *scope* (master prompt #19):
+ *   - provider-wide failure (5xx, 429, network, billing) → prefer a candidate
+ *     on a DIFFERENT provider before re-trying the same one, so a single
+ *     provider's outage doesn't burn all retries on its siblings.
+ *   - credential failure (401/403 invalid key) → prefer staying on the SAME
+ *     provider (a different, still-valid key is selected downstream by the
+ *     KeyRegistry) before switching providers.
+ * With no context it preserves the original "first viable alternative" order.
  */
 export class DefaultFailover implements FailoverPort {
   private readonly failed = new Set<string>();
 
-  next(decision: RoutingDecision, failedEndpointId: string): ProviderEndpoint | null {
+  next(
+    decision: RoutingDecision,
+    failedEndpointId: string,
+    context?: FailoverContext,
+  ): ProviderEndpoint | null {
     this.failed.add(failedEndpointId);
 
-    // 1. Find candidates that have not failed yet in this request
-    const viable = decision.alternatives.filter((e) => !this.failed.has(e.id) && e.health !== 'circuit_open');
-    if (viable.length === 0) {
-      return decision.alternatives.find((e) => e.id !== failedEndpointId && e.health !== 'circuit_open') ?? null;
+    const viable = (): ProviderEndpoint[] =>
+      decision.alternatives.filter(
+        (e) => !this.failed.has(e.id) && e.health !== 'circuit_open',
+      );
+
+    const pool = viable();
+    if (pool.length === 0) {
+      return (
+        decision.alternatives.find(
+          (e) => e.id !== failedEndpointId && e.health !== 'circuit_open',
+        ) ?? null
+      );
     }
 
-    // 2. Return first viable alternative
-    return viable[0] ?? null;
+    // Scope-aware diversity.
+    if (context?.scope && context.failedProviderId) {
+      const avoidProvider = context.scope === 'provider'; // avoid same provider
+      const preferProvider = context.scope === 'credential'; // prefer same provider
+      const sameProv = pool.filter((e) => e.providerId === context.failedProviderId);
+      const diffProv = pool.filter((e) => e.providerId !== context.failedProviderId);
+
+      if (preferProvider && sameProv.length > 0) return sameProv[0] ?? null;
+      if (avoidProvider && diffProv.length > 0) return diffProv[0] ?? null;
+      // Fall back to whatever viable candidate remains.
+      return pool[0] ?? null;
+    }
+
+    // Default: first viable alternative (original behavior).
+    return pool[0] ?? null;
   }
 }

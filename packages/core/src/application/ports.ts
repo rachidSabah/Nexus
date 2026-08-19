@@ -170,7 +170,30 @@ export interface RoutingEnginePort {
  * `RoutingDecision.alternatives`.
  */
 export interface FailoverPort {
-  next(decision: RoutingDecision, failedEndpointId: string): ProviderEndpoint | null;
+  /**
+   * @param decision The original routing decision (carries the candidate pool).
+   * @param failedEndpointId The endpoint that just failed this request.
+   * @param context Optional failure context enabling *scope-aware* failover
+   *   (master prompt #19): on a provider-wide failure, prefer a candidate from
+   *   a *different* provider before re-trying the same one; on a credential
+   *   failure, prefer staying on the same provider (a different, still-valid
+   *   key is selected downstream) before switching providers. Omitting the
+   *   context preserves the original "first viable alternative" behavior.
+   */
+  next(
+    decision: RoutingDecision,
+    failedEndpointId: string,
+    context?: FailoverContext,
+  ): ProviderEndpoint | null;
+}
+
+/** Scope of a failure, used to bias failover toward provider or credential diversity. */
+export interface FailoverContext {
+  /** 'provider' = endpoint/network/billing failure (prefer a different provider);
+   *  'credential' = 401/403 invalid key (prefer same provider, different key). */
+  scope?: 'provider' | 'credential';
+  /** Provider that failed, so diversity logic can avoid (or prefer) it. */
+  failedProviderId?: string;
 }
 
 /**

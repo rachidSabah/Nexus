@@ -336,7 +336,10 @@ export class ChatCompletionUseCase {
       if (!adapter) {
         // Misconfiguration — record and failover.
         await this.routing.recordFailure(endpoint.id, new Error('No adapter registered'), false);
-        const next = this.failover.next(decision, endpoint.id);
+        const next = this.failover.next(decision, endpoint.id, {
+          scope: 'provider',
+          failedProviderId: endpoint.providerId,
+        });
         if (!next) break;
         decision = { ...decision, endpoint: next };
         attempt++;
@@ -612,7 +615,24 @@ export class ChatCompletionUseCase {
 
         if (!retryable || streamBytesEmitted) throw error;
 
-        const next = this.failover.next(decision, endpoint.id);
+        // Scope-aware failover (master prompt #19): bias the next candidate by
+        // the *nature* of the failure. A credential error (401/403 invalid key)
+        // means prefer staying on the same provider (a different valid key is
+        // chosen downstream); a provider/network/billing failure means prefer a
+        // different provider so we don't burn retries on the same outage.
+        const failScope: 'provider' | 'credential' | undefined =
+          classification.keyAction === 'invalidate'
+            ? 'credential'
+            : classification.endpointAction === 'mark_unavailable' ||
+                classification.status >= 500 ||
+                classification.status === 429
+              ? 'provider'
+              : undefined;
+
+        const next = this.failover.next(decision, endpoint.id, {
+          scope: failScope,
+          failedProviderId: endpoint.providerId,
+        });
         if (!next) break;
 
         await this.events.publish(
