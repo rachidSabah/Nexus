@@ -169,48 +169,39 @@ export class OpenAIAdapter implements ProviderAdapter {
         const outputPer1M = extra.pricing?.completion != null
           ? Number(extra.pricing.completion) * 1_000_000
           : undefined;
-        // A model is "free" if:
-        //  1. Its id has a known free suffix (`:free` OpenRouter, `-free`
-        //     OpenCode Zen / NVIDIA, `_free` …), OR
-        //  2. The provider exposes per_request_rate = 0 / pricing.prompt = "0"
-        //
-        // Per the adapter contract (ports.ts "Detect free-tier models"),
-        // a provider-enforced free alias (suffix match) is a quota/rate-
-        // limited free tier, so it is flagged quotaLimited. A model that is
-        // free purely because of zero numeric pricing (per_request_rate = 0
-        // or pricing 0) is genuinely unrestricted and stays quotaLimited:
-        // false/absent (plain FREE).
+        // A model is "free" only on an unambiguous, evidence-based signal:
+        //   1. provider free alias suffix (:free / -free / _free …)
+        //   2. local/self-hosted endpoint (no API cost by construction)
+        //   3. NVIDIA NIM hosted free tier (provider-enforced)
+        //   4. the provider returned an explicit per-model price of exactly 0
+        // We MUST NOT infer free from an endpoint-level default price or from a
+        // missing price — that fabricates "free" for paid/proprietary models
+        // (e.g. claude-opus-5 / gpt-5.6-sol shown as FREE). When the provider
+        // returns no per-model pricing we leave the model UNKNOWN (isFree:false).
         const freeBySuffix = hasFreeSuffix(id);
-        // A genuinely local/self-hosted provider (Ollama) has no API cost by
-        // construction — the endpoint is keyless and points at localhost. That
-        // is evidence-based (not price inference), so its models are FREE
-        // (unrestricted), not FREE_TIER. Other providers whose IDs carry a
-        // provider-enforced free alias (`:free`, `-free`, `_free` …) are
-        // quota/rate-limited → FREE_TIER.
         const isLocal = endpoint.providerId === 'ollama';
         const isNvidia = endpoint.providerId === 'nvidia-nim' || endpoint.providerId === 'nvidia';
-        const isEndpointFree = (endpoint.pricing?.inputPer1K === 0 && endpoint.pricing?.outputPer1K === 0);
-        const hasLivePricing = extra.pricing != null;
+        const hasLivePricing = extra.pricing != null || extra.per_request_rate != null;
+        // Genuine zero-cost only when the provider actually returned a per-model
+        // price that parses to exactly 0 (numeric compare; the raw field is a
+        // string like "0.0000" on OpenAI-compatible providers).
+        const hasRealZeroPrice =
+          (extra.pricing != null &&
+            Number(extra.pricing.prompt) === 0 &&
+            Number(extra.pricing.completion) === 0) ||
+          extra.per_request_rate != null && Number(extra.per_request_rate) === 0;
         const isFree =
           freeBySuffix
           || isLocal
-          || isNvidia
-          || (isEndpointFree && !hasLivePricing)
-          || (extra.pricing?.prompt === '0' && extra.pricing?.completion === '0')
-          || extra.per_request_rate === 0;
+          || (isNvidia && hasRealZeroPrice)
+          || hasRealZeroPrice;
         const livePricing = {
-          inputPer1M: inputPer1M ?? (isFree ? 0 : undefined),
-          outputPer1M: outputPer1M ?? (isFree ? 0 : undefined),
+          inputPer1M: inputPer1M ?? (hasRealZeroPrice ? 0 : undefined),
+          outputPer1M: outputPer1M ?? (hasRealZeroPrice ? 0 : undefined),
           isFree,
-          // Provider-enforced free alias, NVIDIA NIM hosted credits, or hosted free endpoint → quota-limited.
-          quotaLimited: freeBySuffix || isNvidia || (isEndpointFree && !isLocal),
+          // Provider-enforced free alias or NVIDIA NIM hosted free tier → quota-limited.
+          quotaLimited: freeBySuffix || (isNvidia && hasRealZeroPrice),
           currency: 'USD',
-          // Source hierarchy, honestly tagged:
-          //  - 'live'            when the provider returned per-token pricing
-          //  - 'provider_metadata' when we KNOW the model is free via a provider
-          //                       free alias or a local/self-hosted endpoint / hosted free tier
-          //  - 'unknown'         when the API returned no pricing at all (we
-          //                       must NOT fabricate $0 as "free")
           source: (hasLivePricing
             ? 'live'
             : isFree

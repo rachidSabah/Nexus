@@ -260,6 +260,52 @@ describe('OpenAIAdapter', () => {
     }
   });
 
+  it('does NOT mark non-suffix models FREE when the endpoint default price is 0 (regression for #opencode-zen-all-free)', async () => {
+    // Reproduces the reported bug: an opencode-zen endpoint configured with a
+    // zero price (inputPer1K:0, outputPer1K:0) returned a /v1/models payload
+    // with NO per-model pricing. The old code inferred isFree from the endpoint
+    // default (isEndpointFree && !hasAffingPricing) and flagged every frontier
+    // model as FREE. We must leave those models UNKNOWN instead.
+    const modelsPayload = {
+      data: [
+        // Frontier / proprietary models with no `-free` suffix and no pricing.
+        { id: 'claude-opus-5', object: 'model', owned_by: 'anthropic' },
+        { id: 'gpt-5.6-sol', object: 'model', owned_by: 'openai' },
+        { id: 'gemini-3.1-pro', object: 'model', owned_by: 'google' },
+        { id: 'grok-4.6', object: 'model', owned_by: 'xai' },
+        // A genuinely free alias — must remain FREE_TIER.
+        { id: 'deepseek-v4-flash-free', object: 'model', owned_by: 'deepseek' },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => modelsPayload,
+      text: async () => JSON.stringify(modelsPayload),
+    }));
+
+    const adapter = new OpenAIAdapter();
+    // Endpoint carries a zero default price (the exact trigger of the bug).
+    const endpoint = makeEndpoint({
+      providerId: 'opencode-zen',
+      pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+    });
+    const discovered = await adapter.discoverModels(endpoint, new AbortController().signal);
+    const byId = Object.fromEntries(discovered.map((m) => [m.id, m]));
+
+    for (const id of ['claude-opus-5', 'gpt-5.6-sol', 'gemini-3.1-pro', 'grok-4.6']) {
+      const m = byId[id];
+      expect(m, `model ${id} present`).toBeDefined();
+      expect(m.pricing?.isFree, `${id} must NOT be free`).toBe(false);
+      expect(m.pricing?.freeTier, `${id} must be UNKNOWN`).toBe('UNKNOWN');
+      expect(m.pricing?.source, `${id} source`).toBe('unknown');
+    }
+
+    // The genuinely-free alias is unaffected.
+    const free = byId['deepseek-v4-flash-free'];
+    expect(free.pricing?.isFree).toBe(true);
+    expect(free.pricing?.freeTier).toBe('FREE_TIER');
+  });
+
   it('tags provider_metadata source for a free-suffix model even without live pricing', async () => {
     const modelsPayload = {
       data: [{ id: 'deepseek-v4-flash-free', object: 'model', owned_by: 'deepseek' }],
