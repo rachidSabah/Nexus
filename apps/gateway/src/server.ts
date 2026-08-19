@@ -114,6 +114,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
 
 import { AgentDetector } from './agent-detector.js';
+import { computeRoutingMetrics } from './routing-metrics.js';
 import { HermesRuntimeManager } from './hermes-runtime.js';
 import {
   newStreamState,
@@ -4682,6 +4683,25 @@ let optMessages: never[] | undefined;
         limits,
         count: Object.keys(limits).length,
       };
+    });
+
+    // ── Routing utilization metrics (master prompt #20 / #21) ────────────
+    // GET /v1/routing/metrics — truthful, derived-only observability: per-
+    // provider key health (active/cooldown/invalid + 429 rate) and free-model
+    // availability. No synthetic/fake quota numbers are ever emitted; fields
+    // are UNKNOWN when the upstream does not expose them (consistent with the
+    // rest of the system's honesty contract).
+    this.fastify.get('/v1/routing/metrics', async () => {
+      // Truthful, derived-only observability (master prompt #20 / #21):
+      // per-provider key health + free-model availability. Computation is a
+      // pure function (see routing-metrics.ts) so it can be unit-tested
+      // without booting the server, and never emits fake quota numbers.
+      const freeModels = this.deps.modelRegistry?.listFree?.() ?? [];
+      return computeRoutingMetrics(
+        this.deps.keyRegistry,
+        freeModels,
+        this.deps.rateLimitTracker,
+      );
     });
 
     // ── Task classification ────────────────────────────────────────────
