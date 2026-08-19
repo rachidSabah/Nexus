@@ -182,6 +182,27 @@ When cloud providers experience 5xx outages, rate limit saturation, or network d
 ### 🧰 5. Sandboxed Code Execution & Isolated Debugging
 Nexus exposes a `sandbox.execute` agent tool that runs untrusted code in a connected isolated backend (Docker/MCP sandbox) instead of the host — keeping your machine and gateway credentials out of agent-executed code. When an agent is debugging the gateway itself, use the isolated debug workflow (`scripts/debug-isolated.sh`): it copies your vault + key into a throwaway sandbox and runs a separate gateway instance there, so probing a dead route or a 402 provider never touches your live config or credentials.
 
+### 🔐 6. Encrypted Vault Export & Restore
+Provider keys live encrypted in `~/.agent-nexus/vault.json`. Nexus can export the **entire** vault as a single portable, passphrase-protected bundle so you can move it between machines or rotate a compromised host:
+
+- `GET /v1/vault/export/file` → downloads `.anx-vault.enc` (AES-256-GCM, PBKDF2-derived key; default passphrase `nexus-default-vault-backup`, override via `?passphrase=`).
+- `POST /v1/vault/import` → uploads a bundle and re-registers every key (skips duplicates). Keys are never written to logs or API responses.
+
+The bundle is portable: restore it on any Nexus instance to reconstruct identical provider bindings. ([`ee88217`](https://github.com/rachidSabah/codingghosts/commit/ee88217))
+
+### 🧩 7. Marketplace, Plugin & Workflow Runtime
+Nexus ships a runtime lifecycle for extensions, plugins, MCP servers, and workflows — all manageable at runtime with no gateway restart:
+
+- **Marketplace:** `GET /v1/marketplace/search`, `/v1/marketplace/installed`, `/v1/marketplace/stats`; install/update/toggle extensions via `POST /v1/marketplace/extensions/:id/{install,update,toggle}` and `DELETE /v1/marketplace/extensions/:id`. Compatibility is checked against the gateway version before install.
+- **Plugins:** `GET /v1/plugins`; `POST /v1/plugins/load`, `POST /v1/plugins/:id/unload` (hot load/unload).
+- **MCP:** JSON-RPC over `POST /v1/mcp`; server registry at `/v1/mcp/servers`, tool/resource/prompt discovery at `/v1/mcp/{tools,resources,prompts}`.
+- **Workflows:** `GET /v1/workflows`, `POST /v1/workflows/:id/execute` (with execution history).
+
+### 🔄 8. Zero-Downtime Hot-Swap, Supervisor & Agent-to-Agent (A2A)
+- **Hot-swap:** `POST /v1/runtime-agents/hot-swap` re-targets a runtime agent or alias to a new model with `APPLIED_ZERO_DOWNTIME` — no restart, in-flight requests keep their original target.
+- **Supervisor:** the gateway process supervisor reports live process health and system uptime (`supervisorStatus: 'HEALTHY'`).
+- **A2A coordinator:** `POST /v1/a2a/handoff` dispatches a task from one agent to a peer; `POST /v1/a2a/message` sends peer messages through the A2A coordinator. Vault rotation is wired through the same lifecycle so re-keying never interrupts routing. ([`31b7d0d`](https://github.com/rachidSabah/codingghosts/commit/31b7d0d), [`9d02a75`](https://github.com/rachidSabah/codingghosts/commit/9d02a75))
+
 ---
 
 ## Connecting Coding Agents & IDEs
@@ -249,6 +270,15 @@ Nexus v0.5.0 features a local-first **Durable Persistence & Recovery Engine**:
 | `GET` | `/v1/providers` | Configured provider health, models, and latency metrics |
 | `GET` | `/v1/rate-limits` | Per-key rate-limit state (tokens remaining / reset / Retry-After) — truthful, derived from live upstream headers (P1) |
 | `GET` | `/v1/routing/metrics` | Per-provider key health (active/cooldown/invalid, 429 rate) + free-model availability — derived, no fabricated quota (P4) |
+| `GET` | `/v1/vault/export/file` | Export all provider keys as an AES-256-GCM encrypted bundle (`.anx-vault.enc`) |
+| `POST` | `/v1/vault/import` | Import + restore an encrypted vault bundle (AES-256-GCM, passphrase-protected) |
+| `GET` | `/v1/plugins` | Loaded gateway plugins and their status |
+| `POST` | `/v1/plugins/load` · `/v1/plugins/:id/unload` | Load / unload a runtime plugin without restart |
+| `GET` | `/v1/marketplace/search` · `/v1/marketplace/installed` | Browse and list installed marketplace extensions |
+| `POST` | `/v1/marketplace/extensions/:id/install` · `/:id/update` · `/:id/toggle` | Install / update / enable-disable an extension |
+| `GET` | `/v1/workflows` · `POST` `/v1/workflows/:id/execute` | List workflows and execute one by id |
+| `POST` | `/v1/runtime-agents/hot-swap` | Zero-downtime re-target a runtime agent/alias to a new model |
+| `POST` | `/v1/a2a/handoff` · `/v1/a2a/message` | Agent-to-agent task handoff and peer messaging (A2A coordinator) |
 | `POST` | `/v1/context/broadcast` | Broadcast shared architecture context to all connected agents |
 | `POST` | `/v1/context/query` | Query cross-agent shared context bus |
 | `POST` | `/v1/agents/:id/install` | Install agent CLI package in background |
