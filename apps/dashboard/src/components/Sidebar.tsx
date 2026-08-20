@@ -14,6 +14,7 @@ const NAV = [
   { href: '/audit', label: 'Audit', icon: ScrollText },
   { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/detached-tasks', label: 'Detached Tasks', icon: Terminal },
+  { href: '/compression', label: 'Compression Lab', icon: Layers },
   { href: '/agents', label: 'Agents', icon: Boxes },
   { href: '/applications', label: 'Applications', icon: Blocks },
   { href: '/workflows', label: 'Workflows', icon: Workflow },

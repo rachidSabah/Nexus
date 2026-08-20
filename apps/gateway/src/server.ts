@@ -90,6 +90,7 @@ import { BUILTIN_INTEGRATIONS, createIntegrationRegistry, TRUSTED_AGENT_CATALOG,
 import {
   TokenOptimizer,
   OptimizationMode,
+  compressPipeline,
   scanRepository,
   rankRepository,
   selectRepositoryContext,
@@ -5566,6 +5567,45 @@ let optMessages: never[] | undefined;
           'context_budget_trim',
         ],
       };
+    });
+
+    this.fastify.post('/v1/compression/pipeline-preview', async (request, reply) => {
+      // WS5 competitive feature: LIVE per-engine compression savings.
+      // Runs the stacked CompressionPipeline (minify → dedupe → collapse →
+      // elide) on raw text and returns REAL, measured per-engine savings.
+      // Unlike a static "X% saved" claim, this recomputes on every request
+      // against the user's actual content.
+      const body = request.body as {
+        text?: string;
+        engines?: ('minify' | 'dedupe_lines' | 'collapse_arrays' | 'elide_middle')[];
+        elideThreshold?: number;
+        keepComments?: boolean;
+      };
+      const text = body?.text;
+      if (typeof text !== 'string' || text.length === 0) {
+        return reply.code(400).send({ error: { message: 'text (non-empty string) is required' } });
+      }
+      const result = compressPipeline(text, {
+        engines: body.engines,
+        elideThreshold: body.elideThreshold,
+        keepComments: body.keepComments,
+      });
+      return reply.send({
+        originalChars: result.originalChars,
+        finalChars: result.finalChars,
+        originalTokens: result.originalTokens,
+        finalTokens: result.finalTokens,
+        totalCharsSaved: result.totalCharsSaved,
+        totalTokensSaved: result.totalTokensSaved,
+        savingsPct: result.savingsPct,
+        engines: result.engines.map((e) => ({
+          engine: e.engine,
+          charsSaved: e.charsSaved,
+          tokensSaved: e.tokensSaved,
+          pct: result.originalChars > 0 ? Math.round((e.charsSaved / result.originalChars) * 1000) / 10 : 0,
+        })),
+        compressedText: result.text,
+      });
     });
 
     this.fastify.post('/v1/context/compression/preview', async (request, reply) => {
