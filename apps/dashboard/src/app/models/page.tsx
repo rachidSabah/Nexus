@@ -1,7 +1,7 @@
 'use client';
 
 import { Cpu, RefreshCw, Sparkles, Zap, CircleDollarSign, AlertTriangle, Search, Eye, Brain, Wrench, Copy, Check, Terminal, X, Layers, Activity } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import useSWR from 'swr';
 
 import { ContextWindowEditor } from '@/components/ContextWindowEditor';
@@ -116,6 +116,170 @@ function PerModelProbe({ model }: { model: DiscoveredModel }) {
           Sends a 1-token request to the real upstream to confirm the model is live (200 / 401 / 402 / timeout).
         </p>
       )}
+    </div>
+  );
+}
+
+interface FallbackCandidate {
+  id: string;
+  providerId: string;
+  displayName?: string;
+  contextWindow?: number;
+  similarity: number;
+  pricing?: { inputPer1M?: number; outputPer1M?: number; isFree?: boolean };
+  capabilities?: Record<string, unknown>;
+}
+
+interface FallbackConfig {
+  modelId: string;
+  providerId: string;
+  current: string[];
+  candidates: FallbackCandidate[];
+}
+
+function ModelFalloverEditor({ model }: { model: DiscoveredModel }) {
+  const [config, setConfig] = useState<FallbackConfig | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [filter, setFilter] = useState('');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'saving' | 'saved' | 'error'>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setStatus('loading');
+    try {
+      const r = await fetch(`/api/v1/fallbacks?providerId=${encodeURIComponent(model.providerId)}&modelId=${encodeURIComponent(model.id)}`);
+      if (!r.ok) throw new Error(`Failed to load fallbacks (${r.status})`);
+      const data = (await r.json()) as FallbackConfig;
+      setConfig(data);
+      setSelected(data.current ?? []);
+      setStatus('idle');
+    } catch (err) {
+      setError((err as Error).message);
+      setStatus('error');
+    }
+  }
+
+  // Load on mount.
+  useEffect(() => { load(); }, [model.id, model.providerId]);
+
+  const candidates = useMemo(() => {
+    const all = config?.candidates ?? [];
+    const q = filter.trim().toLowerCase();
+    return all.filter((c) => !q || c.id.toLowerCase().includes(q) || c.providerId.toLowerCase().includes(q));
+  }, [config, filter]);
+
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+
+  function toggle(id: string) {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function move(id: string, dir: -1 | 1) {
+    setSelected((prev) => {
+      const idx = prev.indexOf(id);
+      if (idx < 0) return prev;
+      const next = [...prev];
+      const j = idx + dir;
+      if (j < 0 || j >= next.length) return prev;
+      const a = next[idx];
+      const b = next[j];
+      if (a === undefined || b === undefined) return prev;
+      next[idx] = b;
+      next[j] = a;
+      return next;
+    });
+  }
+
+  async function save() {
+    setStatus('saving');
+    setError(null);
+    try {
+      const r = await fetch('/api/v1/fallbacks', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId: model.providerId, modelId: model.id, fallbacks: selected }),
+      });
+      const raw = (await r.json()) as { ok?: boolean; error?: { message?: string } };
+      if (!r.ok || !raw.ok) throw new Error(raw.error?.message ?? `Save failed (${r.status})`);
+      setStatus('saved');
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+      setStatus('error');
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Layers className="h-4 w-4 text-nexus-400" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-white/70">Manual Failover Models</span>
+        </div>
+        <span className="text-[11px] text-white/40">
+          {selected.length} selected · automatic failover still applies after these
+        </span>
+      </div>
+
+      <p className="text-[11px] text-white/45">
+        Pin an ordered list of fallback models (similar benchmark tier) tried <span className="text-white/70">first</span> when this model fails — complemented by automatic failover. Pick at least 5 for broad coverage.
+      </p>
+
+      {/* Selected (ordered) */}
+      {selected.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-[10px] uppercase tracking-wider text-white/40">Failover order (top = tried first)</div>
+          {selected.map((id, i) => (
+            <div key={id} className="flex items-center justify-between rounded-lg border border-nexus-500/20 bg-nexus-500/5 px-3 py-1.5">
+              <span className="font-mono text-[11px] text-white/80 truncate">{i + 1}. {id}</span>
+              <div className="flex items-center gap-1">
+                <button onClick={() => move(id, -1)} disabled={i === 0} className="px-1.5 text-white/40 hover:text-white disabled:opacity-30">↑</button>
+                <button onClick={() => move(id, 1)} disabled={i === selected.length - 1} className="px-1.5 text-white/40 hover:text-white disabled:opacity-30">↓</button>
+                <button onClick={() => toggle(id)} className="px-1.5 text-rose-400 hover:text-rose-300">✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Candidate picker */}
+      <div className="space-y-2">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter similar-tier candidates…"
+          className="w-full rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-xs text-white placeholder-white/40 outline-none focus:border-nexus-400"
+        />
+        <div className="max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-black/40 p-1.5 space-y-1">
+          {status === 'loading' && <div className="py-3 text-center text-[11px] text-white/40">Loading candidates…</div>}
+          {status !== 'loading' && candidates.length === 0 && (
+            <div className="py-3 text-center text-[11px] text-white/40">No matching candidates.</div>
+          )}
+          {candidates.map((c) => (
+            <label
+              key={c.id}
+              className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[11px] transition hover:bg-white/5 ${selectedSet.has(c.id) ? 'bg-nexus-500/10' : ''}`}
+            >
+              <input type="checkbox" checked={selectedSet.has(c.id)} onChange={() => toggle(c.id)} className="accent-nexus-500" />
+              <span className="font-mono text-white/80 truncate flex-1" title={c.id}>{c.id}</span>
+              <span className="text-white/35 font-mono">{Math.round(c.similarity * 100)}%</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {error && <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] font-mono text-rose-300">{error}</div>}
+
+      <div className="flex items-center justify-end gap-2">
+        {status === 'saved' && <span className="text-[11px] text-emerald-400">✓ Saved</span>}
+        <button
+          onClick={save}
+          disabled={status === 'saving'}
+          className={`rounded-lg px-4 py-2 text-xs font-semibold text-white transition ${status === 'saving' ? 'bg-nexus-700 opacity-80 cursor-wait' : 'bg-nexus-600 hover:bg-nexus-500 active:scale-95'}`}
+        >
+          {status === 'saving' ? 'Saving…' : 'Apply & Save'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -433,6 +597,9 @@ export default function ModelsPage() {
 
             {/* Per-model live probe — verifies the model against the real upstream */}
             <PerModelProbe model={selectedModel} />
+
+            {/* Manual failover model chain — pin similar-tier fallback models */}
+            <ModelFalloverEditor model={selectedModel} />
 
             {/* Coding Agent Configs */}
             <div className="space-y-3 pt-2">

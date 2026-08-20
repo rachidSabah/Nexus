@@ -660,16 +660,30 @@ export class ModelAliasRegistry {
       };
     }
 
-    // Provider-prefixed form fallback (e.g. `opencode-zen/hy3-free`). The
-    // registry stores discovered models under their BARE id (`hy3-free`), so a
-    // caller-supplied `providerId/modelId` string must be stripped and
-    // re-matched before it falls through to a paid family default. Without
-    // this, `opencode-zen/hy3-free` wrongly resolves to the paid
-    // `claude-fable-5`. See server.ts chat path + claude-catalog.ts projection.
-    const prefixStripped = model.replace(/^[a-z0-9-]+\//i, '');
-    if (prefixStripped && prefixStripped !== model) {
+    // Provider-prefixed form fallback (e.g. `opencode-zen/hy3-free`,
+    // `openrouter/anthropic/claude-3.5-sonnet`, `mistral/mistral-large-latest`).
+    // The registry may store the discovered model under its BARE id (`hy3-free`)
+    // OR under its FULL prefixed id (`openrouter/anthropic/claude-3.5-sonnet` /
+    // `mistral/mistral-large-latest`). Match BOTH forms so a caller-supplied
+    // `providerId/modelId` string never falls through to a paid family default
+    // or a free alias on the wrong provider. Without this, `openrouter/anthropic/
+    // claude-3.5-sonnet` wrongly free-aliases to `gemini-2.5-flash` ("All
+    // providers exhausted" / wrong-provider 404s — the coding-agent interruption
+    // class).
+    const prefixMatch = model.match(/^([a-z0-9][a-z0-9-]*)\/(.+)$/i);
+    if (prefixMatch) {
+      const pid = prefixMatch[1]!;
+      const rest = prefixMatch[2]!;
       const strippedModel = this.modelRegistry.list().find(
-        (m) => !m.stale && (m.id === prefixStripped || m.id.toLowerCase() === prefixStripped.toLowerCase()),
+        (m) =>
+          !m.stale &&
+          (m.id === model ||
+            m.id.toLowerCase() === model.toLowerCase() ||
+            m.id === rest ||
+            m.id.toLowerCase() === rest.toLowerCase() ||
+            m.id === `${pid}/${rest}` ||
+            m.id.toLowerCase() === `${pid}/${rest}`.toLowerCase() ||
+            (m.providerId === pid && (m.id === rest || m.id.toLowerCase() === rest.toLowerCase()))),
       );
       if (strippedModel) {
         return {
@@ -677,7 +691,7 @@ export class ModelAliasRegistry {
           resolution: {
             modelId: strippedModel.id,
             providerId: strippedModel.providerId,
-            reason: `Provider-prefix stripped '${model}' -> '${strippedModel.id}' on provider '${strippedModel.providerId}'`,
+            reason: `Provider-prefix match '${model}' -> '${strippedModel.id}' on provider '${strippedModel.providerId}'`,
             candidateCount: 1,
           },
         };

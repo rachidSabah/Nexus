@@ -128,6 +128,7 @@ import { ConfigLoader, type GatewayConfig } from './config.js';
 import { AgentDetector } from './agent-detector.js';
 import { registerDefaultEndpoints, defaultBaseUrlFor, defaultCapabilitiesFor, defaultPricingFor } from './endpoints.js';
 import { ModelAliasRegistry } from './model-aliases.js';
+import { FalloverConfigStore } from './fallover-config.js';
 import { GATEWAY_VERSION } from './version.js';
 import { HttpServer } from './server.js';
 
@@ -230,6 +231,7 @@ export class GatewayRuntime {
     localAgentBridge: LocalAgentBridge;
     agentOrchestrator: AgentOrchestrator;
     missionOrchestrator: MissionOrchestrator;
+    falloverConfig: FalloverConfigStore;
   }) {
     Object.assign(this, opts);
   }
@@ -473,6 +475,10 @@ export class GatewayRuntime {
       zhipu: process.env.GATEWAY_MODEL_ZHIPU,
       moonshot: process.env.GATEWAY_MODEL_MOONSHOT,
     }, keyRegistry);
+
+    // Manual failover / fallback-model configuration (persisted to disk under
+    // ~/.agent-nexus/fallover-config.json by default).
+    const falloverConfig = new FalloverConfigStore();
 
     // Discover every provider's model catalog at boot (the hourly interval
     // alone leaves the catalog empty for up to an hour after start), so agent
@@ -1135,6 +1141,7 @@ export class GatewayRuntime {
       localAgentBridge,
       agentOrchestrator,
       missionOrchestrator,
+      falloverConfig,
     });
 
     return new GatewayRuntime({
@@ -1177,6 +1184,7 @@ export class GatewayRuntime {
       localAgentBridge,
       agentOrchestrator,
       missionOrchestrator,
+      falloverConfig,
       // Phase 5
       budgetManager,
       promptCompressor,

@@ -64,6 +64,8 @@ import type {
   BudgetManager,
   ChatCompletionChunk,
   ChatCompletionRequest,
+  ChatCompletionResponse,
+  ChunkSink,
   ContextWindowManager,
   CostPredictor,
   EmbeddingRequest,
@@ -132,6 +134,7 @@ import { defaultBaseUrlFor, defaultCapabilitiesFor, defaultPricingFor } from './
 import { GATEWAY_VERSION } from './version.js';
 import type { GatewayConfig } from './config.js';
 import { DetachedTaskStore } from './detached-task-store.js';
+import { FalloverConfigStore, rankSimilarModels } from './fallover-config.js';
 
 /** Probes a base URL for reachability (server is up; any non-5xx counts as up). */
 async function probeUrl(baseUrl: string): Promise<boolean> {
@@ -195,6 +198,9 @@ export interface HttpServerDeps {
   readonly localAgentBridge?: LocalAgentBridge;
   readonly agentOrchestrator?: AgentOrchestrator;
   readonly missionOrchestrator?: MissionOrchestrator;
+  // Manual failover / fallback-model configuration store (persists per-model
+  // ordered fallback chains to disk; augments automatic failover).
+  readonly falloverConfig?: FalloverConfigStore;
 }
 
 // ── Token-economics accumulator (§30) — real measurements only, capped ring. ──
@@ -3760,6 +3766,49 @@ export class HttpServer {
       };
     });
 
+    // ── Manual failover / fallback-model configuration ─────────────────────
+    // GET /v1/fallbacks?providerId=X&modelId=Y — current fallback chain + a
+    // ranked list of similar-benchmark-tier candidate models for the dropdown.
+    this.fastify.get('/v1/fallbacks', async (request, reply) => {
+      const { providerId, modelId } = (request.query ?? {}) as { providerId?: string; modelId?: string };
+      if (!providerId || !modelId) {
+        return reply.code(400).send({ error: { message: 'providerId and modelId query params are required' } });
+      }
+      const model =
+        this.deps.modelRegistry.get(providerId, modelId) ??
+        this.deps.modelRegistry.list().find((m) => m.providerId === providerId && m.id === modelId);
+      if (!model) {
+        return reply.code(404).send({ error: { message: `Model '${providerId}/${modelId}' not found in active catalog` } });
+      }
+      const current = this.deps.falloverConfig?.get(model.id) ?? [];
+      const candidates = rankSimilarModels(model, this.deps.modelRegistry.list(), 30);
+      return { modelId: model.id, providerId: model.providerId, current, candidates };
+    });
+
+    // PUT /v1/fallbacks — save the ordered fallback chain (manual fallbacks are
+    // tried FIRST, then automatic failover).
+    this.fastify.put('/v1/fallbacks', async (request, reply) => {
+      const body = (request.body ?? {}) as { providerId?: string; modelId?: string; fallbacks?: string[] };
+      const { providerId, modelId } = body;
+      if (!providerId || !modelId) {
+        return reply.code(400).send({ error: { message: 'providerId and modelId are required' } });
+      }
+      const model =
+        this.deps.modelRegistry.get(providerId, modelId) ??
+        this.deps.modelRegistry.list().find((m) => m.providerId === providerId && m.id === modelId);
+      if (!model) {
+        return reply.code(404).send({ error: { message: `Model '${providerId}/${modelId}' not found in active catalog` } });
+      }
+      const fallbacks = Array.isArray(body.fallbacks) ? body.fallbacks : [];
+      const known = new Set(this.deps.modelRegistry.list().map((m) => m.id));
+      const invalid = fallbacks.filter((f) => !known.has(f));
+      if (invalid.length > 0) {
+        return reply.code(400).send({ error: { message: `Unknown fallback model(s): ${invalid.join(', ')}` } });
+      }
+      this.deps.falloverConfig?.set(model.id, fallbacks);
+      return { ok: true, modelId: model.id, fallbacks: this.deps.falloverConfig?.get(model.id) ?? [] };
+    });
+
     // ── Auth: JWT issuance ─────────────────────────────────────────────
     // Exchange an API key (or valid existing JWT) for a short-lived JWT.
     // Callers then use the JWT for subsequent requests.
@@ -3951,13 +4000,23 @@ export class HttpServer {
           },
         };
 
+        // Manual failover: the operator may have pinned a chain of fallback
+        // MODELS for the resolved primary. They are retried (re-resolved per
+        // model) on primary/upstream failure — see executeChatFallbackChain.
+        const fallbackChain = [
+          aliasResolution.model,
+          ...(this.deps.falloverConfig?.get(aliasResolution.model) ?? []),
+        ];
+        const runWithFallbacks = (s: ChunkSink | undefined) =>
+          this.executeChatFallbackChain(body, request, fallbackChain, s);
+
         try {
-          await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), sink, new AbortController().signal);
+          await runWithFallbacks(sink);
         } catch (err) {
           if (!reply.raw.headersSent) {
             const errMsg = (err as Error).message ?? '';
             if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
-              this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
+              this.deps.aliasRegistry.recordRateLimitCooldown(aliasResolution.model, 60_000);
             }
             const http = this.httpErrorFor(err as Error);
             reply.code(http.status).send({ error: { message: http.message } });
@@ -3970,15 +4029,19 @@ export class HttpServer {
         return reply;
       }
 
+      const fallbackChain = [
+        aliasResolution.model,
+        ...(this.deps.falloverConfig?.get(aliasResolution.model) ?? []),
+      ];
       try {
-        const response = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), undefined, new AbortController().signal);
+        const response = (await this.executeChatFallbackChain(body, request, fallbackChain, undefined)) as ChatCompletionResponse;
         return response;
       } catch (err) {
         const errMsg = (err as Error).message ?? '';
         if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
-          this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
+          this.deps.aliasRegistry.recordRateLimitCooldown(aliasResolution.model, 60_000);
         }
-        this.reportUpstreamModelError(effectiveBody.model, err as Error);
+        this.reportUpstreamModelError(aliasResolution.model, err as Error);
         const http = this.httpErrorFor(err as Error);
         return reply.code(http.status).send({ error: { message: http.message, code: (err as { code?: string }).code } });
       }
@@ -7194,6 +7257,65 @@ export class HttpServer {
       return result.trimmedRequest;
     }
     return req;
+  }
+
+  /**
+   * Retries a chat completion across a chain of MODELS: the resolved primary
+   * first, then any operator-pinned manual fallback models (in order). Each
+   * model is re-resolved (alias + provider hint + token optimization) so the
+   * correct adapter translation applies per model. Manual fallbacks are tried
+   * BEFORE the automatic endpoint-level failover inside ChatCompletionUseCase,
+   * augmenting (never replacing) it. `sink` is provided for streaming; when
+   * null the non-streaming response is returned. Throws only if every model in
+   * the chain fails.
+   */
+  private async executeChatFallbackChain(
+    originalBody: ChatCompletionRequest,
+    request: any,
+    chain: string[],
+    sink: ChunkSink | undefined,
+  ): Promise<ChatCompletionResponse | void> {
+    const bodyRouting = (originalBody as { routing?: Record<string, unknown> }).routing ?? {};
+    const pinnedProvider =
+      (request.headers['x-nexus-provider'] as string | undefined)?.trim() ||
+      (request.query as { provider?: string })?.provider?.trim() ||
+      undefined;
+
+    const buildEffective = (requestedModel: string): ChatCompletionRequest => {
+      const ar = this.deps.aliasRegistry.resolveIfAlias(requestedModel);
+      const hint = this.preferredProviderFor(ar.model, ar.resolution);
+      const extra: Record<string, unknown> = { ...bodyRouting };
+      if (pinnedProvider) extra.preferredProviders = [pinnedProvider];
+      else if (hint) extra.preferredProviders = [hint];
+      const eb: ChatCompletionRequest = { ...originalBody, model: ar.model, routing: extra as ChatCompletionRequest['routing'] };
+      return eb;
+    };
+
+    let lastErr: unknown;
+    for (let i = 0; i < chain.length; i++) {
+      const requestedModel = chain[i]!;
+      const effectiveBody = buildEffective(requestedModel);
+      try {
+        if (sink) {
+          await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), sink, new AbortController().signal);
+          return;
+        }
+        return await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), undefined, new AbortController().signal);
+      } catch (err) {
+        lastErr = err;
+        const errMsg = (err as Error).message ?? '';
+        if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
+          this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
+        }
+        if (errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
+          this.reportUpstreamModelError(effectiveBody.model, err as Error);
+        }
+        // Continue to the next fallback model only on failure; rethrow the
+        // final error if the whole chain is exhausted.
+        if (i === chain.length - 1) throw err;
+      }
+    }
+    throw lastErr;
   }
 
   /**
