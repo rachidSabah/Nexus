@@ -13,6 +13,13 @@ export { compactText, compactConversation, type CompactionOptions, type Compacti
 export { compressToolOutput, compressMessageContent } from './tool-output.js';
 export type { ToolCompressionResult, ToolCompressionOptions } from './tool-output.js';
 export {
+  compressPipeline,
+  type CompressionEngineName,
+  type EngineBreakdown,
+  type PipelineOptions,
+  type PipelineResult,
+} from './compression-pipeline.js';
+export {
   scanRepository,
   rankRepository,
   selectRepositoryContext,
