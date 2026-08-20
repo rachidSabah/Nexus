@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Documentation
-    url: https://github.com/rachidSabah/codingghosts/blob/main/docs/README.md
+    url: https://github.com/rachidSabah/Nexus/blob/main/docs/README.md
     about: Read the docs before filing an issue.
   - name: Security report
-    url: https://github.com/rachidSabah/codingghosts/security/advisories/new
+    url: https://github.com/rachidSabah/Nexus/security/advisories/new
     about: Found a security vulnerability? Report it privately.
   - name: Discussions
-    url: https://github.com/rachidSabah/codingghosts/discussions
+    url: https://github.com/rachidSabah/Nexus/discussions
     about: Questions and feature ideas belong in Discussions.

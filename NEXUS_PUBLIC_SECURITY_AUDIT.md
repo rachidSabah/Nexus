@@ -1,7 +1,7 @@
 ﻿# NEXUS PUBLIC REPOSITORY SECURITY AUDIT
 
 **Target:** Public GitHub Distribution  
-**Repository Remote:** `https://github.com/rachidSabah/codingghosts`  
+**Repository Remote:** `https://github.com/rachidSabah/Nexus`  
 **Default Branch:** `main`  
 **License:** Apache-2.0  
 **Status:** **PASSED — PRODUCTION READY**  

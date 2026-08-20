@@ -1,5 +1,5 @@
 # Agent Nexus Gateway — Uninstaller for Windows PowerShell
-# Usage: irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall.ps1 | iex
 $ErrorActionPreference = "SilentlyContinue"
 
 Write-Host ""

@@ -8,13 +8,13 @@ it then serves a single local endpoint that all your coding agents point at.
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/install.ps1 | iex
 ```
 
 ### Linux / WSL / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/install.sh | bash
 ```
 
 Both installers verify Node.js (>= 20), install the `nexus-gateway` CLI, create
@@ -25,7 +25,7 @@ print the dashboard URL. They do **not** overwrite existing credentials and do
 ## From source
 
 ```bash
-git clone https://github.com/rachidSabah/codingghosts.git
+git clone https://github.com/rachidSabah/Nexus.git
 cd codingghosts
 pnpm install
 pnpm build
@@ -44,7 +44,7 @@ pnpm --filter @anx/dashboard dev   # dashboard on :3000
 ## Uninstall (Windows)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall-windows.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall-windows.ps1 | iex"
 ```
 
 The uninstaller removes the CLI and local config but **never deletes your

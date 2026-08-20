@@ -13,7 +13,7 @@ live API verification. No simulated results.
 |---|---|
 | Package manager | pnpm@9.12.0 (workspace: `apps/*`, `packages/*`) |
 | Monorepo | 28 packages + 3 apps (dashboard, desktop, gateway) |
-| Remote | `https://github.com/rachidSabah/codingghosts` (slug `rachidSabah/codingghosts`) |
+| Remote | `https://github.com/rachidSabah/Nexus` (slug `rachidSabah/Nexus`) |
 | Branch | `main` |
 | License | Apache-2.0 (present) |
 | Gateway | Fastify, `/v1/*` + `/ws`, default port 8787 |
@@ -49,7 +49,7 @@ live API verification. No simulated results.
 ## 5. Broken installation commands
 
 - Previous phases used `<OWNER>/<REPO>` placeholders. **Resolved**: replaced with
-  the real `rachidSabah/codingghosts` in README, `scripts/install.ps1`,
+  the real `rachidSabah/Nexus` in README, `scripts/install.ps1`,
   `scripts/install.sh`, and `docs/architecture.md`.
 
 ## 6. Dashboard URLs

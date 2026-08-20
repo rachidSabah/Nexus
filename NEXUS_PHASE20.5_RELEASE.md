@@ -2,7 +2,7 @@
 
 **Release Tag:** `v0.20.0`  
 **Target Commit:** `6e7e233`  
-**Repository Remote:** `https://github.com/rachidSabah/codingghosts`  
+**Repository Remote:** `https://github.com/rachidSabah/Nexus`  
 **Default Branch:** `main`  
 **Primary Agent:** Hermes  
 **Secondary Reviewer:** OpenCode  
@@ -31,7 +31,7 @@ Phase 20.5 verifies the freeze of the Nexus platform into a secure, sanitized, r
 
 ## 2. Final Release Verification Checklist
 
-- [x] Repository audit complete (Remote: `https://github.com/rachidSabah/codingghosts`, Branch: `main`).
+- [x] Repository audit complete (Remote: `https://github.com/rachidSabah/Nexus`, Branch: `main`).
 - [x] Sensitive patterns verified absent from source tree.
 - [x] Hermes runtime integration configured with `default_provider: "nexus"`.
 - [x] Monorepo TypeScript builds pass without errors.

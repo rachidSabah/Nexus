@@ -20,7 +20,7 @@ We provide security updates for the latest minor release line. Older versions re
 
 Please report vulnerabilities privately using one of these channels:
 
-1. **Preferred**: Use [GitHub Private Security Advisories](https://github.com/rachidSabah/codingghosts/security/advisories/new)
+1. **Preferred**: Use [GitHub Private Security Advisories](https://github.com/rachidSabah/Nexus/security/advisories/new)
 2. Email: `security@agent-nexus-gateway.dev` (if available)
 
 Include the following in your report:

@@ -6,7 +6,7 @@ of all kinds: bug reports, documentation, tests, and code.
 ## Getting started
 
 ```bash
-git clone https://github.com/rachidSabah/codingghosts.git
+git clone https://github.com/rachidSabah/Nexus.git
 cd codingghosts
 pnpm install
 pnpm build

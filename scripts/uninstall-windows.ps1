@@ -1,6 +1,6 @@
 # Agent Nexus Gateway — Windows uninstaller
 # Usage:
-#   irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall-windows.ps1 | iex
+#   irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall-windows.ps1 | iex
 #
 # Safe by default:
 #   - Removes the `nexus-gateway` CLI (global npm package)

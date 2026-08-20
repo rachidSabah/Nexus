@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env bash
 # Nexus — Linux / WSL / macOS installer
-# Usage:  curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.sh | bash
+# Usage:  curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/install.sh | bash
 #
 # Steps:
 #   1. Detect OS / architecture / WSL
@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/rachidSabah/codingghosts"
+REPO_URL="https://github.com/rachidSabah/Nexus"
 INSTALL_DIR="${ANX_HOME:-$HOME/.agent-nexus}"
 REPO_DIR="${INSTALL_DIR}/repo"
 GATEWAY_PORT=8787

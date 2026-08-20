@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Version:** Nexus v0.5.0  
-**Repository:** https://github.com/rachidSabah/codingghosts  
+**Repository:** https://github.com/rachidSabah/Nexus  
 **Status:** **100% PASS**
 
 ---

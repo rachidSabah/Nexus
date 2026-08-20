@@ -44,12 +44,12 @@
   ],
   "author": "Agent Nexus Team",
   "license": "MIT",
-  "homepage": "https://github.com/rachidSabah/codingghosts#readme",
+  "homepage": "https://github.com/rachidSabah/Nexus#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rachidSabah/codingghosts.git"
+    "url": "git+https://github.com/rachidSabah/Nexus.git"
   },
   "bugs": {
-    "url": "https://github.com/rachidSabah/codingghosts/issues"
+    "url": "https://github.com/rachidSabah/Nexus/issues"
   }
 }

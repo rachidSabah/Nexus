@@ -1,5 +1,5 @@
 # Nexus - Windows installer
-# Usage:  irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/install.ps1 | iex
+# Usage:  irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/install.ps1 | iex
 #
 # What it does:
 #   1. Detect Windows + architecture
@@ -18,7 +18,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$REPO_URL     = 'https://github.com/rachidSabah/codingghosts'
+$REPO_URL     = 'https://github.com/rachidSabah/Nexus'
 $INSTALL_DIR  = "$env:USERPROFILE\.agent-nexus"
 $REPO_DIR     = "$INSTALL_DIR\repo"
 $GATEWAY_PORT = 8787

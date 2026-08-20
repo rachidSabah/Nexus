@@ -35,7 +35,7 @@ Created: `README.md` (rewrite), `SECURITY.md`, `CONTRIBUTING.md`,
 `DEVELOPMENT.md`, `INSTALLATION.md`, `docs/architecture.md`, installers
 (`install.ps1`, `install.sh`, `uninstall-windows.ps1`), `.gitleaks.toml`.
 
-Filled the real repo slug `rachidSabah/codingghosts` into install URLs.
+Filled the real repo slug `rachidSabah/Nexus` into install URLs.
 
 ## 4. Architecture preserved
 

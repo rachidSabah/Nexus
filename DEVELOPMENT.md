@@ -13,7 +13,7 @@ installation, see [INSTALLATION.md](INSTALLATION.md).
 ## Setup
 
 ```bash
-git clone https://github.com/rachidSabah/codingghosts.git
+git clone https://github.com/rachidSabah/Nexus.git
 cd codingghosts
 pnpm install
 pnpm build

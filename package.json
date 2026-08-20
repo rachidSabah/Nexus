@@ -5,13 +5,13 @@
   "description": "Universal AI Coding-Agent Gateway & Autonomous Control Plane — dynamic multi-provider routing, protocol translation, token optimization, and self-healing agent mesh.",
   "license": "Apache-2.0",
   "author": "Agent Nexus Gateway Contributors",
-  "homepage": "https://github.com/rachidSabah/codingghosts",
+  "homepage": "https://github.com/rachidSabah/Nexus",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rachidSabah/codingghosts.git"
+    "url": "https://github.com/rachidSabah/Nexus.git"
   },
   "bugs": {
-    "url": "https://github.com/rachidSabah/codingghosts/issues"
+    "url": "https://github.com/rachidSabah/Nexus/issues"
   },
   "engines": {
     "node": ">=20.0.0",

@@ -11,13 +11,13 @@ Nexus provides verified one-line installation scripts for Windows, Linux, and ma
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/install.ps1 | iex
 ```
 
 ### Linux & macOS (Bash)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/install.sh | bash
 ```
 
 ---
@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/insta
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/rachidSabah/codingghosts.git
+git clone https://github.com/rachidSabah/Nexus.git
 cd codingghosts
 
 # 2. Install monorepo dependencies

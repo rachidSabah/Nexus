@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-15  
 **Baseline Release:** Nexus v0.5.0  
-**Repository:** https://github.com/rachidSabah/codingghosts  
+**Repository:** https://github.com/rachidSabah/Nexus  
 **Auditor:** DevSecOps Architect & Senior Security Engineer (AGY Building Agent)  
 **Security Status:** **PASSED / HARDENED**
 

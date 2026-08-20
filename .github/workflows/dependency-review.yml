@@ -1,6 +1,6 @@
 name: dependency-review
 # Disabled: Requires Dependency Graph to be enabled in repository settings
-# To enable: Go to https://github.com/rachidSabah/codingghosts/settings/security_analysis
+# To enable: Go to https://github.com/rachidSabah/Nexus/settings/security_analysis
 # and enable "Dependency graph"
 on: [pull_request]
 

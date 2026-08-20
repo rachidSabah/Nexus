@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Agent Nexus Gateway — Uninstaller for Linux/macOS/WSL
-# Usage: curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall.sh | bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall.sh | bash
 set -e
 echo ""
 echo "Stopping gateway + dashboard..."

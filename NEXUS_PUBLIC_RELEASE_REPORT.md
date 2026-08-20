@@ -2,7 +2,7 @@
 
 **Role:** AGY (Primary Builder Agent)  
 **Target Release:** v0.4.0 (Production Public Release)  
-**Repository Remote:** `https://github.com/rachidSabah/codingghosts`  
+**Repository Remote:** `https://github.com/rachidSabah/Nexus`  
 **Target Branch:** `main`  
 **Date:** 2026-08-14  
 
@@ -20,7 +20,7 @@ The Nexus platform has undergone full distribution validation, clean-clone simul
 
 | Area | Status | Evidence / Notes |
 |---|---|---|
-| **Repository Metadata** | **PASS** | `name: "agent-nexus-gateway"`, `version: "0.4.0"`, `license: "Apache-2.0"`, git remote configured to `https://github.com/rachidSabah/codingghosts`. |
+| **Repository Metadata** | **PASS** | `name: "agent-nexus-gateway"`, `version: "0.4.0"`, `license: "Apache-2.0"`, git remote configured to `https://github.com/rachidSabah/Nexus`. |
 | **Architecture** | **PASS** | Pure Hexagonal architecture in `packages/core` with strict domain isolation, ports, and driving/driven adapters. Documented in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). |
 | **Security & Secrets** | **PASS** | Gitleaks scanner + full-text regex audit: 0 active keys/secrets in tracked tree. Encrypted vault (`AES-256-GCM`) outside repo. Documented in [`NEXUS_PUBLIC_SECURITY_AUDIT.md`](NEXUS_PUBLIC_SECURITY_AUDIT.md). |
 | **Provider Fabric** | **PASS** | Direct REST/SSE adapters verified for OpenAI, Anthropic, DeepSeek, Google Gemini, Groq, Mistral, xAI Grok, Together, Fireworks, Cerebras, NVIDIA NIM, and generic OpenAI-compatible upstreams. |

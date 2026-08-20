@@ -6,7 +6,7 @@ operator decision before the public tag.
 
 ## Repository metadata
 - [DONE] Name: `agent-nexus-gateway`
-- [DONE] Remote: `https://github.com/rachidSabah/codingghosts`
+- [DONE] Remote: `https://github.com/rachidSabah/Nexus`
 - [ACTION] GitHub **description**: set to "Nexus — Universal AI Coding-Agent Gateway & Autonomous Control Plane"
 - [ACTION] GitHub **topics**: `ai-gateway`, `llm-routing`, `coding-agent`, `claude-code`, `codex`, `model-fabric`, `failover`, `openai`, `anthropic`, `typescript`
 - [DONE] License: Apache-2.0
@@ -39,7 +39,7 @@ operator decision before the public tag.
 - [DONE] `scripts/install.ps1` (Windows, Node≥20 detect)
 - [DONE] `scripts/install.sh` (WSL/Linux, idempotent)
 - [DONE] `scripts/uninstall-windows.ps1` (safe; preserves vault)
-- [DONE] Real repo slug filled in (`rachidSabah/codingghosts`)
+- [DONE] Real repo slug filled in (`rachidSabah/Nexus`)
 
 ## Build & tests (verified)
 - [DONE] `pnpm test` → core 124 + gateway 59 passed

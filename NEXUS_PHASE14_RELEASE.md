@@ -36,8 +36,8 @@ open-source project, verifying (not assuming) every claim.
 
 ## Installation commands (VERIFIED structurally)
 
-- Windows: `irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.ps1 | iex`
-- WSL/Linux: `curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.sh | bash`
+- Windows: `irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/install.ps1 | iex`
+- WSL/Linux: `curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/install.sh | bash`
 - Real repo slug filled in (was `<OWNER>/<REPO>`). Scripts detect Node≥20, install
   CLI, create `~/.agent-nexus`, generate vault key, start gateway, print URL.
 
@@ -100,7 +100,7 @@ gateway on `:8787`; capture command once the browser env is repaired:
 ## Git status
 
 - 187 working-tree changes (prior-phase edits + this phase's docs).
-- Branch: `main`; remote: `rachidSabah/codingghosts`.
+- Branch: `main`; remote: `rachidSabah/Nexus`.
 - **Nothing committed or pushed.**
 
 ## Remaining limitations (explicitly NOT claimed PASS)

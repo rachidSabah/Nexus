@@ -4,7 +4,7 @@
 
 **Universal AI Coding-Agent Gateway & Autonomous Control Plane**
 
-[![CI](https://github.com/rachidSabah/codingghosts/actions/workflows/ci.yml/badge.svg)](https://github.com/rachidSabah/codingghosts/actions/workflows/ci.yml)
+[![CI](https://github.com/rachidSabah/Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/rachidSabah/Nexus/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-9.12-orange)](https://pnpm.io)
@@ -17,6 +17,22 @@
 <img src="./docs/assets/nexus-dashboard.png" alt="Nexus Universal Dashboard & Control Plane" width="880" />
 
 </div>
+
+---
+
+## 🚀 What's New — Competitive Edge Over OmniRoute
+
+Nexus now ships a set of **live, measured** dashboards that turn OmniRoute's static marketing claims into verifiable, per-request telemetry. Every number below is computed from the running gateway — no fabricated quotas, no synthetic fallbacks.
+
+| Feature | Dashboard Route | What it proves (with real data) |
+|---|---|---|
+| **Compression Lab** | [`/compression`](docs/assets/nexus-compression.png) | Paste any prompt → see the **real per-engine token savings** (minify · dedupe · collapse-arrays · elide-middle) from the stacked `compressPipeline`. OmniRoute claims "15–95% savings" statically; Nexus shows *your* actual savings, live. |
+| **Routing Decision Replay** | [`/routing-replay`](docs/assets/nexus-routing-replay.png) | Click any past request → inspect the **real fallback attempt chain** + the live candidate ranking and why the winner won. |
+| **Cost & Budget Dashboard** | [`/cost-budget`](docs/assets/nexus-cost-budget.png) | Live token burn + per-provider throughput + a configurable **budget guard** with over/near-ceiling alerts (real `/v1/metrics`). |
+| **Strategy A/B Simulator** | [`/strategy-sim`](docs/assets/nexus-strategy-sim.png) | Rank the same candidate pool under two routing strategies and compare outcomes side-by-side via the read-only `POST /v1/routing/compare`. |
+| **Agent Health & Resilience Board** | [`/resilience`](docs/assets/nexus-resilience.png) | Circuit-open / degraded providers, detached long-tasks, and orchestrated-agent failovers in one ops view. |
+
+> Screenshots above are captured from the live dashboard (`http://127.0.0.1:3000`) against a running gateway. Introduced in commits [`a4ed97f`](https://github.com/rachidSabah/Nexus/commit/a4ed97f) (Compression Lab) and [`2725c3a`](https://github.com/rachidSabah/Nexus/commit/2725c3a) (the four dashboards).
 
 ---
 
@@ -111,25 +127,25 @@ flowchart TD
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/install.ps1 | iex
 ```
 
 To completely remove Nexus (stops services, deletes the install dir + vault, unlinks the `anx` CLI):
 
 ```powershell
-irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall.ps1 | iex
 ```
 
 ### Linux / WSL / macOS (bash)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/install.sh | bash
 ```
 
 To completely remove Nexus (stops services, deletes the install dir + vault, unlinks the `anx` CLI):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall.sh | bash
 ```
 
 Both installers verify Node.js >= 20, clone the repo, install pnpm if missing, build from source, initialize `~/.agent-nexus`, generate an encrypted vault key, start the gateway, and print the dashboard URL.
@@ -138,8 +154,8 @@ Both installers verify Node.js >= 20, clone the repo, install pnpm if missing, b
 
 ```bash
 # Prerequisites: Node.js >= 20, pnpm >= 9
-git clone https://github.com/rachidSabah/codingghosts.git
-cd codingghosts
+git clone https://github.com/rachidSabah/Nexus.git
+cd Nexus
 pnpm install
 pnpm build
 
@@ -200,7 +216,7 @@ Provider keys live encrypted in `~/.agent-nexus/vault.json`. Nexus can export th
 - `GET /v1/vault/export/file` → downloads `.anx-vault.enc` (AES-256-GCM, PBKDF2-derived key; default passphrase `nexus-default-vault-backup`, override via `?passphrase=`).
 - `POST /v1/vault/import` → uploads a bundle and re-registers every key (skips duplicates). Keys are never written to logs or API responses.
 
-The bundle is portable: restore it on any Nexus instance to reconstruct identical provider bindings. ([`ee88217`](https://github.com/rachidSabah/codingghosts/commit/ee88217))
+The bundle is portable: restore it on any Nexus instance to reconstruct identical provider bindings. ([`ee88217`](https://github.com/rachidSabah/Nexus/commit/ee88217))
 
 ### 🧩 7. Marketplace, Plugin & Workflow Runtime
 Nexus ships a runtime lifecycle for extensions, plugins, MCP servers, and workflows — all manageable at runtime with no gateway restart:
@@ -213,7 +229,7 @@ Nexus ships a runtime lifecycle for extensions, plugins, MCP servers, and workfl
 ### 🔄 8. Zero-Downtime Hot-Swap, Supervisor & Agent-to-Agent (A2A)
 - **Hot-swap:** `POST /v1/runtime-agents/hot-swap` re-targets a runtime agent or alias to a new model with `APPLIED_ZERO_DOWNTIME` — no restart, in-flight requests keep their original target.
 - **Supervisor:** the gateway process supervisor reports live process health and system uptime (`supervisorStatus: 'HEALTHY'`).
-- **A2A coordinator:** `POST /v1/a2a/handoff` dispatches a task from one agent to a peer; `POST /v1/a2a/message` sends peer messages through the A2A coordinator. Vault rotation is wired through the same lifecycle so re-keying never interrupts routing. ([`31b7d0d`](https://github.com/rachidSabah/codingghosts/commit/31b7d0d), [`9d02a75`](https://github.com/rachidSabah/codingghosts/commit/9d02a75))
+- **A2A coordinator:** `POST /v1/a2a/handoff` dispatches a task from one agent to a peer; `POST /v1/a2a/message` sends peer messages through the A2A coordinator. Vault rotation is wired through the same lifecycle so re-keying never interrupts routing. ([`31b7d0d`](https://github.com/rachidSabah/Nexus/commit/31b7d0d), [`9d02a75`](https://github.com/rachidSabah/Nexus/commit/9d02a75))
 
 ---
 
@@ -282,6 +298,11 @@ Nexus v0.5.0 features a local-first **Durable Persistence & Recovery Engine**:
 | `GET` | `/v1/providers` | Configured provider health, models, and latency metrics |
 | `GET` | `/v1/rate-limits` | Per-key rate-limit state (tokens remaining / reset / Retry-After) — truthful, derived from live upstream headers (P1) |
 | `GET` | `/v1/routing/metrics` | Per-provider key health (active/cooldown/invalid, 429 rate) + free-model availability — derived, no fabricated quota (P4) |
+| `POST` | `/v1/compression/pipeline-preview` | Run the stacked `compressPipeline` on a prompt and return **real per-engine token savings** (minify · dedupe · collapse-arrays · elide-middle) + total |
+| `POST` | `/v1/routing/compare` | Read-only: rank the same candidate pool under two ranking strategies (A/B) and return both top-N lists — reuses the real scoring engine |
+| `GET` | `/v1/traces` · `/v1/traces/:id` | Historical routing decisions (winner, fallback attempts, intent) for replay |
+| `GET` | `/v1/tasks` · `/v1/tasks/:id` | Detached long-running tasks — fire-and-resume even if the browser disconnects |
+| `GET` | `/v1/agents/executions` | Orchestrated multi-agent executions with per-step failover status |
 | `GET` | `/v1/vault/export/file` | Export all provider keys as an AES-256-GCM encrypted bundle (`.anx-vault.enc`) |
 | `POST` | `/v1/vault/import` | Import + restore an encrypted vault bundle (AES-256-GCM, passphrase-protected) |
 | `GET` | `/v1/plugins` | Loaded gateway plugins and their status |
@@ -308,7 +329,7 @@ Full API reference: [`docs/API.md`](docs/API.md)
 
 ## Official 32-Topic Wiki Documentation
 
-The complete, in-depth documentation is available in [`docs/wiki/`](docs/wiki/) and [GitHub Wiki](https://github.com/rachidSabah/codingghosts/wiki):
+The complete, in-depth documentation is available in [`docs/wiki/`](docs/wiki/) and [GitHub Wiki](https://github.com/rachidSabah/Nexus/wiki):
 
 | Chapter | Topic | Link |
 |---|---|---|

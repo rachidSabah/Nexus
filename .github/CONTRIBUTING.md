@@ -17,7 +17,7 @@ Be kind. Be patient. Be excellent to each other. Harassment of any kind will not
 ### Setup
 
 ```bash
-git clone https://github.com/rachidSabah/codingghosts.git
+git clone https://github.com/rachidSabah/Nexus.git
 cd codingghosts
 pnpm install
 pnpm build

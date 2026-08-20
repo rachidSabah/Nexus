@@ -4,9 +4,9 @@ description: The most advanced local AI Gateway — universal routing, streaming
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/rachidSabah/codingghosts
+home: https://github.com/rachidSabah/Nexus
 sources:
-  - https://github.com/rachidSabah/codingghosts
+  - https://github.com/rachidSabah/Nexus
 maintainers:
   - name: Agent Nexus Gateway Contributors
 keywords:

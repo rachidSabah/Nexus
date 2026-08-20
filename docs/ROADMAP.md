@@ -139,7 +139,7 @@ Ideas under consideration (not committed):
 
 ## How to influence the roadmap
 
-1. **Open a Discussion** at https://github.com/rachidSabah/codingghosts/discussions
+1. **Open a Discussion** at https://github.com/rachidSabah/Nexus/discussions
 2. **Upvote existing discussions** — we prioritize by reactions.
 3. **Open issues** for bugs (always welcome).
 4. **Submit PRs** — see [CONTRIBUTING.md](../.github/CONTRIBUTING.md). Good first issues are tagged `good-first-issue`.

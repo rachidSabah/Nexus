@@ -146,7 +146,7 @@ This guide provides structured root-cause diagnostic workflows formatted as **SY
 - **SOLUTION**:
   ```powershell
   Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
-  irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/install.ps1 | iex
   ```
 
 ---

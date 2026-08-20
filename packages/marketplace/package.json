@@ -4,14 +4,14 @@
   "description": "Extension Marketplace for Agent Nexus Gateway - Browse, install, and manage extensions, providers, MCP servers, workflows, and prompts",
   "license": "Apache-2.0",
   "author": "Agent Nexus Gateway Contributors",
-  "homepage": "https://github.com/rachidSabah/codingghosts",
+  "homepage": "https://github.com/rachidSabah/Nexus",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rachidSabah/codingghosts.git",
+    "url": "https://github.com/rachidSabah/Nexus.git",
     "directory": "packages/marketplace"
   },
   "bugs": {
-    "url": "https://github.com/rachidSabah/codingghosts/issues"
+    "url": "https://github.com/rachidSabah/Nexus/issues"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

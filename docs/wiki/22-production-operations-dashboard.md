@@ -16,6 +16,18 @@ Nexus includes a production-ready Next.js 15 web application (`apps/dashboard/`)
 - **Provider & Model Catalog**: Capability tags, free-tier badges, live endpoint health toggles.
 - **Token Efficiency & Budget Visualizer**: Compression savings, cache hit rates, cost burn charts.
 
+### Competitive Edge Dashboards (latest)
+
+These dashboards turn static claims into **live, measured** telemetry — every value is computed from the running gateway (no fabricated quotas):
+
+- **Compression Lab** (`/compression`): paste any prompt → real per-engine token savings (minify · dedupe · collapse-arrays · elide-middle) from the stacked `compressPipeline` (`POST /v1/compression/pipeline-preview`).
+- **Routing Decision Replay** (`/routing-replay`): click any past request → real fallback attempt chain + live candidate ranking and why the winner won (`GET /v1/traces`).
+- **Cost & Budget Dashboard** (`/cost-budget`): live token burn + per-provider throughput + configurable budget guard with over/near-ceiling alerts (`GET /v1/metrics/usage`, `/v1/metrics/providers`).
+- **Strategy A/B Simulator** (`/strategy-sim`): rank the same candidate pool under two routing strategies and compare outcomes side-by-side (read-only `POST /v1/routing/compare`).
+- **Agent Health & Resilience Board** (`/resilience`): circuit-open / degraded providers, detached long-tasks, and orchestrated-agent failovers in one ops view (`GET /v1/tasks`, `/v1/agents/executions`, `/v1/metrics`).
+
+> Introduced in commits `a4ed97f` (Compression Lab) and `2725c3a` (the four dashboards).
+
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │  NEXUS CONTROL PLANE — PRODUCTION OPERATIONS DASHBOARD                 │
