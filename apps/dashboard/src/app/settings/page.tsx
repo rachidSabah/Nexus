@@ -22,6 +22,11 @@ interface PrivacyConfig {
 export default function SettingsPage() {
   const { data: cacheStats } = useSWR<CacheStats>('/api/v1/cache/stats', fetcher, { refreshInterval: 3000 });
   const { data: privacy, mutate: refreshPrivacy } = useSWR<PrivacyConfig>('/api/v1/privacy', fetcher);
+  const { data: gwConfig } = useSWR<{
+    server: { host: string; port: number };
+    routing: { strategy: string };
+    vault: { path: string | null; persisted: boolean; masterKeySet: boolean; note: string };
+  }>('/api/v1/config', fetcher, { refreshInterval: 15_000 });
   const [refreshingModels, setRefreshingModels] = useState(false);
   const [modelMsg, setModelMsg] = useState<string | null>(null);
 
@@ -120,6 +125,48 @@ export default function SettingsPage() {
               </div>
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Config & Vault status (read-only) */}
+      <div className="card">
+        <div className="flex items-center gap-2 text-white/90 font-medium">
+          <Shield className="h-5 w-5 text-nexus-400" /> Gateway Config &amp; Vault
+        </div>
+        <p className="mt-1 text-xs text-white/50">
+          Live runtime configuration (no secrets). Shows how the gateway is bound and whether credentials persist across restarts.
+        </p>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+            <div className="text-[11px] uppercase tracking-wider text-white/40">Bind</div>
+            <div className="mt-1 font-mono text-xs text-white/80">
+              {gwConfig?.server.host ?? '—'}:{gwConfig?.server.port ?? '—'}
+            </div>
+            <div className="text-[10px] text-white/40">
+              {gwConfig?.server.host === '127.0.0.1' || gwConfig?.server.host === 'localhost'
+                ? 'Loopback only — not reachable from other machines.'
+                : 'Exposed on the network.'}
+            </div>
+          </div>
+          <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+            <div className="text-[11px] uppercase tracking-wider text-white/40">Routing strategy</div>
+            <div className="mt-1 font-mono text-xs text-white/80">{gwConfig?.routing.strategy ?? '—'}</div>
+          </div>
+          <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 sm:col-span-2">
+            <div className="text-[11px] uppercase tracking-wider text-white/40">Credential vault</div>
+            <div className="mt-1 flex items-center gap-2">
+              <span
+                className={`h-2 w-2 rounded-full ${gwConfig?.vault.persisted ? 'bg-emerald-400' : 'bg-amber-400'}`}
+              />
+              <span className="text-xs text-white/80">
+                {gwConfig?.vault.persisted ? 'Persisted (encrypted at rest)' : 'Ephemeral (lost on restart)'}
+              </span>
+            </div>
+            <div className="mt-1 text-[10px] text-white/40">
+              {gwConfig?.vault.path ? `Path: ${gwConfig.vault.path}` : 'No vault path configured.'}
+            </div>
+            <div className="mt-1 text-[10px] text-white/50">{gwConfig?.vault.note ?? ''}</div>
+          </div>
         </div>
       </div>
 

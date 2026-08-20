@@ -3262,6 +3262,31 @@ export class HttpServer {
       return { policies: this.deps.aliasRegistry.list() };
     });
 
+    // Read-only runtime config summary for the dashboard (no secrets). Surfaces
+    // the config file location, vault persistence mode, and bind so a user can
+    // verify their install is configured the way they intend.
+    this.fastify.get('/v1/config', async () => {
+      const vaultPath = this.deps.config?.security?.vaultPath;
+      const vaultKeySet = !!this.deps.config?.security?.vaultKey || !!process.env['AGENT_NEXUS_VAULT_KEY'];
+      return {
+        server: {
+          host: this.deps.config?.server?.host ?? '127.0.0.1',
+          port: this.deps.config?.server?.port ?? 8787,
+        },
+        routing: { strategy: this.deps.config?.routing?.strategy ?? 'weighted' },
+        vault: {
+          path: vaultPath ?? null,
+          persisted: !!vaultPath,
+          masterKeySet: vaultKeySet,
+          note: vaultPath
+            ? vaultKeySet
+              ? 'Credentials persist across restarts (encrypted at rest).'
+              : 'Vault file present; master key auto-generated on first boot and stored beside it.'
+            : 'Ephemeral in-memory vault — credentials are lost on restart.',
+        },
+      };
+    });
+
     this.fastify.post('/v1/aliases', async (request, reply) => {
       const body = request.body as {
         alias: string;

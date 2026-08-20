@@ -9,15 +9,15 @@
  */
 :root {
   color-scheme: light;
-  --bg: #f6f7f9;
-  --surface: #ffffff;
+  --bg: #eef1f6;
+  --surface: #f7f9fc;
   --surface-elevated: #ffffff;
-  --border: rgba(15, 23, 42, 0.08);
+  --border: rgba(15, 23, 42, 0.14);
   --text-primary: #0f172a;
-  --text-secondary: rgba(15, 23, 42, 0.72);
-  --text-muted: rgba(15, 23, 42, 0.45);
-  --scrollbar: rgba(15, 23, 42, 0.18);
-  --scrollbar-hover: rgba(15, 23, 42, 0.3);
+  --text-secondary: rgba(15, 23, 42, 0.78);
+  --text-muted: rgba(15, 23, 42, 0.55);
+  --scrollbar: rgba(15, 23, 42, 0.22);
+  --scrollbar-hover: rgba(15, 23, 42, 0.38);
 }
 
 .dark {
@@ -89,6 +89,20 @@ body {
     color: var(--text-primary);
   }
 }
+
+/* Light-mode contrast pass: the emerald/amber/rose-400 accents used by status
+ * pills read poorly on a white surface. Darken them when NOT in dark mode. */
+html:not(.dark) .pill-healthy { @apply bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-600/30; }
+html:not(.dark) .pill-degraded { @apply bg-amber-500/15 text-amber-700 ring-1 ring-amber-600/30; }
+html:not(.dark) .pill-unhealthy { @apply bg-rose-500/15 text-rose-700 ring-1 ring-rose-600/30; }
+html:not(.dark) .pill-circuit_open { @apply bg-fuchsia-500/15 text-fuchsia-700 ring-1 ring-fuchsia-600/30; }
+html:not(.dark) .stat-value { color: var(--text-primary); }
+html:not(.dark) .text-emerald-400 { color: #059669; }
+html:not(.dark) .text-cyan-400 { color: #0891b2; }
+html:not(.dark) .text-purple-400 { color: #7c3aed; }
+html:not(.dark) .text-amber-400 { color: #b45309; }
+html:not(.dark) .text-rose-400 { color: #e11d48; }
+html:not(.dark) .text-sky-400 { color: #0284c7; }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {

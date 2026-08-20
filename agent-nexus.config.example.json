@@ -1,0 +1,37 @@
+{
+  "_comment": "Example Agent Nexus Gateway config. Copy to agent-nexus.config.json (same dir) to use. All keys optional — anything omitted falls back to safe defaults. Secrets should come from env vars, not this file.",
+  "server": {
+    "port": 8787,
+    "host": "127.0.0.1",
+    "_host_note": "Keep '127.0.0.1' for a single local machine. Set '0.0.0.0' (or your LAN IP) ONLY on a trusted private network, behind the API-key/RBAC layer, to let other machines route through this gateway."
+  },
+  "routing": {
+    "strategy": "weighted",
+    "failureThreshold": 5,
+    "failureWindowMs": 60000,
+    "cooldownMs": 30000,
+    "maxFailovers": 3
+  },
+  "security": {
+    "vaultPath": "~/.agent-nexus/vault.json",
+    "_vault_note": "When set, credentials persist encrypted across restarts. The master key is auto-generated and stored beside the vault on first boot unless AGENT_NEXUS_VAULT_KEY is set. Omit vaultPath for an ephemeral in-memory vault (keys lost on restart).",
+    "principals": [
+      { "id": "admin", "roles": ["admin"], "apiKey": "REPLACE_WITH_STRONG_KEY" }
+    ]
+  },
+  "network": {
+    "proxies": [],
+    "doh": { "url": "https://cloudflare-dns.com/dns-query", "enabled": false }
+  },
+  "endpoints": [
+    {
+      "_comment": "Self-hosted local model (Ollama). No apiKey needed. Same shape works for vLLM (:8000/v1) and LM Studio (:1234/v1).",
+      "id": "ollama-local",
+      "providerId": "ollama",
+      "displayName": "Ollama (local)",
+      "baseUrl": "http://localhost:11434/v1",
+      "priority": 100,
+      "weight": 1
+    }
+  ]
+}
