@@ -114,10 +114,22 @@ flowchart TD
 irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.ps1 | iex
 ```
 
+To completely remove Nexus (stops services, deletes the install dir + vault, unlinks the `anx` CLI):
+
+```powershell
+irm https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall.ps1 | iex
+```
+
 ### Linux / WSL / macOS (bash)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/install.sh | bash
+```
+
+To completely remove Nexus (stops services, deletes the install dir + vault, unlinks the `anx` CLI):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/codingghosts/main/scripts/uninstall.sh | bash
 ```
 
 Both installers verify Node.js >= 20, clone the repo, install pnpm if missing, build from source, initialize `~/.agent-nexus`, generate an encrypted vault key, start the gateway, and print the dashboard URL.
