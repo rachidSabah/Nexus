@@ -34,16 +34,15 @@ export class QwenCodeIntegration extends BaseIntegration {
     return [
       {
         path: '.qwen/settings.json',
-        merge: 'json-merge' as const,
+        merge: 'overwrite' as const,
         // Qwen Code v0.21.x reads the model id + base URL from the nested
-        // `model` object (`model.name` + `model.baseUrl`). Writing to the
-        // top-level `baseUrl` only (the old behaviour) left `model.baseUrl`
-        // empty, so Qwen fell back to api.openai.com — which is why its
-        // /model picker showed only the default upstream model and why a
-        // stale `claude-gw-*` alias persisted and 400'd. We now write the
-        // gateway URL into BOTH the nested `model.baseUrl` AND the
-        // top-level `baseUrl`/`apiBaseUrl` for maximum compatibility, and
-        // clear any previously-persisted claude-gw alias.
+        // `model` object (`model.name` + `model.baseUrl`). It ALSO rewrites
+        // this file on every launch and resets `model.baseUrl` to "" when it
+        // cannot reach the upstream — which is why a shallow merge of our
+        // values got clobbered and the /model picker showed only the default
+        // upstream model. We overwrite the whole file (not merge) on every
+        // install/start so the gateway binding always wins, including the
+        // critical nested `model.baseUrl`.
         content: () =>
           jsonString({
             baseUrl: endpoint,
@@ -53,6 +52,7 @@ export class QwenCodeIntegration extends BaseIntegration {
               name: targetModel,
               baseUrl: endpoint,
             },
+            security: { auth: { selectedType: 'openai' } },
             env: {
               OPENAI_BASE_URL: endpoint,
               OPENAI_API_KEY: ctx.apiKey ?? 'nexus',

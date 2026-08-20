@@ -5085,8 +5085,9 @@ export class HttpServer {
             results['chat'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
             // Reuse the proven routing-error path so a definitively-gone model
             // (404/410 or 400 invalid_model) is dynamically amended OUT of the
-            // catalog — same behavior as a real chat request.
-            this.reportUpstreamModelError(body.model, err as Error);
+            // catalog — same behavior as a real chat request. Wrapped in
+            // safeMarkUnhealthy so a bookkeeping edge case can never 500 the probe.
+            this.safeMarkUnhealthy(body.model, err);
           }
         } else if (test === 'streaming') {
           const start = Date.now();
@@ -5110,7 +5111,7 @@ export class HttpServer {
             };
           } catch (err) {
             results['streaming'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
-            this.reportUpstreamModelError(body.model, err as Error);
+            this.safeMarkUnhealthy(body.model, err);
           }
         } else if (test === 'tools') {
           const start = Date.now();
@@ -7231,6 +7232,23 @@ export class HttpServer {
     // Fallback: try to find any model whose id matches after alias reversal.
     const found = native.list().find((x) => `claude-gw-${x.providerId}-${x.id}` === model || `nexus/${x.providerId}/${x.id}` === model);
     if (found) native.markModelUnhealthy(found.providerId, found.id, reason);
+  }
+
+  /**
+   * Safety wrapper around reportUpstreamModelError for use inside the live
+   * probe handler's catch blocks. A probe must NEVER turn a model's
+   * upstream failure into a 500 for the whole request — the per-test result
+   * is already recorded as { ok:false }. If the mark/unhealthy bookkeeping
+   * throws (registry edge case, non-Error rejection, etc.), we swallow it so
+   * the probe still returns 200 with the honest per-test failure.
+   */
+  private safeMarkUnhealthy(model: string, error: unknown): void {
+    try {
+      const err = (error instanceof Error ? error : new Error(String(error ?? 'unknown probe error')));
+      this.reportUpstreamModelError(model, err);
+    } catch {
+      // bookkeeping best-effort; never break the probe response
+    }
   }
 
   private async authenticate(authHeader?: string): Promise<string | undefined> {
