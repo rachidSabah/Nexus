@@ -2,12 +2,16 @@ import type { Metadata } from 'next';
 
 import './globals.css';
 import { ConsoleCleanup } from '@/components/ConsoleCleanup';
+import { PwaRegister } from '@/components/PwaRegister';
 import { Sidebar } from '@/components/Sidebar';
 import { Topbar } from '@/components/Topbar';
 
 export const metadata: Metadata = {
   title: 'Agent Nexus Gateway',
   description: 'The most advanced local AI Gateway',
+  manifest: '/manifest.webmanifest',
+  themeColor: '#7c3aed',
+  appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Nexus' },
 };
 
 export default function RootLayout({
@@ -26,6 +30,7 @@ export default function RootLayout({
       </head>
       <body className="font-sans antialiased">
         <ConsoleCleanup />
+        <PwaRegister />
         <div className="flex h-screen">
           <Sidebar />
           <div className="flex flex-1 flex-col overflow-hidden">

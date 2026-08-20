@@ -1,0 +1,20 @@
+{
+  "name": "Agent Nexus Gateway",
+  "short_name": "Nexus",
+  "description": "Agent Nexus — multi-provider AI gateway: routing, failover, free-tier model discovery, and live telemetry.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#7c3aed",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["developer", "productivity", "utilities"]
+}
