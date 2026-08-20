@@ -271,7 +271,13 @@ export async function registerDefaultEndpoints(
       { providerId: 'nvidia-nim', envVar: 'NVIDIA_API_KEY', baseUrl: 'https://integrate.api.nvidia.com/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'opencode-zen', envVar: 'OPENCODE_ZEN_API_KEY', baseUrl: 'https://opencode.ai/zen/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'opencode-go', envVar: 'OPENCODE_GO_API_KEY', baseUrl: 'https://opencode.ai/zen/go/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      // ── First-class self-hosted / local providers (keyless, probed at boot) ──
+      // Ollama, vLLM, and LM Studio expose OpenAI-compatible /v1 endpoints.
+      // Registered with the same health-probe + failover treatment as cloud
+      // providers, so local models participate in routing (privacy/air-gapped).
       { providerId: 'ollama', envVar: '', baseUrl: 'http://localhost:11434/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'vllm', envVar: '', baseUrl: 'http://localhost:8000/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'lm-studio', envVar: '', baseUrl: 'http://localhost:1234/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
     ];
 
     for (const e of autoEndpoints) {

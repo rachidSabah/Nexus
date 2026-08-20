@@ -3747,6 +3747,57 @@ export class HttpServer {
       return reply.send({ token, principal: principalId, expiresIn: body?.ttlSeconds ?? 3600 });
     });
 
+    // ── Shared live token-optimization (Compression Lab → real savings) ──
+    // Applies the TokenOptimizer to a request's messages on the LIVE path and
+    // records the realized savings into the optimizer stats (which feed
+    // /v1/system/metrics + the dashboard). Default OFF (env ANX_TOKEN_MODE=off)
+    // → zero behavior change for existing callers. A per-request override via
+    // the `x-nexus-token-mode` header (or ?token_mode=) lets a caller opt in
+    // without restarting the gateway. Non-destructive: if nothing is optimized,
+    // the original messages pass through unchanged.
+    const applyLiveOptimization = (
+      messages: unknown,
+      reply: any,
+      model: string,
+      request: any,
+    ): { messages: unknown; changed: boolean } => {
+      const envMode = (process.env['ANX_TOKEN_MODE'] ?? 'off').toLowerCase();
+      const headerMode = (
+        (request.headers['x-nexus-token-mode'] as string | undefined)?.trim()
+        || ((request.query as { token_mode?: string })?.token_mode)?.trim()
+        || ''
+      ).toLowerCase();
+      const mode = headerMode || envMode;
+      if (mode === 'off' || !mode) return { messages, changed: false };
+
+      try {
+        const optimizer = new TokenOptimizer(mode as OptimizationMode);
+        const opt = optimizer.optimize(messages as unknown as OptMessage[], {
+          maxContextTokens: Number(process.env['ANX_TOKEN_BUDGET'] ?? 190_000),
+        });
+        if (opt.changed) {
+          recordOptStats({
+            mode: opt.stats.mode,
+            model,
+            originalTokens: opt.stats.originalTokens,
+            optimizedTokens: opt.stats.optimizedTokens,
+            savedTokens: opt.stats.savedTokens,
+            savingsPct: opt.stats.savingsPct,
+            changed: true,
+          });
+          reply.header('x-anx-opt-mode', opt.stats.mode);
+          reply.header('x-anx-opt-saved-tokens', String(opt.stats.savedTokens));
+          this.fastify.log.info(
+            `[token-efficiency] live mode=${opt.stats.mode} saved ${opt.stats.savedTokens} tokens (${opt.stats.savingsPct}%)`,
+          );
+          return { messages: opt.messages, changed: true };
+        }
+      } catch (err) {
+        this.fastify.log.warn(`[token-efficiency] live optimize skipped: ${(err as Error).message}`);
+      }
+      return { messages, changed: false };
+    }
+
     // ── Chat Completions (OpenAI-compatible, streaming + non-streaming)
     const handleChatCompletions = async (request: any, reply: any) => {
       const body = request.body as ChatCompletionRequest;
@@ -3810,6 +3861,12 @@ export class HttpServer {
         model: aliasResolution.model,
         routing: routingExtra,
       };
+
+      // Live token-optimization (Compression Lab → real savings). Opt-in:
+      // ANX_TOKEN_MODE env OR per-request x-nexus-token-mode header. Default
+      // OFF → no behavior change. Realized savings recorded for the dashboard.
+      const optimized = applyLiveOptimization(effectiveBody.messages, reply, aliasResolution.model, request);
+      if (optimized.changed) effectiveBody.messages = optimized.messages as typeof effectiveBody.messages;
 
       // AuthN + AuthZ. If security principals are configured, require gateway:chat.
       // If no principals are configured at all (open gateway), allow anonymous.
@@ -4023,35 +4080,11 @@ export class HttpServer {
       const targetSupportsReasoning = resolvedDescriptor?.capabilities?.reasoning === true;
       const internalReq = translateAnthropicRequest(anthropicReq, { targetSupportsReasoning });
 
-            // Token-efficiency layer (§15–§36): env-gated (ANX_TOKEN_MODE=off|safe|balanced|aggressive).
-        // Default OFF → zero behavior change. SAFE removes exact duplicates; BALANCED/AGGRESSIVE
-        // also enforce the context budget (§25). See packages/token-efficiency.
-let optMessages: never[] | undefined;
-                  const optMode = (process.env['ANX_TOKEN_MODE'] ?? 'off').toLowerCase();
-                  if (optMode !== 'off') {
-                    const optBudget = Number(process.env['ANX_TOKEN_BUDGET'] ?? 190_000);
-                    const optimizer = new TokenOptimizer(optMode as OptimizationMode);
-                    const opt = optimizer.optimize(internalReq.messages as unknown as OptMessage[], {
-                      maxContextTokens: optBudget,
-                    });
-                    recordOptStats({
-                      mode: opt.stats.mode,
-                      model: internalReq.model,
-                      originalTokens: opt.stats.originalTokens,
-                      optimizedTokens: opt.stats.optimizedTokens,
-                      savedTokens: opt.stats.savedTokens,
-                      savingsPct: opt.stats.savingsPct,
-                      changed: opt.changed,
-                    });
-                    if (opt.changed) {
-                      optMessages = opt.messages as never;
-                      reply.header('x-anx-opt-mode', opt.stats.mode);
-                      reply.header('x-anx-opt-saved-tokens', String(opt.stats.savedTokens));
-                      this.fastify.log.info(
-                        `[token-efficiency] mode=${opt.stats.mode} blocks ${opt.stats.originalBlocks}->${opt.stats.optimizedBlocks} saved ${opt.stats.savedTokens} tokens (${opt.stats.savingsPct}%)`,
-                      );
-                    }
-                  }
+      // Token-efficiency layer (§15–§36): opt-in via ANX_TOKEN_MODE env OR
+      // per-request x-nexus-token-mode header. Default OFF → zero behavior
+      // change. Realized savings are recorded for the dashboard.
+      const optResult = applyLiveOptimization(internalReq.messages, reply, internalReq.model, request);
+      const optMessages = optResult.changed ? (optResult.messages as never[]) : undefined;
 
       const providerHint = this.preferredProviderFor(aliasResolution.model, aliasResolution.resolution);
       const reqRouting = (internalReq as { routing?: Record<string, unknown> }).routing ?? {};

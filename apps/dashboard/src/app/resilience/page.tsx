@@ -1,9 +1,17 @@
 'use client';
 
-import { ShieldCheck, Activity, Terminal, GitBranch, AlertTriangle, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { ShieldCheck, Activity, Terminal, GitBranch, AlertTriangle, CheckCircle2, XCircle, Loader2, Radio } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 
 import { etagFetcher } from '@/lib/etagFetcher';
+
+interface LiveEvent {
+  id: number;
+  type: string;
+  at: number;
+  text: string;
+}
 
 interface ProviderMetric {
   endpointCount: number;
@@ -48,6 +56,30 @@ function timeAgo(ts: number | undefined): string {
   return `${Math.floor(s / 3600)}h ago`;
 }
 
+function summarizeEvent(type: string, payload: Record<string, unknown>): string {
+  const p = payload ?? {};
+  if (/circuit/.test(type)) {
+    const ep = p.endpointId ?? p.providerId ?? '?';
+    return `circuit ${p.open ? 'OPEN' : 'closed'} → ${ep}`;
+  }
+  if (/failover/.test(type)) {
+    return `failover: ${p.from ?? p.providerId ?? '?'} → ${p.to ?? '?'}`;
+  }
+  if (/provider\.onboarded|endpoint\.added/.test(type)) {
+    return `endpoint ready: ${p.displayName ?? p.providerId ?? '?'}`;
+  }
+  if (/rate.?limit/.test(type)) {
+    return `rate-limit cooldown: ${p.providerId ?? p.keyId ?? '?'}`;
+  }
+  if (/token/.test(type)) {
+    return `tokens: +${p.savedTokens ?? p.processed ?? '?'} (${p.mode ?? type})`;
+  }
+  if (/anomaly/.test(type)) {
+    return `anomaly: ${p.kind ?? type}`;
+  }
+  return '';
+}
+
 export default function ResiliencePage() {
   const { data: metrics } = useSWR<{ byProvider?: Record<string, ProviderMetric> }>(
     '/api/v1/metrics',
@@ -61,7 +93,45 @@ export default function ResiliencePage() {
     refreshInterval: 10_000,
   });
 
+  // ── Live SSE telemetry (real-time ops console) ──────────────────────
+  // Subscribes to the gateway's unified event stream. Existing polls remain
+  // as a guaranteed fallback; SSE adds the live, push-based event feed so
+  // circuit-open / failover / token-burn updates appear instantly.
+  const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+  const [liveConnected, setLiveConnected] = useState(false);
+  const evId = useRef(0);
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource('/api/v1/system/events');
+      es.onopen = () => setLiveConnected(true);
+      es.onerror = () => setLiveConnected(false);
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (!data || typeof data !== 'object') return;
+          const type = String(data.type ?? 'event');
+          // Only surface operational-resilience-relevant events.
+          if (!/circuit|failover|provider|endpoint|token|rate.?limit|anomaly/i.test(type)) return;
+          const payload = data.payload ?? data;
+          const text = summarizeEvent(type, payload);
+          if (!text) return;
+          setLiveEvents((prev) => [{ id: evId.current++, type, at: Date.now(), text }, ...prev].slice(0, 12));
+        } catch {
+          /* ignore malformed frame */
+        }
+      };
+    } catch {
+      setLiveConnected(false);
+    }
+    return () => {
+      es?.close();
+      setLiveConnected(false);
+    };
+  }, []);
+
   const byProvider = metrics?.byProvider ?? {};
+
   const providers = Object.entries(byProvider);
   const circuitOpen = providers.filter(([, p]) => p.open > 0);
   const degraded = providers.filter(([, p]) => p.degraded > 0);
@@ -78,6 +148,9 @@ export default function ResiliencePage() {
       <div className="border-b border-white/10 pb-6">
         <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-emerald-400 backdrop-blur-md mb-2">
           <ShieldCheck className="h-3.5 w-3.5 animate-pulse text-emerald-300" /> Operational Resilience
+          <span className={`ml-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] ${liveConnected ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/10 text-white/40'}`}>
+            <Radio className="h-2.5 w-2.5" /> {liveConnected ? 'LIVE' : 'POLL'}
+          </span>
         </div>
         <h1 className="flex items-center gap-3 text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
           <Activity className="h-8 w-8 text-emerald-400" /> Agent Health &amp; Resilience Board
@@ -86,6 +159,30 @@ export default function ResiliencePage() {
           Live circuit-breaker state, detached long-task runs, and orchestrated-agent failovers — all
           from real gateway telemetry.
         </p>
+      </div>
+
+      {/* Live SSE event feed */}
+      <div className="rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.04] p-4 backdrop-blur-xl">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-300">
+            <Radio className={`h-4 w-4 ${liveConnected ? 'animate-pulse text-emerald-300' : 'text-white/30'}`} /> Live Event Stream
+          </div>
+          <span className="text-[10px] text-white/40">{liveConnected ? 'SSE connected' : 'polling fallback'}</span>
+        </div>
+        {liveEvents.length === 0 ? (
+          <div className="text-[11px] text-white/40">Listening for circuit / failover / token events…</div>
+        ) : (
+          <div className="space-y-1 font-mono text-[10px] text-white/60">
+            {liveEvents.map((ev) => (
+              <div key={ev.id} className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                <span className="text-emerald-300/80">{ev.type}</span>
+                <span className="truncate">{ev.text}</span>
+                <span className="ml-auto shrink-0 text-white/30">{timeAgo(ev.at)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Summary strip */}
