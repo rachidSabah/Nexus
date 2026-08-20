@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "dev": "tsx watch src/bin.ts",
+    "dev": "tsx src/bin.ts",
     "start": "node dist/bin.js",
     "test": "vitest run",
     "lint": "eslint src --ext .ts",
