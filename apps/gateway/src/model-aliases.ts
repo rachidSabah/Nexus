@@ -46,6 +46,7 @@ import { resolveOpenAIModelId, isVirtualModelId } from './model-fabric.js';
 
 export type AliasRankingStrategy =
   | 'cheapest'     // lowest inputPer1M + outputPer1M (free first)
+  | 'cheapest_capable' // WS3: free-first, then lowest combined cost (capability already filtered)
   | 'fastest'      // lowest latency (requires KeyRegistry stats — falls back to cheapest)
   | 'highest_quality' // most capabilities + largest context window
   | 'largest_context' // biggest contextWindow
@@ -54,6 +55,12 @@ export type AliasRankingStrategy =
 export interface AliasFilter {
   /** Only include models with this capability set to true. */
   capability?: 'streaming' | 'toolCalling' | 'vision' | 'audio' | 'speech' | 'embeddings' | 'reasoning' | 'jsonMode';
+  /**
+   * WS3: require ALL of these capabilities. Supersedes `capability` when
+   * present (a single capability is just the one-element form). Lets an alias
+   * express e.g. "cheapest model with toolCalling AND vision AND jsonMode".
+   */
+  capabilities?: readonly ('streaming' | 'toolCalling' | 'vision' | 'audio' | 'speech' | 'embeddings' | 'reasoning' | 'jsonMode')[];
   /** Only include free-tier models. */
   freeOnly?: boolean;
   /** Minimum context window in tokens. */
@@ -347,6 +354,13 @@ export class ModelAliasRegistry {
         ranking: 'largest_context',
         builtin: true,
       },
+      {
+        alias: 'nexus/cheapest-capable',
+        description: 'WS3: cheapest model (free-first) that satisfies ALL required capabilities (toolCalling + vision + jsonMode)',
+        filter: { capabilities: ['toolCalling', 'vision', 'jsonMode'] },
+        ranking: 'cheapest_capable',
+        builtin: true,
+      },
     ];
     for (const a of builtins) {
       this.aliases.set(a.alias, a);
@@ -448,6 +462,18 @@ export class ModelAliasRegistry {
     }
     if (alias.filter.capability) {
       candidates = candidates.filter((m) => m.capabilities?.[alias.filter.capability!] === true);
+    }
+    // WS3: require ALL listed capabilities (multi-cap matching). When both
+    // `capability` and `capabilities` are present, `capabilities` wins.
+    const requiredCaps = alias.filter.capabilities?.length
+      ? alias.filter.capabilities
+      : alias.filter.capability
+        ? [alias.filter.capability]
+        : undefined;
+    if (requiredCaps && requiredCaps.length > 0) {
+      candidates = candidates.filter((m) =>
+        requiredCaps.every((c) => m.capabilities?.[c] === true),
+      );
     }
     if (alias.filter.minContextWindow) {
       candidates = candidates.filter((m) => (m.contextWindow ?? 0) >= alias.filter.minContextWindow!);
@@ -732,6 +758,23 @@ export class ModelAliasRegistry {
           const aFree = a.pricing?.isFree ? 1 : 0;
           const bFree = b.pricing?.isFree ? 1 : 0;
           if (aFree !== bFree) return bFree - aFree; // free first
+          const aCost = (a.pricing?.inputPer1M ?? 0) + (a.pricing?.outputPer1M ?? 0);
+          const bCost = (b.pricing?.inputPer1M ?? 0) + (b.pricing?.outputPer1M ?? 0);
+          return aCost - bCost;
+        });
+      case 'cheapest_capable':
+        // WS3: same cost ordering as `cheapest`, but for aliases that already
+        // filtered by required capabilities via `capabilities`/`capability`.
+        // Free-first, then lowest combined per-1M cost. Explicitly treats
+        // UNKNOWN-priced models as more expensive than known-free so we never
+        // route to an unpriced model when a priced (or free) one qualifies.
+        return sorted.sort((a, b) => {
+          const aFree = a.pricing?.isFree || a.pricing?.freeTier === 'FREE' || a.id.endsWith('-free') ? 1 : 0;
+          const bFree = b.pricing?.isFree || b.pricing?.freeTier === 'FREE' || b.id.endsWith('-free') ? 1 : 0;
+          if (aFree !== bFree) return bFree - aFree; // free first
+          const aUnknown = a.pricing?.freeTier === 'UNKNOWN' || !a.pricing?.source || a.pricing.source === 'unknown' ? 1 : 0;
+          const bUnknown = b.pricing?.freeTier === 'UNKNOWN' || !b.pricing?.source || b.pricing.source === 'unknown' ? 1 : 0;
+          if (aUnknown !== bUnknown) return aUnknown - bUnknown; // known-priced before unknown
           const aCost = (a.pricing?.inputPer1M ?? 0) + (a.pricing?.outputPer1M ?? 0);
           const bCost = (b.pricing?.inputPer1M ?? 0) + (b.pricing?.outputPer1M ?? 0);
           return aCost - bCost;

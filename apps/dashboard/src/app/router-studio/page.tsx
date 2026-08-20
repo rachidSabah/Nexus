@@ -479,6 +479,7 @@ export default function RouterStudioPage() {
               className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 text-xs text-white focus:border-nexus-500 focus:outline-none"
             >
               <option value="cheapest" className="bg-slate-900 text-white">Cheapest (Free First)</option>
+              <option value="cheapest_capable" className="bg-slate-900 text-white">Cheapest Capable (multi-cap)</option>
               <option value="fastest" className="bg-slate-900 text-white">Fastest Response</option>
               <option value="highest_quality" className="bg-slate-900 text-white">Highest Quality</option>
               <option value="largest_context" className="bg-slate-900 text-white">Largest Context</option>
