@@ -95,7 +95,7 @@ export default function KeysPage() {
   const { data: metrics } = useSWR<{ keys: { total: number; active: number; cooldown: number; invalid: number; errorRate: number; rateLimitRate: number } }>('/api/v1/metrics', fetcher, { refreshInterval: 5000 });
 
   const [showAdd, setShowAdd] = useState(false);
-  const [newKey, setNewKey] = useState({ providerId: '', plaintext: '', label: '' });
+  const [newKey, setNewKey] = useState({ providerId: '', plaintext: '', label: '', baseUrl: '' });
   const [addMsg, setAddMsg] = useState<{ text: string; type: 'info' | 'error' | 'success' } | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const [testing, setTesting] = useState<string | null>(null);
@@ -152,12 +152,13 @@ export default function KeysPage() {
           providerId: newKey.providerId,
           plaintext: newKey.plaintext,
           label: newKey.label || undefined,
+          baseUrl: newKey.baseUrl?.trim() || undefined,
         }),
       });
       if (r.ok) {
         const body = await r.json();
         setAddMsg({ text: `Key ••••${body.lastFour} successfully registered under ${body.providerId}`, type: 'success' });
-        setNewKey({ providerId: '', plaintext: '', label: '' });
+        setNewKey({ providerId: '', plaintext: '', label: '', baseUrl: '' });
         setShowAdd(false);
         await refreshKeys();
       } else {
@@ -557,6 +558,17 @@ export default function KeysPage() {
                 value={newKey.plaintext}
                 onChange={(e) => setNewKey({ ...newKey, plaintext: e.target.value })}
                 placeholder="sk-..."
+                className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 text-sm text-white font-mono placeholder:text-white/20 focus:border-nexus-500 focus:outline-none focus:ring-1 focus:ring-nexus-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-white/70 mb-1">Base URL (Optional — for custom / non-preconfigured providers)</label>
+              <input
+                type="text"
+                value={newKey.baseUrl}
+                onChange={(e) => setNewKey({ ...newKey, baseUrl: e.target.value })}
+                placeholder="https://my-provider.example.com/v1"
                 className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 text-sm text-white font-mono placeholder:text-white/20 focus:border-nexus-500 focus:outline-none focus:ring-1 focus:ring-nexus-500"
               />
             </div>

@@ -515,6 +515,17 @@ export abstract class BaseIntegration implements IntegrationAdapter {
   }
 
   async start(ctx: IntegrationContext): Promise<IntegrationResult> {
+    // Persist the selected model + gateway binding into the agent's native
+    // config BEFORE launching. The dashboard's per-agent model picker sets
+    // `ctx.defaultModel`; if we only passed it to the launch env, agents
+    // that read their model from a config file (e.g. Qwen Code's
+    // `model.name` in settings.json) would ignore the selection and keep a
+    // stale value. Writing configFiles first makes the picker sticky.
+    try {
+      await this.writeConfigFiles(ctx);
+    } catch {
+      // Non-fatal: launch anyway with the env-provided model.
+    }
     let spec: LaunchSpec | null;
     try {
       spec = await this.getLaunchSpec(ctx);
@@ -535,6 +546,38 @@ export abstract class BaseIntegration implements IntegrationAdapter {
       ]);
     }
     return fail(`failed to start ${this.displayName}`, [`exit code ${state.exitCode ?? 'unknown'}`]);
+  }
+
+  /**
+   * Writes (merges) the adapter's `configFiles()` into the agent's native
+   * config location. Shared by `install` and `start` so a picked model and
+   * the gateway binding are always persisted, never just passed via env.
+   */
+  protected async writeConfigFiles(ctx: IntegrationContext): Promise<void> {
+    const files = this.configFiles(ctx);
+    for (const file of files) {
+      const fullPath = isAbsolute(file.path) ? file.path : join(home(ctx), file.path);
+      await mkdir(dirname(fullPath), { recursive: true });
+      const content = await file.content(ctx);
+      if (file.merge === 'json-merge' && existsSync(fullPath)) {
+        try {
+          const existing = JSON.parse(await readFile(fullPath, 'utf8')) as Record<string, unknown>;
+          const incoming = JSON.parse(content) as Record<string, unknown>;
+          const merged: Record<string, unknown> = { ...existing };
+          for (const [k, v] of Object.entries(incoming)) {
+            if (v === undefined || v === null) delete merged[k];
+            else if (k === 'env' && typeof v === 'object' && v !== null && typeof existing.env === 'object' && existing.env !== null) {
+              merged.env = { ...(existing.env as Record<string, unknown>), ...(v as Record<string, unknown>) };
+            } else merged[k] = v;
+          }
+          await writeFile(fullPath, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+          continue;
+        } catch {
+          // fall through to plain write
+        }
+      }
+      await writeFile(fullPath, content, 'utf8');
+    }
   }
 
   async stop(_ctx: IntegrationContext): Promise<IntegrationResult> {

@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 
 import './globals.css';
 import { ConsoleCleanup } from '@/components/ConsoleCleanup';
@@ -10,8 +10,11 @@ export const metadata: Metadata = {
   title: 'Agent Nexus Gateway',
   description: 'The most advanced local AI Gateway',
   manifest: '/manifest.webmanifest',
-  themeColor: '#7c3aed',
   appleWebApp: { capable: true, statusBarStyle: 'black-translucent', title: 'Nexus' },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#7c3aed',
 };
 
 export default function RootLayout({

@@ -13,6 +13,38 @@ import { ProviderResponseError, type ProviderAdapter } from '@anx/core';
 
 import { parseSseStream } from '../shared/http.js';
 
+/** Strip JSON Schema fields that Gemini rejects ($schema, additionalProperties, stale required entries, ...). */
+function sanitizeSchemaForGemini(schema: unknown): unknown {
+  if (!schema || typeof schema !== 'object') return schema;
+  const s = schema as Record<string, unknown>;
+  const allowed = new Set([
+    'type', 'properties', 'required', 'items', 'description', 'enum',
+    'minimum', 'maximum', 'minLength', 'maxLength', 'pattern',
+    'minItems', 'maxItems', 'default', 'title', 'examples', 'const',
+    'oneOf', 'anyOf', 'allOf', 'not', 'nullable',
+  ]);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(s)) {
+    if (!allowed.has(k)) continue;
+    if (k === 'properties' && v && typeof v === 'object') {
+      out[k] = sanitizeSchemaForGemini(v);
+    } else if (k === 'items' && v && typeof v === 'object') {
+      out[k] = sanitizeSchemaForGemini(v);
+    } else if ((k === 'oneOf' || k === 'anyOf' || k === 'allOf') && Array.isArray(v)) {
+      out[k] = v.map(sanitizeSchemaForGemini);
+    } else {
+      out[k] = v;
+    }
+  }
+  // Gemini validates that every entry in `required` has a matching `properties` key.
+  const properties = out['properties'] as Record<string, unknown> | undefined;
+  const required = out['required'] as string[] | undefined;
+  if (required && properties) {
+    out['required'] = required.filter((name) => Object.prototype.hasOwnProperty.call(properties, name));
+  }
+  return out;
+}
+
 /**
  * Google Gemini adapter — uses the official Generative Language API.
  *
@@ -217,20 +249,20 @@ export class GoogleAdapter implements ProviderAdapter {
     if (Object.keys(generationConfig).length > 0) body['generationConfig'] = generationConfig;
 
     // Tools: translate OpenAI tool definitions to Gemini's functionDeclarations.
-    if (req.tools && req.tools.length > 0) {
-      const functionDeclarations: unknown[] = [];
-      for (const t of req.tools as Array<{ function?: { name: string; description?: string; parameters?: unknown } }>) {
-        if (!t.function) continue;
-        functionDeclarations.push({
-          name: t.function.name,
-          description: t.function.description,
-          parameters: t.function.parameters,
-        });
-      }
-      if (functionDeclarations.length > 0) {
-        body['tools'] = [{ functionDeclarations }];
-      }
-    }
+        if (req.tools && req.tools.length > 0) {
+          const functionDeclarations: unknown[] = [];
+          for (const t of req.tools as Array<{ function?: { name: string; description?: string; parameters?: unknown } }>) {
+            if (!t.function) continue;
+            functionDeclarations.push({
+              name: t.function.name,
+              description: t.function.description,
+              parameters: sanitizeSchemaForGemini(t.function.parameters),
+            });
+          }
+          if (functionDeclarations.length > 0) {
+            body['tools'] = [{ functionDeclarations }];
+          }
+        }
 
     // Tool choice: 'auto' | 'none' | { type: 'function', function: { name } }
     if (req.toolChoice !== undefined) {

@@ -588,6 +588,40 @@ export class ModelAliasRegistry {
         },
       };
     }
+    // Explicit provider-qualified virtual id: nexus/<provider>/<nativeModel>.
+    // This is the canonical model URI the dashboard emits (e.g.
+    // `nexus/opencode-go/qwen3.7-plus`) and the exact string coding agents
+    // are instructed to call. It MUST resolve to that model on that provider
+    // and NEVER fall through to family/default routing — otherwise the `.`
+    // in a native id (sanitized to `-` in the hashed virtual form) or a
+    // family keyword (e.g. `qwen3`) silently rewrites it to a free default
+    // like `thinkingmachines/inkling` on the WRONG provider, producing
+    // "Model not supported" 401s and the coding-agent interruption class.
+    if (model.startsWith('nexus/')) {
+      const parts = model.slice(6).split('/');
+      const providerId = parts[0];
+      const nativeModelId = parts.slice(1).join('/');
+      if (providerId && nativeModelId) {
+        const hit = this.modelRegistry.list().find(
+          (m) =>
+            !m.stale &&
+            m.providerId === providerId &&
+            (m.id === nativeModelId || m.id.toLowerCase() === nativeModelId.toLowerCase()),
+        );
+        if (hit) {
+          return {
+            model: hit.id,
+            resolution: {
+              modelId: hit.id,
+              providerId: hit.providerId,
+              reason: `Explicit nexus virtual id '${model}' -> '${hit.id}' on provider '${hit.providerId}'`,
+              candidateCount: 1,
+            },
+          };
+        }
+      }
+    }
+
     // Exact (custom-registered) aliases always win — a user can pin an
     // exact override for e.g. `claude-sonnet-4-5` via POST /v1/aliases.
     const registered = this.aliases.get(model);

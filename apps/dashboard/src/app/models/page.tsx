@@ -57,9 +57,13 @@ function PerModelProbe({ model }: { model: DiscoveredModel }) {
           tests: ['chat', 'streaming'],
         }),
       });
-      const body = (await r.json()) as Record<string, { ok?: boolean; latencyMs?: number; error?: string }>;
-      const chat = body['chat'];
-      const streaming = body['streaming'];
+      const raw = (await r.json()) as Record<string, unknown>;
+      // The gateway returns per-test results nested under `tests`
+      // ({ tests: { chat: {...}, streaming: {...} } }). Read from there,
+      // but fall back to a flat shape so we don't break either contract.
+      const results = (raw['tests'] ?? raw) as Record<string, { ok?: boolean; latencyMs?: number; error?: string }>;
+      const chat = results['chat'];
+      const streaming = results['streaming'];
       const ok = chat?.ok === true || streaming?.ok === true;
       setStatus(ok ? 'ok' : 'fail');
       const latencyMs = chat?.latencyMs ?? streaming?.latencyMs ?? Date.now() - start;

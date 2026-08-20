@@ -61,6 +61,10 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
       // Exclude Nexus routing aliases — agents (e.g. Claude Code) reject
       // nexus/* / local/* / claude-gw-* as a persisted model value.
       if (id.startsWith('nexus/') || id.startsWith('local/') || id.startsWith('claude-gw-')) continue;
+      // Explicitly exclude the retired/deprecated OpenCode Zen free model
+      // `deepseek-v4-flash-free` from the picker (it triggers the opencode-zen
+      // circuit/billing failure and must not be offered or auto-selected).
+      if (id === 'deepseek-v4-flash-free') continue;
       if (m.stale) continue;
       const isFree = m.pricing?.isFree === true;
       const provider = m.providerId;

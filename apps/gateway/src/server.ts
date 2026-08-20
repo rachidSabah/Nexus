@@ -1147,11 +1147,16 @@ export class HttpServer {
       }
       for (const m of discovered) {
         if (m.stale) continue;
-        // Routability gate: never advertise a model whose provider currently
-        // has no selectable (registered, healthy, non-cooldown) endpoint. A
-        // model with zero eligible providers is reported separately via
-        // /v1/models/stats as `unavailable`, never as `available`.
-        if (!selectableProviders.has(m.providerId)) continue;
+        // Routability gate: a model whose provider currently has no
+        // selectable endpoint is NOT hidden — it stays in the list so agents
+        // (Claude Code, dsh, the dashboard picker, …) can still offer it,
+        // but its `health` field truthfully reflects the provider state
+        // (e.g. `circuit_open`/`degraded`). Hiding valid models on a
+        // transient circuit-open/cooldown made them vanish from every
+        // picker (e.g. `hy3-free` disappearing whenever opencode-zen hit a
+        // rate-limit) which is worse than showing them as degraded. Stale
+        // (retired) models are still excluded above.
+        const providerHealth = healthFor(m.providerId);
         models.set(m.id, {
           id: m.id,
           object: 'model',
@@ -1159,13 +1164,14 @@ export class HttpServer {
           pricing: m.pricing,
           capabilities: m.capabilities,
           context_window: m.contextWindow,
-          ...(healthFor(m.providerId)
+          ...(providerHealth
             ? {
-                health: healthFor(m.providerId)!.health,
-                health_reason: healthFor(m.providerId)!.reason,
-                last_error: healthFor(m.providerId)!.lastError,
+                health: providerHealth.health,
+                health_reason: providerHealth.reason,
+                last_error: providerHealth.lastError,
+                routable: selectableProviders.has(m.providerId),
               }
-            : {}),
+            : { routable: selectableProviders.has(m.providerId) }),
           agentSnippets: {
             claudeCode: `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"\nexport ANTHROPIC_AUTH_TOKEN="nexus"\nclaude --model ${m.id}`,
             codexCli: `codex --model ${m.id}`,
@@ -3867,10 +3873,17 @@ export class HttpServer {
       const routingExtra: Record<string, unknown> = { ...bodyRouting };
       if (pinnedProvider) {
         routingExtra.preferredProviders = [pinnedProvider];
-      } else if (providerHint && !preferFree) {
+      } else if (providerHint) {
+        // A provider hint derived from an explicit nexus/<provider>/<model>
+        // URI (what the model picker and all coding agents emit) MUST always
+        // win — even when NEXUS_PREFER_FREE is on. Otherwise the request is
+        // pulled into the free_only strategy and rerouted to a free default
+        // model on the WRONG provider, producing "Model not supported" 401s
+        // and the coding-agent interruption class. Free-preference is only
+        // meant for requests that named NO provider at all.
         routingExtra.preferredProviders = [providerHint];
       }
-      if (preferFree) {
+      if (preferFree && !pinnedProvider && !providerHint) {
         const freeProviders = Array.from(
           new Set(this.deps.modelRegistry.listFree().map((m) => m.providerId)),
         );
@@ -5022,8 +5035,23 @@ export class HttpServer {
           return reply.code(404).send({ error: { message: `Key '${body.keyId}' not found in vault` } });
         }
       } else {
-        // Try env-var fallback (adapter's getApiKey will handle this).
-        apiKey = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+        // No explicit key requested — pick the best registered key for this
+        // provider from the vault instead of the masked endpoint placeholder
+        // (`***`). The endpoint's stored apiKey is only a display mask once a
+        // key has been onboarded, so using it would send a fake key upstream
+        // and make every probe report "Unreachable" (a 401). Fall back to the
+        // endpoint apiKey only if no managed key exists (e.g. env-var setups).
+        const registry = this.deps.keyRegistry;
+        if (registry) {
+          const candidate = registry.select(body.providerId, { skipCooldown: true });
+          if (candidate) {
+            apiKey = await registry.getPlaintext(candidate);
+            registry.release(candidate);
+          }
+        }
+        if (!apiKey) {
+          apiKey = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+        }
       }
 
       const testEndpoint = { ...endpoint, apiKey: apiKey ?? '' } as never;
@@ -5046,7 +5074,7 @@ export class HttpServer {
             const r = await adapter.chatCompletion(testEndpoint, {
               model: body.model,
               messages: [{ role: 'user', content: 'Say "ok" and nothing else.' }],
-              maxTokens: 5,
+              maxTokens: 32,
             } as never, AbortSignal.timeout(15_000) as never);
             results['chat'] = {
               ok: true,
@@ -5055,6 +5083,10 @@ export class HttpServer {
             };
           } catch (err) {
             results['chat'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
+            // Reuse the proven routing-error path so a definitively-gone model
+            // (404/410 or 400 invalid_model) is dynamically amended OUT of the
+            // catalog — same behavior as a real chat request.
+            this.reportUpstreamModelError(body.model, err as Error);
           }
         } else if (test === 'streaming') {
           const start = Date.now();
@@ -5064,7 +5096,7 @@ export class HttpServer {
             for await (const _chunk of adapter.streamChatCompletion(testEndpoint, {
               model: body.model,
               messages: [{ role: 'user', content: 'Say "ok"' }],
-              maxTokens: 5,
+              maxTokens: 32,
               stream: true,
             } as never, AbortSignal.timeout(15_000) as never)) {
               if (chunkCount === 0) firstChunkMs = Date.now() - start;
@@ -5078,6 +5110,7 @@ export class HttpServer {
             };
           } catch (err) {
             results['streaming'] = { ok: false, latencyMs: Date.now() - start, error: (err as Error).message };
+            this.reportUpstreamModelError(body.model, err as Error);
           }
         } else if (test === 'tools') {
           const start = Date.now();
@@ -5171,11 +5204,27 @@ export class HttpServer {
 
     // Register a new API key for a provider.
     this.fastify.post('/v1/keys', async (request, reply) => {
-      const body = request.body as { id?: string; providerId: string; plaintext: string; label?: string };
+      const body = request.body as {
+        id?: string;
+        providerId: string;
+        plaintext: string;
+        label?: string;
+        /** Optional base URL for custom / non-preconfigured providers.
+         *  Without it, discovery cannot fetch the provider's model catalog,
+         *  so free/paid/stale models would never appear. Falls back to the
+         *  built-in default table for known providers. */
+        baseUrl?: string;
+        displayName?: string;
+        capabilities?: Record<string, unknown>;
+      };
       if (!body?.providerId || !body?.plaintext) {
         return reply.code(400).send({ error: { message: 'providerId and plaintext are required' } });
       }
       const id = body.id ?? `${body.providerId}-key-${Date.now().toString(36)}`;
+      // Resolve the endpoint base URL: explicit request value wins, then the
+      // built-in known-provider table, then empty (discovery will simply have
+      // nothing to fetch until a baseUrl is supplied).
+      const resolvedBaseUrl = body.baseUrl?.trim() || defaultBaseUrlFor(body.providerId) || '';
       try {
         // Unregister first if replacing key with same ID to avoid conflict error
         if (this.deps.keyRegistry.get(id)) {
@@ -5198,9 +5247,9 @@ export class HttpServer {
           this.deps.routing.registerEndpoint({
             id: `auto-${providerId}`,
             providerId,
-            displayName: providerId,
-            baseUrl: defaultBaseUrlFor(providerId),
-            capabilities: defaultCapabilitiesFor(providerId),
+            displayName: body.displayName?.trim() || providerId,
+            baseUrl: resolvedBaseUrl,
+            capabilities: (body.capabilities as never) ?? defaultCapabilitiesFor(providerId),
             pricing: defaultPricingFor(providerId),
             priority: 1,
             weight: 1,
@@ -6240,10 +6289,17 @@ export class HttpServer {
 
     const integrationCtx = (request: any): IntegrationContext => {
       const q = request.query ?? {};
+      const b = request.body ?? {};
+      // The dashboard agent page sends `defaultModel` in the request BODY
+      // (e.g. POST /v1/integrations/:id/start with { defaultModel }). The
+      // model picker's selection must reach the adapter's configFiles so it
+      // is persisted as the agent's concrete model — otherwise every agent
+      // launches with the stale hardcode fallback and the picker is a no-op.
+      const defaultModel = q.defaultModel ?? b.defaultModel ?? 'gpt-4';
       return {
         gatewayUrl: q.gatewayUrl ?? `http://${request.headers['host'] ?? 'localhost:8787'}`,
-        apiKey: q.apiKey ?? process.env.NEXUS_API_KEY ?? 'nexus',
-        defaultModel: q.defaultModel ?? 'gpt-4',
+        apiKey: process.env.NEXUS_API_KEY ?? 'nexus',
+        defaultModel,
       };
     };
 
@@ -7159,9 +7215,11 @@ export class HttpServer {
     // on every oversized conversation).
     this.learnContextWindowFromError(error, model);
     const { status } = this.httpErrorFor(error);
-    // 404/410 = model truly gone → exclude from catalog. Anything else
+    const msg = error.message ?? '';
+    const isInvalidModel = /invalid model|is not a valid model|not found|unknown model|unsupported model/i.test(msg);
+    // 404/410 or 400 invalid_model = model truly gone → exclude from catalog. Anything else
     // (401/403 auth+credits, 429, 5xx) keeps the model listed and visible.
-    if (status !== 404 && status !== 410) return;
+    if (status !== 404 && status !== 410 && !(status === 400 && isInvalidModel)) return;
     const reason = `Upstream HTTP ${status}: ${(error.message ?? '').slice(0, 200)}`;
     // Resolve provider from the registry (claude-gw-* aliases reverse to native).
     const native = this.deps.modelRegistry;
