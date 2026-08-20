@@ -682,6 +682,22 @@ export class ChatCompletionUseCase {
         });
         if (!next) break;
 
+        // ─── Error-class-aware backoff with jitter (WS2 stability) ─────────
+        // Retryable failures (429/5xx/network) would otherwise fail over
+        // instantly, letting a burst of identical errors hammer the upstream
+        // and deepen a rate-limit / overload condition. We pause before the
+        // next attempt, honoring the provider's own Retry-After when present
+        // (master prompt #5) and otherwise applying a capped exponential
+        // backoff with FULL jitter to avoid thundering-herd on recovery.
+        // Non-retryable failures never reach here (we threw above), and a
+        // stream that already emitted bytes never retries (TEST 10 guard), so
+        // this delay only affects genuine in-flight failovers.
+        const base = classification.retryAfterMs && classification.retryAfterMs > 0
+          ? classification.retryAfterMs
+          : Math.min(2000, 250 * 2 ** Math.min(attempt, 4)); // 250ms…2s, capped
+        const jitter = Math.random() * base; // full jitter: 0..base
+        await new Promise((r) => setTimeout(r, Math.round(jitter)));
+
         await this.events.publish(
           buildEvent<FailoverTriggeredEvent>(
             'failover.triggered',
