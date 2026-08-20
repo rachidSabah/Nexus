@@ -98,3 +98,48 @@ describe('WS3 capability-aware cheapest-capable selector', () => {
     expect(res?.modelId).toBe('free.one'); // free beats paid beats unknown
   });
 });
+
+describe('WS5 routing strategies', () => {
+  function rankWith(strategy: string, models: ModelDescriptor[]) {
+    const registry = new ModelAliasRegistry(fakeRegistry(models));
+    registry.register({ alias: 'test/strat', description: 's', filter: {}, ranking: strategy as never, builtin: false });
+    return registry.resolve('test/strat')?.modelId;
+  }
+
+  it('balanced prefers a free model over an expensive paid one', () => {
+    const models = [
+      capModel('paid.big', { toolCalling: true, vision: true }, { isFree: false, freeTier: 'PAID', inputPer1M: 20, outputPer1M: 20 }),
+      capModel('free.small', { toolCalling: true }, { isFree: true, freeTier: 'FREE' }),
+    ];
+    expect(rankWith('balanced', models)).toBe('free.small');
+  });
+
+  it('most_reliable deprioritizes a stale model with a lastError', () => {
+    const healthy = capModel('healthy.m', { toolCalling: true }, { isFree: false, freeTier: 'PAID', inputPer1M: 1, outputPer1M: 1 });
+    const sick = { ...capModel('sick.m', { toolCalling: true }, { isFree: false, freeTier: 'PAID', inputPer1M: 1, outputPer1M: 1 }), stale: true, lastError: 'upstream 500' };
+    expect(rankWith('most_reliable', [healthy, sick])).toBe('healthy.m');
+  });
+
+  it('least_loaded spreads to the less-crowded provider', () => {
+    // Two providers: "crowded" has 2 candidates, "lonely" has 1. least_loaded
+    // should prefer the model from the provider with fewer candidates.
+    const crowdedA = capModel('crowded.a', { toolCalling: true }, { isFree: false, freeTier: 'PAID', inputPer1M: 1, outputPer1M: 1 });
+    crowdedA.providerId = 'crowded';
+    const crowdedB = capModel('crowded.b', { toolCalling: true }, { isFree: false, freeTier: 'PAID', inputPer1M: 1, outputPer1M: 1 });
+    crowdedB.providerId = 'crowded';
+    const lonely = capModel('lonely.a', { toolCalling: true }, { isFree: false, freeTier: 'PAID', inputPer1M: 1, outputPer1M: 1 });
+    lonely.providerId = 'lonely';
+    expect(rankWith('least_loaded', [crowdedA, crowdedB, lonely])).toBe('lonely.a');
+  });
+
+  it('registers the three new built-in aliases', () => {
+    const models = [
+      capModel('free.a', { toolCalling: true }, { isFree: true, freeTier: 'FREE' }),
+      capModel('paid.b', { toolCalling: true }, { isFree: false, freeTier: 'PAID', inputPer1M: 1, outputPer1M: 1 }),
+    ];
+    const registry = new ModelAliasRegistry(fakeRegistry(models));
+    expect(registry.resolve('nexus/balanced')?.modelId).toBeDefined();
+    expect(registry.resolve('nexus/least-loaded')?.modelId).toBeDefined();
+    expect(registry.resolve('nexus/reliable')?.modelId).toBeDefined();
+  });
+});

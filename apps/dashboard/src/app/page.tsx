@@ -1,17 +1,22 @@
 'use client';
 
-import { Activity, DollarSign, Zap, Clock, Cpu, Radio } from 'lucide-react';
+import { Activity, DollarSign, Zap, Clock, Cpu, Radio, Sparkles } from 'lucide-react';
+import useSWR from 'swr';
 
 import { EventFeed } from '@/components/EventFeed';
 import { LatencyChart } from '@/components/LatencyChart';
 import { ProviderTable } from '@/components/ProviderTable';
 import { TokenUsageChart } from '@/components/TokenUsageChart';
 import { useHealth, useProviders, useLiveEvents } from '@/hooks/api';
+import { etagFetcher } from '@/lib/etagFetcher';
+
+const fetcher = etagFetcher;
 
 export default function OverviewPage() {
   const { data: health } = useHealth();
   const { data: providers } = useProviders();
   const events = useLiveEvents();
+  const { data: modelStats } = useSWR<{ freeModels: number; freeProviders: number; totalModels: number }>('/api/v1/models/stats', fetcher, { refreshInterval: 15000 });
 
   const totalRequests = events.filter((e) => e.type === 'request.received').length;
   const successCount = events.filter((e) => e.type === 'provider.request.succeeded').length;
@@ -85,6 +90,18 @@ export default function OverviewPage() {
           <div className="mt-3 text-3xl font-black tracking-tight text-amber-300">${totalCost.toFixed(4)}</div>
           <div className="mt-1 text-[11px] text-amber-400/60">Aggregated real-time token tracking</div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-500" />
+        </div>
+
+        <div className="relative overflow-hidden rounded-2xl border border-emerald-400/20 bg-gradient-to-b from-emerald-950/20 to-white/[0.02] p-5 backdrop-blur-xl transition hover:border-emerald-400/40">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300/80">Free-Tier Coverage</span>
+            <div className="rounded-lg bg-emerald-400/10 p-2 text-emerald-300 border border-emerald-400/20">
+              <Sparkles className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="mt-3 text-3xl font-black tracking-tight text-emerald-300">{modelStats?.freeModels ?? 0}</div>
+          <div className="mt-1 text-[11px] text-emerald-400/60">free models across {modelStats?.freeProviders ?? 0} providers · {modelStats?.totalModels ?? 0} total discovered</div>
+          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-400" />
         </div>
 
         <div className="relative overflow-hidden rounded-2xl border border-fuchsia-500/20 bg-gradient-to-b from-fuchsia-950/20 to-white/[0.02] p-5 backdrop-blur-xl transition hover:border-fuchsia-500/40">

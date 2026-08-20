@@ -693,6 +693,7 @@ export class ModelRegistry {
     freeModels: number;
     staleModels: number;
     byProvider: Record<string, number>;
+    freeProviders: number;
     lastRefreshAt: number;
     refreshing: boolean;
     errors: Record<string, string>;
@@ -711,12 +712,14 @@ export class ModelRegistry {
       const tier = m.pricing?.freeTier ?? 'UNKNOWN';
       freeTiers[tier] = (freeTiers[tier] ?? 0) + 1;
     }
+    const freeModelProviders = new Set(all.filter((m) => m.pricing?.isFree && !m.stale).map((m) => m.providerId));
     return {
       catalogVersion: this.catalogVersion,
       totalModels: all.length,
       freeModels: all.filter((m) => m.pricing?.isFree && !m.stale).length,
       staleModels: all.filter((m) => m.stale).length,
       byProvider,
+      freeProviders: freeModelProviders.size,
       lastRefreshAt: this.lastRefreshAt,
       refreshing: this.refreshing,
       errors: Object.fromEntries(this.lastErrors),

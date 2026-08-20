@@ -50,7 +50,10 @@ export type AliasRankingStrategy =
   | 'fastest'      // lowest latency (requires KeyRegistry stats — falls back to cheapest)
   | 'highest_quality' // most capabilities + largest context window
   | 'largest_context' // biggest contextWindow
-  | 'most_capabilities'; // highest count of true capability flags
+  | 'most_capabilities' // highest count of true capability flags
+  | 'balanced'     // WS5: quality + cost blend — smart default (like OmniRoute "auto")
+  | 'least_loaded' // WS5: spread across providers to avoid piling on one (real load-spreading proxy)
+  | 'most_reliable'; // WS5: prefer non-stale, error-free, healthy models
 
 export interface AliasFilter {
   /** Only include models with this capability set to true. */
@@ -359,6 +362,27 @@ export class ModelAliasRegistry {
         description: 'WS3: cheapest model (free-first) that satisfies ALL required capabilities (toolCalling + vision + jsonMode)',
         filter: { capabilities: ['toolCalling', 'vision', 'jsonMode'] },
         ranking: 'cheapest_capable',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/balanced',
+        description: 'WS5: quality + cost blend — smart default (free-first, then best capability-per-dollar)',
+        filter: {},
+        ranking: 'balanced',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/least-loaded',
+        description: 'WS5: spreads load across providers to avoid piling on one crowded endpoint',
+        filter: {},
+        ranking: 'least_loaded',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/reliable',
+        description: 'WS5: prefers non-stale, error-free, healthy models',
+        filter: {},
+        ranking: 'most_reliable',
         builtin: true,
       },
     ];
@@ -798,6 +822,57 @@ export class ModelAliasRegistry {
         return sorted.sort((a, b) => (b.contextWindow ?? 0) - (a.contextWindow ?? 0));
       case 'most_capabilities':
         return sorted.sort((a, b) => this.capabilityCount(b) - this.capabilityCount(a));
+      case 'balanced': {
+        // WS5: quality + cost blend — a smart default (like OmniRoute "auto").
+        // Free first; then score = quality (capabilities + context) minus
+        // normalized cost. Higher is better.
+        const costOf = (m: ModelDescriptor) => (m.pricing?.inputPer1M ?? 0) + (m.pricing?.outputPer1M ?? 0);
+        const maxCost = Math.max(1, ...sorted.map(costOf));
+        const quality = (m: ModelDescriptor) =>
+          this.capabilityCount(m) + Math.log10((m.contextWindow ?? 1000) / 1000);
+        const maxQuality = Math.max(1, ...sorted.map(quality));
+        const freeBoost = (m: ModelDescriptor) =>
+          m.pricing?.isFree || m.pricing?.freeTier === 'FREE' || m.id.endsWith('-free') ? 1000 : 0;
+        return sorted.sort((a, b) => {
+          const sa = freeBoost(a) + 2 * quality(a) / maxQuality - costOf(a) / maxCost;
+          const sb = freeBoost(b) + 2 * quality(b) / maxQuality - costOf(b) / maxCost;
+          return sb - sa;
+        });
+      }
+      case 'least_loaded': {
+        // WS5: spread load across providers so we don't pile every request on
+        // one crowded provider. Real proxy for "least loaded": prefer models
+        // from providers that appear LESS often in the candidate set.
+        const providerCount = new Map<string, number>();
+        for (const m of sorted) providerCount.set(m.providerId, (providerCount.get(m.providerId) ?? 0) + 1);
+        const providerLoad = (m: ModelDescriptor) => providerCount.get(m.providerId) ?? 0;
+        return sorted.sort((a, b) => {
+          // fewer candidates for the provider == less contended == preferred
+          if (providerLoad(a) !== providerLoad(b)) return providerLoad(a) - providerLoad(b);
+          // tie-break: free-first, then most capable
+          const fa = a.pricing?.isFree ? 1 : 0;
+          const fb = b.pricing?.isFree ? 1 : 0;
+          if (fa !== fb) return fb - fa;
+          return this.capabilityCount(b) - this.capabilityCount(a);
+        });
+      }
+      case 'most_reliable': {
+        // WS5: prefer models that are not stale and have no recent error,
+        // then by capability count. Uses real discovery health signals.
+        const healthScore = (m: ModelDescriptor) => {
+          let s = 0;
+          if (!m.stale) s += 2;
+          if (!m.lastError) s += 1;
+          return s;
+        };
+        return sorted.sort((a, b) => {
+          const ha = healthScore(a);
+          const hb = healthScore(b);
+          if (ha !== hb) return hb - ha; // healthier first
+          if (a.stale !== b.stale) return a.stale ? 1 : -1;
+          return this.capabilityCount(b) - this.capabilityCount(a);
+        });
+      }
       default:
         return sorted;
     }

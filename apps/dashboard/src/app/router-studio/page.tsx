@@ -480,6 +480,9 @@ export default function RouterStudioPage() {
             >
               <option value="cheapest" className="bg-slate-900 text-white">Cheapest (Free First)</option>
               <option value="cheapest_capable" className="bg-slate-900 text-white">Cheapest Capable (multi-cap)</option>
+              <option value="balanced" className="bg-slate-900 text-white">Balanced (quality+cost)</option>
+              <option value="least_loaded" className="bg-slate-900 text-white">Least Loaded (spread)</option>
+              <option value="most_reliable" className="bg-slate-900 text-white">Most Reliable (healthy)</option>
               <option value="fastest" className="bg-slate-900 text-white">Fastest Response</option>
               <option value="highest_quality" className="bg-slate-900 text-white">Highest Quality</option>
               <option value="largest_context" className="bg-slate-900 text-white">Largest Context</option>
