@@ -222,10 +222,15 @@ export class RoutingEngine implements RoutingEnginePort {
       const cooldownUntil = this.cooldowns.get(e.id);
       if (cooldownUntil && now < cooldownUntil) return false;
       if (cooldownUntil && now >= cooldownUntil && e.health === 'circuit_open') {
-        // A billing/quota-closed endpoint stays down until a real success
-        // proves the upstream recovered — never half-open re-admit it.
-        if (this.billingBlocked.has(e.id)) return false;
-        // Half-open: allow it back into the pool.
+        // Half-open: allow it back into the pool for a probe attempt. A
+        // billing/quota-closed endpoint is NOT permanently blacklisted — once
+        // its cooldown expires it gets one real request to prove the upstream
+        // recovered. If that succeeds, recordSuccess clears billingBlocked and
+        // restores health (routing-engine recordSuccess). If it fails again, it
+        // trips back into circuit_open + billingBlocked. This prevents a single
+        // transient failure (e.g. a 401 from a bad key during a restart) from
+        // permanently disabling the provider.
+        this.billingBlocked.delete(e.id);
         this.setHealth(e, 'degraded', 'circuit half-open probe');
         this.cooldowns.delete(e.id);
       }

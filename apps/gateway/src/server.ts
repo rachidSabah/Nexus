@@ -3369,7 +3369,14 @@ export class HttpServer {
       return endpoints.map((e) => {
         const providerModels = allModels.filter((m) => m.providerId === e.providerId);
         const providerKeys = allKeys.filter((k) => k.providerId === e.providerId);
-        const activeKeys = providerKeys.filter((k) => k.status === 'active');
+        // A cooldown key is still a usable credential — it merely hit a
+        // transient rate-limit (e.g. a single 429) and is briefly backed off.
+        // Counting it as "active" here keeps the provider in the free_only /
+        // selectable pool so a single transient rate-limit does NOT disable the
+        // whole provider (the death-spiral where cooldown -> activeKeys=0 ->
+        // free_only excludes provider -> "All providers exhausted"). Only
+        // truly invalid/revoked keys are unusable.
+        const activeKeys = providerKeys.filter((k) => k.status === 'active' || k.status === 'cooldown');
         const diag = providerDiags ? providerDiags[e.providerId] : undefined;
 
         return {
@@ -7098,7 +7105,17 @@ export class HttpServer {
    * 503 NO_ELIGIBLE_PROVIDER instead of cross-provider routing.
    */
   private preferredProviderFor(model: string, resolved: { providerId?: string } | undefined): string | undefined {
+    // An EXPLICIT provider prefix in the model name (e.g. `google/...`,
+    // `opencode-zen/...`, `nvidia-nim/...`) is the caller's explicit intent and
+    // MUST win over any alias-derived providerId. A request naming
+    // `BetaCorp/gemini-2.5-flash` must route to BetaCorp, never be pulled onto a
+    // different provider that also happens to serve a same-named model
+    // (which produced "All providers exhausted" / wrong-provider 404s).
+    const prefixMatch = model.match(/^([a-z0-9][a-z0-9-]*)\//i);
+    const prefixProvider = prefixMatch ? prefixMatch[1]! : undefined;
+
     const candidates = new Set<string>();
+    if (prefixProvider) candidates.add(prefixProvider);
     if (resolved?.providerId) candidates.add(resolved.providerId);
     const stripped = model.replace(/^anthropic\//, '').replace(/^opencode(?:-zen|-go)?\//, '');
     for (const m of this.deps.modelRegistry.list()) {
@@ -7109,11 +7126,14 @@ export class HttpServer {
     const selectableProviders = new Set(this.deps.routing.getSelectableProviders());
     const activeProviders = new Set(endpoints.map((e) => e.providerId));
 
-    // Prefer a selectable/healthy candidate provider
+    // Prefer the explicit prefix provider first (caller intent).
+    if (prefixProvider && (selectableProviders.has(prefixProvider) || activeProviders.has(prefixProvider))) {
+      return prefixProvider;
+    }
+    // Then any other selectable/healthy candidate provider.
     for (const p of candidates) {
       if (selectableProviders.has(p)) return p;
     }
-    // If a candidate provider is registered (even if degraded), prefer it
     for (const p of candidates) {
       if (activeProviders.has(p)) return p;
     }

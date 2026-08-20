@@ -418,7 +418,15 @@ export class ChatCompletionUseCase {
           });
           if (selectedKeyId) {
             const plaintext = await this.keyRegistry.getPlaintext(selectedKeyId);
-            if (plaintext) {
+            // NEVER inject the gateway's OWN bearer token (`nexus` /
+            // NEXUS_API_KEY) as a provider API key — that would 401 upstream
+            // as "Incorrect API key provided: nexus" and poison the real key
+            // into `invalid`. If the only vaulted key for this provider is a
+            // placeholder, leave endpoint.apiKey untouched so the adapter
+            // surfaces an honest "no key configured" error instead of
+            // corrupting provider state.
+            const ownToken = process.env['NEXUS_API_KEY'] ?? 'nexus';
+            if (plaintext && plaintext !== ownToken) {
               endpointWithKey = { ...endpoint, apiKey: plaintext } as ProviderEndpoint & { apiKey: string };
             }
           }
@@ -1088,6 +1096,30 @@ export function classifyFailure(error: Error): FailureClassification {
   if (error instanceof ProviderResponseError) {
     const status = error.status;
     const retryAfterMs = parseRetryAfterMs(error);
+    // Rate-limit errors (HTTP 429, or an upstream "FreeUsageLimitError" /
+    // "Rate limit exceeded" body) are TRANSIENT — the provider is healthy, the
+    // account/key is merely throttled. These MUST NOT trip the permanent
+    // circuit breaker (mark_unavailable): doing so turns a brief throttle into
+    // a permanently dead provider ("All providers exhausted" for every model
+    // on it). They only cool down the key (record_failure) and fail over. This
+    // is checked BEFORE the billing/quota branch because some providers wrap a
+    // 429 rate-limit in a 402/401 body that would otherwise be misread as a
+    // billing death.
+    const msg = error.message ?? '';
+    const isRateLimit =
+      status === 429 ||
+      /free ?usage ?limit|rate[ -]?limit|too many requests|429/i.test(msg);
+    if (isRateLimit) {
+      return {
+        status: 429,
+        code: undefined,
+        retryable: true,
+        keyAction: 'cooldown',
+        endpointAction: 'record_failure',
+        retryAfterMs,
+        reason: `HTTP 429 / rate-limit: throttled — key on cooldown, failing over (provider stays healthy)${retryAfterMs ? ` — Retry-After ${Math.round(retryAfterMs / 1000)}s honored` : ''}`,
+      };
+    }
     // Billing / quota errors (402 Payment Required, or a 401 whose body
     // reports a billing problem such as "CreditsError" / "No payment method")
     // are NOT an auth failure — the key is valid, the account simply has no

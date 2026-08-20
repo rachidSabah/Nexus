@@ -449,6 +449,10 @@ export class KeyRegistry {
         const escalated = Math.min(cooldown * 2, 10 * 60_000);
         cooldown = Math.max(cooldown, escalated);
       }
+      // Hard safety cap: a cooldown must ALWAYS expire so a key can never be
+      // permanently disabled by an absurd/garbage retryAfter value. Clamp to
+      // the escalation ceiling regardless of what upstream reported.
+      cooldown = Math.min(cooldown, 10 * 60_000);
       k.status = 'cooldown';
       k.cooldownUntil = Date.now() + cooldown;
       return;

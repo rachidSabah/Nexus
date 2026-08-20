@@ -399,9 +399,26 @@ export class GatewayRuntime {
         // (respects rotation strategy, cooldown, adaptive scoring).
         const keyId = keyRegistry.select(providerId);
         if (keyId) return keyRegistry.getPlaintext(keyId);
-        // Fallback: direct vault lookup for providers registered via env var
-        // that bypassed the KeyRegistry (e.g. env-var bootstrap keys).
-        return vault.get(providerId);
+        // A cooldown key is still a VALID credential — it was merely
+        // rate-limited (e.g. a single 429), not invalidated. If the only key
+        // for this provider is cooling down, fall back to it anyway rather
+        // than giving up: otherwise a single transient rate-limit permanently
+        // disables the whole provider ("All providers exhausted") because the
+        // key can never get a success to clear its own cooldown. sendRequest
+        // already handles a real 401/403 by marking the key invalid.
+        const anyKey = keyRegistry.listByProvider(providerId)[0];
+        if (anyKey) return keyRegistry.getPlaintext(anyKey.id);
+        // Last resort: a directly-registered vault key that bypassed the
+        // KeyRegistry (e.g. env-var bootstrap). CRITICAL: never return the
+        // gateway's OWN bearer token (`nexus` / NEXUS_API_KEY) to an upstream
+        // provider — that would 401 as "Incorrect API key provided: nexus" and
+        // poison the real key into `invalid`. If no genuine provider key
+        // exists, return undefined so the request fails honestly with a
+        // "no key configured" error instead of corrupting provider state.
+        const fallback = await vault.get(providerId);
+        const ownToken = process.env['NEXUS_API_KEY'] ?? 'nexus';
+        if (fallback && fallback !== ownToken) return fallback;
+        return undefined;
       },
     });
 

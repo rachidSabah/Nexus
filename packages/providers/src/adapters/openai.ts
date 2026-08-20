@@ -312,7 +312,15 @@ export class OpenAIAdapter implements ProviderAdapter {
       // Strip gateway routing prefixes (e.g. `anthropic/opencode/deepseek-v4-flash-free`
       // -> `deepseek-v4-flash-free`) so adapters like NVIDIA NIM don't 404 on
       // prefixed ids. Idempotent when OpenAICompatibleAdapter pre-strips too.
-      model: req.model.replace(/^anthropic\//, '').replace(/^opencode(?:-zen|-go)?\//, ''),
+      // Also strip this adapter's OWN providerId prefix (e.g. `nvidia-nim/...`)
+      // so any OpenAI-compatible provider subclass routes correctly. The
+      // trailing slash is MANDATORY: model names legitimately start with the
+      // provider id (e.g. `mistral-large-latest`), and stripping `mistral`
+      // without the slash would corrupt them into `-large-latest`.
+      model: req.model
+        .replace(/^anthropic\//, '')
+        .replace(/^opencode(?:-zen|-go)?\//, '')
+        .replace(new RegExp('^' + this.providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/'), ''),
       // Map core camelCase / OpenAI snake_case messages to the OpenAI wire format.
       // Inbound messages may originate from Anthropic bridge (camelCase) or
       // directly from OpenAI clients like Hermes (snake_case). Handle both.

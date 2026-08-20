@@ -477,8 +477,22 @@ export class ModelAliasRegistry {
       const cooldownUntil = this.modelCooldowns.get(m.id);
       if (cooldownUntil && now < cooldownUntil) return false;
       const ep = registeredEndpoints.find((e: ProviderEndpoint) => e.providerId === m.providerId || e.id === `auto-${m.providerId}`);
-      if (ep && (ep.health === 'unhealthy' || ep.health === 'circuit_open')) return false;
-      if (this.keyRegistry && this.keyRegistry.listByProvider(m.providerId).length > 0 && !this.keyRegistry.select(m.providerId)) return false;
+      // Do NOT hide a model merely because its endpoint is in `circuit_open` —
+      // that state is recoverable (a real success re-admits it) and hiding the
+      // model would make the provider unusable for the whole circuit-open
+      // window. Only a permanently `unhealthy` endpoint (decommissioned) hides
+      // its models. A `circuit_open` model stays visible so the request can be
+      // attempted and either succeed or fail honestly, not vanish from the
+      // catalog as "All providers exhausted".
+      if (ep && ep.health === 'unhealthy') return false;
+      // Only exclude a model when the provider has NO registered keys at all.
+      // A transient key state (cooldown from a single 429, brief circuit) must
+      // NOT hide the model — otherwise a single rate-limit knocks every model
+      // from that provider out of the catalog ("All providers exhausted") until
+      // the key cools down. The request path still picks a live key at call
+      // time, so a cooling key merely means that one key is skipped, not that
+      // the whole provider is unreachable.
+      if (this.keyRegistry && this.keyRegistry.listByProvider(m.providerId).length === 0) return false;
       return true;
     });
 

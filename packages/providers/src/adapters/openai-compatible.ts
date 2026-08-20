@@ -203,7 +203,10 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
    * Strip routing prefixes like `anthropic/opencode/` or `opencode/`.
    */
   protected translateRequest(req: ChatCompletionRequest, streaming: boolean): Record<string, unknown> {
-    const model = req.model.replace(/^anthropic\//, '').replace(/^opencode(?:-zen|-go)?\//, '');
+    const model = req.model
+      .replace(/^anthropic\//, '')
+      .replace(/^opencode(?:-zen|-go)?\//, '')
+      .replace(new RegExp('^' + this.providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/'), '');
     return super.translateRequest({ ...req, model }, streaming);
   }
 }
