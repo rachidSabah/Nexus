@@ -467,6 +467,12 @@ export function newStreamState(model: string): {
   currentBlockType: 'text' | 'tool_use' | 'thinking' | null;
   currentBlockIndex: number;
   toolCallIds: Map<number, string>;
+  /** Bytes already written to the client SSE stream. Used by WS4-A mid-stream
+   * failover: if the upstream dies before ANY content reaches the client, we
+   * transparently fail over to the next endpoint on the same SSE response. */
+  committedBytes: number;
+  /** WS4-A: guards against re-execute loops on mid-stream failover. */
+  midStreamRetried: boolean;
 } {
   return {
     messageId: `msg_${randomUUID()}`,
@@ -475,5 +481,7 @@ export function newStreamState(model: string): {
     currentBlockType: null,
     currentBlockIndex: 0,
     toolCallIds: new Map(),
+    committedBytes: 0,
+    midStreamRetried: false,
   };
 }

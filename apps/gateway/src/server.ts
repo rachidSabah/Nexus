@@ -130,6 +130,7 @@ import { IntentDetector, ScoringEngine } from './scoring-engine.js';
 import { defaultBaseUrlFor, defaultCapabilitiesFor, defaultPricingFor } from './endpoints.js';
 import { GATEWAY_VERSION } from './version.js';
 import type { GatewayConfig } from './config.js';
+import { DetachedTaskStore } from './detached-task-store.js';
 
 /** Probes a base URL for reachability (server is up; any non-5xx counts as up). */
 async function probeUrl(baseUrl: string): Promise<boolean> {
@@ -270,6 +271,8 @@ export class HttpServer {
   readonly remediationEngine: RemediationEngine;
   readonly incidentManager: IncidentManager;
   readonly selfHealingOrchestrator: SelfHealingOrchestrator;
+  // WS4-C: detached background task store (survive agent disconnect on long runs)
+  readonly taskStore: DetachedTaskStore = new DetachedTaskStore();
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
@@ -1929,6 +1932,60 @@ export class HttpServer {
       } catch (err) {
         return reply.code(400).send({ error: { message: (err as Error).message } });
       }
+    });
+
+    // ── WS4-C: Detached background tasks (survive agent disconnect) ──────
+    // POST /v1/tasks — enqueue a non-streaming completion that runs to
+    // completion in the background. Returns a job id immediately; the caller
+    // polls GET /v1/tasks/:id. The gateway keeps working even if the caller's
+    // connection drops mid-task (à la Claude Code's /fork).
+    this.fastify.post('/v1/tasks', async (request, reply) => {
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const body = request.body as Partial<ChatCompletionRequest> & { model?: string };
+      const authz = this.requirePermission(principal, 'gateway:chat', body.model ?? 'tasks', reply);
+      if (authz === 'deny') return reply;
+      if (!body?.model || !Array.isArray(body.messages) || body.messages.length === 0) {
+        return reply.code(400).send({ error: { message: 'model and messages[] are required' } });
+      }
+      // Detached tasks are always non-streaming — the result is collected server-side.
+      const req: ChatCompletionRequest = { ...(body as ChatCompletionRequest), stream: false };
+
+      const job = this.taskStore.create(req.model);
+      this.taskStore.start(job.id);
+      // Fire-and-forget: run to completion in the background, never block the
+      // HTTP response. Errors are captured into the job, not thrown to caller.
+      void (async () => {
+        try {
+          const response = await this.deps.chatUseCase.execute(this.fitToContextWindow(req, req.model));
+          const content = response.choices?.[0]?.message?.content ?? '';
+          this.taskStore.complete(job.id, typeof content === 'string' ? content : JSON.stringify(content), response.usage);
+        } catch (err) {
+          this.taskStore.fail(job.id, (err as Error).message);
+        } finally {
+          this.taskStore.gc();
+        }
+      })();
+
+      return reply.code(202).send({ id: job.id, model: job.model, status: 'running', poll: `/v1/tasks/${job.id}` });
+    });
+
+    // GET /v1/tasks/:id — poll a detached task's status / result
+    this.fastify.get('/v1/tasks/:id', async (request, reply) => {
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', (request.params as { id: string }).id, reply);
+      if (authz === 'deny') return reply;
+      const { id } = request.params as { id: string };
+      const job = this.taskStore.get(id);
+      if (!job) return reply.code(404).send({ error: { message: `Task '${id}' not found` } });
+      return job;
+    });
+
+    // GET /v1/tasks — list detached tasks
+    this.fastify.get('/v1/tasks', async (request, reply) => {
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', 'tasks', reply);
+      if (authz === 'deny') return reply;
+      return { tasks: this.taskStore.list() };
     });
 
     // POST /v1/missions/:id/execute — Execute ready mission DAG
@@ -4012,10 +4069,33 @@ let optMessages: never[] | undefined;
         const sink = {
           write: async (chunk: ChatCompletionChunk) => {
             for (const evt of translateChunkToAnthropicEvents(chunk, state)) {
-              safeWrite(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+              const payload = `event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`;
+              safeWrite(payload);
+              state.committedBytes += payload.length;
             }
           },
           error: async (error: Error) => {
+            // WS4-A: mid-stream failover. If the upstream died BEFORE any
+            // content reached the client (committedBytes === 0), transparently
+            // re-execute on the next eligible endpoint — the failed one is now
+            // circuit-broken via recordFailure, so routing picks a healthy
+            // alternative. The client sees one seamless SSE stream; the agent
+            // never notices the upstream key died. Only attempted once to avoid
+            // loops. If content was already emitted (partial stream), we can't
+            // un-emit it, so we end with the error event (honest boundary).
+            if (state.committedBytes === 0 && !state.midStreamRetried) {
+              state.midStreamRetried = true;
+              try {
+                await this.deps.chatUseCase.execute(
+                  this.fitToContextWindow(effectiveReq, aliasResolution.model),
+                  sink,
+                  new AbortController().signal,
+                );
+                return;
+              } catch {
+                // fall through to the error-path below
+              }
+            }
             const errEvt = {
               type: 'error',
               error: { type: 'api_error', message: this.httpErrorFor(error).message },
