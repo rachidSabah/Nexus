@@ -49,6 +49,8 @@ export default function RouterStudioPage() {
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [resolvedAliasName, setResolvedAliasName] = useState<string | null>(null);
   const [resolvingAlias, setResolvingAlias] = useState<string | null>(null);
+  const [explain, setExplain] = useState<Record<string, unknown> | null>(null);
+  const [explaining, setExplaining] = useState(false);
   const [newAlias, setNewAlias] = useState({
     alias: '',
     description: '',
@@ -74,6 +76,7 @@ export default function RouterStudioPage() {
     setResolvedAliasName(alias);
     setResolveResult(null);
     setResolveError(null);
+    setExplain(null);
     try {
       const r = await fetch(`/api/v1/aliases/${encodeURIComponent(alias)}/resolve`);
       if (!r.ok) {
@@ -83,6 +86,20 @@ export default function RouterStudioPage() {
       }
       const body = (await r.json()) as AliasResolution;
       setResolveResult(body);
+      // Surface the routing decision explanation (Why panel) for the resolved model.
+      setExplaining(true);
+      try {
+        const e = await fetch('/api/v1/routing/explain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: body.modelId }),
+        });
+        if (e.ok) setExplain((await e.json()) as Record<string, unknown>);
+      } catch {
+        /* explanation is best-effort; never block the resolve result */
+      } finally {
+        setExplaining(false);
+      }
     } catch (err) {
       setResolveError(`Network error: ${(err as Error).message || 'Gateway unreachable'}`);
     } finally {
@@ -325,6 +342,83 @@ export default function RouterStudioPage() {
               <span className="text-white/80">{resolveResult.reason}</span>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Router Studio "Why" panel — explains the routing decision for the resolved model */}
+      {resolveResult && explaining && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 backdrop-blur-xl">
+          <div className="flex items-center gap-2 text-xs text-white/50">
+            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-transparent" />
+            Analyzing routing decision…
+          </div>
+        </div>
+      )}
+      {explain && (
+        <div className="rounded-2xl border border-cyan-500/30 bg-gradient-to-b from-cyan-950/20 to-black/70 p-5 backdrop-blur-2xl shadow-lg">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
+              <Brain className="h-4 w-4 text-cyan-400" /> Why This Route?
+            </h3>
+            <span className="font-mono text-[10px] text-white/40">
+              intent: {String((explain.intent as string) ?? 'n/a')} · conf:{' '}
+              {typeof explain.confidence === 'number' ? Math.round((explain.confidence as number) * 100) : 'n/a'}%
+            </span>
+          </div>
+          {explain.selectedCandidate ? (
+            <div className="mt-3 space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs font-mono">
+                {(() => {
+                  const c = explain.selectedCandidate as {
+                    finalScore: number;
+                    breakdown: Record<string, number>;
+                    explainability?: Record<string, string | undefined>;
+                  };
+                  const bd = c.breakdown ?? {};
+                  const rows: [string, number | undefined][] = [
+                    ['score', c.finalScore],
+                    ['health', bd.healthScore ?? bd.health],
+                    ['capability', bd.qualityScore ?? bd.capabilityMatch],
+                    ['cost', bd.costScore ?? bd.cost],
+                    ['latency', bd.latencyScore ?? bd.latency],
+                  ];
+                  return rows.map(([k, v]) => (
+                    <div key={k} className="rounded-lg bg-black/40 border border-cyan-500/15 p-2.5">
+                      <span className="text-white/40 block text-[10px] capitalize">{k}</span>
+                      <span className="text-cyan-300 font-bold">{typeof v === 'number' ? `${Math.round(v * 100)}%` : 'n/a'}</span>
+                    </div>
+                  ));
+                })()}
+              </div>
+              {(() => {
+                const sc = explain.selectedCandidate as { explainability?: Record<string, string | undefined> };
+                const why = sc.explainability?.whySelected ?? sc.explainability?.whyRecovered;
+                return why ? (
+                  <div className="text-xs text-white/80 bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-2.5">
+                    <span className="text-emerald-400 font-semibold">Selected because: </span>
+                    {why}
+                  </div>
+                ) : null;
+              })()}
+              {Array.isArray(explain.topCandidates) && (explain.topCandidates as unknown[]).length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">Top alternatives</div>
+                  <div className="space-y-1">
+                    {(explain.topCandidates as { modelId: string; providerId: string; finalScore: number }[])
+                      .slice(0, 4)
+                      .map((c) => (
+                        <div key={`${c.providerId}-${c.modelId}`} className="flex items-center justify-between text-xs font-mono bg-white/[0.02] border border-white/5 rounded px-2.5 py-1.5">
+                          <span className="text-white/70">{c.modelId} <span className="text-white/30">· {c.providerId}</span></span>
+                          <span className="text-cyan-300/80">{Math.round(c.finalScore * 100)}%</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mt-2 text-xs text-white/50">No candidate scored above threshold for this request context.</div>
+          )}
         </div>
       )}
       {resolveError && (

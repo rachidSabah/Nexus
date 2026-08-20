@@ -1,6 +1,6 @@
 'use client';
 
-import { Cpu, RefreshCw, Sparkles, Zap, CircleDollarSign, AlertTriangle, Search, Eye, Brain, Wrench, Copy, Check, Terminal, X, Layers } from 'lucide-react';
+import { Cpu, RefreshCw, Sparkles, Zap, CircleDollarSign, AlertTriangle, Search, Eye, Brain, Wrench, Copy, Check, Terminal, X, Layers, Activity } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 
@@ -37,6 +37,83 @@ interface StatsResponse {
   byProvider?: Record<string, number>;
   lastRefreshAt?: number;
   refreshing?: boolean;
+}
+
+function PerModelProbe({ model }: { model: DiscoveredModel }) {
+  const [status, setStatus] = useState<'idle' | 'probing' | 'ok' | 'fail'>('idle');
+  const [detail, setDetail] = useState<{ latencyMs?: number; error?: string; ok?: boolean } | null>(null);
+
+  async function runProbe() {
+    setStatus('probing');
+    setDetail(null);
+    const start = Date.now();
+    try {
+      const r = await fetch('/api/v1/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          providerId: model.providerId,
+          model: model.id,
+          tests: ['chat', 'streaming'],
+        }),
+      });
+      const body = (await r.json()) as Record<string, { ok?: boolean; latencyMs?: number; error?: string }>;
+      const chat = body['chat'];
+      const streaming = body['streaming'];
+      const ok = chat?.ok === true || streaming?.ok === true;
+      setStatus(ok ? 'ok' : 'fail');
+      const latencyMs = chat?.latencyMs ?? streaming?.latencyMs ?? Date.now() - start;
+      setDetail({
+        ok,
+        latencyMs,
+        error: chat?.error ?? streaming?.error,
+      });
+    } catch (err) {
+      setStatus('fail');
+      setDetail({ ok: false, error: (err as Error).message || 'Probe failed' });
+    }
+  }
+
+  const badge =
+    status === 'ok'
+      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+      : status === 'fail'
+        ? 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+        : 'border-white/10 bg-white/5 text-white/50';
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-nexus-400" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-white/70">Live Probe</span>
+        </div>
+        <button
+          onClick={runProbe}
+          disabled={status === 'probing'}
+          className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition ${
+            status === 'probing' ? 'bg-nexus-700 opacity-80 cursor-wait' : 'bg-nexus-600 hover:bg-nexus-500 active:scale-95'
+          }`}
+        >
+          {status === 'probing' ? 'Probing…' : 'Probe Model'}
+        </button>
+      </div>
+      {detail && (
+        <div className={`mt-3 rounded-lg border px-3 py-2 text-xs font-mono ${badge}`}>
+          {status === 'ok' ? (
+            <span>✓ Reachable — {detail.latencyMs ? `${detail.latencyMs}ms` : 'ok'}</span>
+          ) : (
+            <span>✗ {detail.error ?? 'Unreachable'}</span>
+          )}
+        </div>
+      )}
+      {status === 'idle' && (
+        <p className="mt-2 text-[11px] text-white/40">
+          Sends a 1-token request to the real upstream to confirm the model is live (200 / 401 / 402 / timeout).
+        </p>
+      )}
+    </div>
+  );
 }
 
 export default function ModelsPage() {
@@ -349,6 +426,9 @@ export default function ModelsPage() {
                 </div>
               );
             })()}
+
+            {/* Per-model live probe — verifies the model against the real upstream */}
+            <PerModelProbe model={selectedModel} />
 
             {/* Coding Agent Configs */}
             <div className="space-y-3 pt-2">
