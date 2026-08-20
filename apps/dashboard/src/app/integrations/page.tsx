@@ -21,7 +21,8 @@ import {
   Server,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
+import useSWR from 'swr';
 
 import {
   useIntegrationsList,
@@ -41,6 +42,53 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
+
+  // ── Per-agent model picker ───────────────────────────────────────────────
+  // Lets the operator choose the exact model the vibe-coding agent runs with
+  // (not a forced nexus/auto alias). Populated live from the gateway's
+  // discovered catalog (/v1/models/discover) — which auto-refreshes as
+  // providers add/remove free models — and grouped by provider. Free models
+  // get a " Free" display suffix (real id stays for routing).
+  const { data: catalog } = useSWR<{ models: Array<{ id: string; providerId: string; displayName?: string; pricing?: { isFree?: boolean }; stale?: boolean }> }>(
+    '/api/v1/models/discover',
+    (u) => fetch(u).then((r) => r.json()),
+    { refreshInterval: 15_000 },
+  );
+  const modelGroups = useMemo(() => {
+    const groups: Record<string, Array<{ id: string; label: string; isFree: boolean }>> = {};
+    for (const m of catalog?.models ?? []) {
+      const id = m.id;
+      // Exclude Nexus routing aliases — agents (e.g. Claude Code) reject
+      // nexus/* / local/* / claude-gw-* as a persisted model value.
+      if (id.startsWith('nexus/') || id.startsWith('local/') || id.startsWith('claude-gw-')) continue;
+      if (m.stale) continue;
+      const isFree = m.pricing?.isFree === true;
+      const provider = m.providerId;
+      (groups[provider] ??= []).push({
+        id,
+        label: `${m.displayName || id}${isFree ? ' Free' : ''}`,
+        isFree,
+      });
+    }
+    // Stable provider + model ordering; free first within a provider.
+    return Object.entries(groups)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([provider, models]) => ({
+        provider,
+        models: models.sort((x, y) => Number(y.isFree) - Number(x.isFree) || x.label.localeCompare(y.label)),
+      }));
+  }, [catalog]);
+
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  // Default to the first available free model once the catalog loads.
+  const effectiveModel = useMemo(() => {
+    if (selectedModel) return selectedModel;
+    for (const g of modelGroups) {
+      const free = g.models.find((m) => m.isFree);
+      if (free) return free.id;
+    }
+    return modelGroups[0]?.models[0]?.id ?? '';
+  }, [selectedModel, modelGroups]);
 
   const caps = runtime?.capabilities;
   const running = runtime?.running ?? false;
@@ -239,11 +287,38 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
             </button>
           )}
 
+          {/* Per-agent model picker: choose the exact model the agent runs with. */}
+          {canStart && (
+            <div className="mb-2">
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-white/40">
+                Model for {status.displayName}
+              </label>
+              <select
+                value={effectiveModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={busy !== null}
+                className="w-full rounded-lg border border-white/10 bg-black/60 px-2 py-1.5 text-[11px] text-white/80 outline-none transition hover:border-nexus-500/40 focus:border-nexus-500/60 disabled:opacity-40"
+                title="Concrete model the agent will use (free models marked Free). Updates live as providers add/remove models."
+              >
+                {modelGroups.length === 0 && <option value="">No models discovered yet…</option>}
+                {modelGroups.map((g) => (
+                  <optgroup key={g.provider} label={g.provider}>
+                    {g.models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          )}
+
           {canStart && (
             <button
               type="button"
-              disabled={busy !== null || running}
-              onClick={() => run('start', start)}
+              disabled={busy !== null || running || !effectiveModel}
+              onClick={() => run('start', (id: string) => start(id, effectiveModel))}
               className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play className="h-3.5 w-3.5" /> {busy === 'start' ? '…' : 'Start'}

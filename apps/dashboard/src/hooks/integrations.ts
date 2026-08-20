@@ -123,7 +123,11 @@ async function action(url: string, body?: unknown): Promise<void> {
 
 /** Generic, agent-agnostic lifecycle actions. id is the integration id. */
 export function useIntegrationActions() {
-  const start = useCallback((id: string) => action(`/api/v1/integrations/${id}/start`), []);
+  const start = useCallback(
+    (id: string, defaultModel?: string) =>
+      action(`/api/v1/integrations/${id}/start`, defaultModel ? { defaultModel } : undefined),
+    [],
+  );
   const stop = useCallback((id: string) => action(`/api/v1/integrations/${id}/stop`), []);
   const restart = useCallback((id: string) => action(`/api/v1/integrations/${id}/restart`), []);
   const rebind = useCallback(
