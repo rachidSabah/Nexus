@@ -44,6 +44,26 @@ import { isSelectable } from '@anx/core';
 import { resolveClaudeGwAlias } from './claude-catalog.js';
 import { resolveOpenAIModelId, isVirtualModelId } from './model-fabric.js';
 
+/**
+ * Models that a provider has REMOVED from its catalogue (retired / pulled).
+ * These still occasionally surface in stale discovery snapshots or cached
+ * `/models` responses, but requests to them fail (e.g. OpenCode Zen returns
+ * `FreeUsageLimitError` for `deepseek-v4-flash-free` after it was retired).
+ * Keeping them selectable wastes the first routing attempt and can trip the
+ * whole-provider circuit breaker, interrupting long-running coding agents.
+ *
+ * Source of truth: provider catalogue state, confirmed by the operator.
+ * Add a model id here ONLY when the upstream provider no longer serves it.
+ */
+export const RETIRED_MODELS: ReadonlySet<string> = new Set([
+  'deepseek-v4-flash-free', // retired from OpenCode Zen's catalogue
+]);
+
+/** True when a model id is a known-retired (no-longer-served) model. */
+function isRetired(modelId: string): boolean {
+  return RETIRED_MODELS.has(modelId) || RETIRED_MODELS.has(modelId.toLowerCase());
+}
+
 export type AliasRankingStrategy =
   | 'cheapest'     // lowest inputPer1M + outputPer1M (free first)
   | 'cheapest_capable' // WS3: free-first, then lowest combined cost (capability already filtered)
@@ -261,9 +281,9 @@ export class ModelAliasRegistry {
       // spec mandates. Resolved identically at request time.
       {
         alias: 'nexus/auto',
-        description: 'Alias for nexus/best (highest-quality model)',
-        filter: {},
-        ranking: 'most_capabilities',
+        description: 'Alias for the best AVAILABLE free model (prefers the opencode-zen free tier, e.g. hy3-free) so the vibe-coding agent runs free-by-default',
+        filter: { freeOnly: true },
+        ranking: 'highest_quality',
         builtin: true,
       },
       {
@@ -592,6 +612,30 @@ export class ModelAliasRegistry {
       };
     }
 
+    // Provider-prefixed form fallback (e.g. `opencode-zen/hy3-free`). The
+    // registry stores discovered models under their BARE id (`hy3-free`), so a
+    // caller-supplied `providerId/modelId` string must be stripped and
+    // re-matched before it falls through to a paid family default. Without
+    // this, `opencode-zen/hy3-free` wrongly resolves to the paid
+    // `claude-fable-5`. See server.ts chat path + claude-catalog.ts projection.
+    const prefixStripped = model.replace(/^[a-z0-9-]+\//i, '');
+    if (prefixStripped && prefixStripped !== model) {
+      const strippedModel = this.modelRegistry.list().find(
+        (m) => !m.stale && (m.id === prefixStripped || m.id.toLowerCase() === prefixStripped.toLowerCase()),
+      );
+      if (strippedModel) {
+        return {
+          model: strippedModel.id,
+          resolution: {
+            modelId: strippedModel.id,
+            providerId: strippedModel.providerId,
+            reason: `Provider-prefix stripped '${model}' -> '${strippedModel.id}' on provider '${strippedModel.providerId}'`,
+            candidateCount: 1,
+          },
+        };
+      }
+    }
+
     const family = matchFamily(model);
     if (family) return this.resolveClaudeFamily(model, family);
 
@@ -680,7 +724,9 @@ export class ModelAliasRegistry {
     const tNorm = norm(t);
     const models = this.modelRegistry.list().filter((m) => !m.stale);
     // Exact / provider-prefixed / bare-name matches against discovered models.
+    // Skip retired models the upstream provider no longer serves.
     for (const m of models) {
+      if (isRetired(m.id)) continue;
       if (m.id.toLowerCase() === t || m.id.toLowerCase() === `auto-${t}` || norm(m.id) === tNorm) {
         return { modelId: m.id, providerId: m.providerId };
       }
@@ -702,6 +748,9 @@ export class ModelAliasRegistry {
     const now = Date.now();
     let candidates = this.modelRegistry.list().filter((m) => {
       if (m.stale) return false;
+      // Never select a retired model the upstream provider no longer serves
+      // (wastes the first attempt and can trip the whole-provider breaker).
+      if (isRetired(m.id)) return false;
       // Embedding-only models cannot perform chat completions / responses
       if (m.capabilities?.embeddings && !m.capabilities?.streaming && !m.capabilities?.toolCalling && !m.capabilities?.reasoning && !m.capabilities?.vision) {
         return false;
