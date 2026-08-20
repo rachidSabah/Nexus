@@ -3302,6 +3302,31 @@ export class HttpServer {
       return resolution;
     });
 
+    // WS5 Strategy A/B simulator (read-only): rank the same candidate pool
+    // under two ranking strategies and return both top-N lists for comparison.
+    this.fastify.post('/v1/routing/compare', async (request, reply) => {
+      const body = (request.body ?? {}) as {
+        strategyA?: AliasRankingStrategy;
+        strategyB?: AliasRankingStrategy;
+        filter?: { capability?: string; freeOnly?: boolean; minContextWindow?: number; providers?: string[] };
+        topN?: number;
+      };
+      if (!body.strategyA || !body.strategyB) {
+        return reply.code(400).send({ error: { message: 'strategyA and strategyB are required' } });
+      }
+      try {
+        const result = this.deps.aliasRegistry.compareRankings(
+          body.strategyA,
+          body.strategyB,
+          (body.filter as never) ?? {},
+          body.topN ?? 5,
+        );
+        return result;
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message } });
+      }
+    });
+
     // ── Universal Provider Fabric & Zero-Config Model Onboarding ──────
     // GET /v1/providers — lists all registered providers with live discovery & key telemetry
     this.fastify.get('/v1/providers', async () => {

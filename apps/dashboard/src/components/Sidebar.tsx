@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, Boxes, Brain, Blocks, Cpu, Gauge, KeyRound, Layers, Network, Plug, ScrollText, Settings, Settings2, ShieldAlert, Store, Terminal, Users, Workflow } from 'lucide-react';
+import { Activity, Boxes, Brain, Blocks, Cpu, Gauge, GitCompare, History, KeyRound, Layers, Network, Plug, ScrollText, Settings, Settings2, ShieldAlert, ShieldCheck, Store, Terminal, Users, Workflow } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -15,6 +15,10 @@ const NAV = [
   { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/detached-tasks', label: 'Detached Tasks', icon: Terminal },
   { href: '/compression', label: 'Compression Lab', icon: Layers },
+  { href: '/routing-replay', label: 'Routing Replay', icon: History },
+  { href: '/cost-budget', label: 'Cost & Budget', icon: Gauge },
+  { href: '/strategy-sim', label: 'Strategy A/B', icon: GitCompare },
+  { href: '/resilience', label: 'Resilience Board', icon: ShieldCheck },
   { href: '/agents', label: 'Agents', icon: Boxes },
   { href: '/applications', label: 'Applications', icon: Blocks },
   { href: '/workflows', label: 'Workflows', icon: Workflow },

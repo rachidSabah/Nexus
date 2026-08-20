@@ -772,6 +772,36 @@ export class ModelAliasRegistry {
     }));
   }
 
+  /**
+   * WS5 A/B simulator (read-only, non-mutating): ranks the same candidate
+   * pool under two different ranking strategies and returns both top-N lists
+   * so the dashboard can compare outcomes side-by-side. Reuses the real
+   * `candidatesFor` (filter + health) and `rank` (strategy) internals — no
+   * registry mutation, no fabricated data.
+   */
+  compareRankings(
+    strategyA: AliasRankingStrategy,
+    strategyB: AliasRankingStrategy,
+    filter: AliasFilter = {},
+    topN = 5,
+  ): {
+    filter: AliasFilter;
+    candidateCount: number;
+    a: { strategy: AliasRankingStrategy; top: Array<{ modelId: string; providerId: string }> };
+    b: { strategy: AliasRankingStrategy; top: Array<{ modelId: string; providerId: string }> };
+  } {
+    const candidates = this.candidatesFor(filter);
+    const rankedA = this.rank(candidates, strategyA).slice(0, topN);
+    const rankedB = this.rank(candidates, strategyB).slice(0, topN);
+    const toTop = (cs: ModelDescriptor[]) => cs.map((c) => ({ modelId: c.id, providerId: c.providerId }));
+    return {
+      filter,
+      candidateCount: candidates.length,
+      a: { strategy: strategyA, top: toTop(rankedA) },
+      b: { strategy: strategyB, top: toTop(rankedB) },
+    };
+  }
+
   /** Ranking strategies. */
   private rank(candidates: readonly ModelDescriptor[], strategy: AliasRankingStrategy): ModelDescriptor[] {
     const sorted = [...candidates];
