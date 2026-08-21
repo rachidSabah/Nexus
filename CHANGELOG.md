@@ -4,6 +4,41 @@ All notable changes to Nexus are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/) and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-08 (OmniRoute-competitive feature set)
+
+### Added
+- **Token compression engines**: added `session_dedup` (cross-turn content-addressed
+  block elision) and `headroom` (columnar JSON-array compaction) to the stacked
+  `compressPipeline`. Six composable engines now report real per-engine char/token
+  savings — no fabricated percentages.
+- **Routing strategies**: `RoutingStrategy` primary-selector with `priority`,
+  `round-robin`, `weighted`, and `least-used` policies (complements the existing
+  scope-aware failover). Exposed via `POST /v1/routing/compare`.
+- **MCP server tools**: `@anx/mcp-server` now exposes real Nexus capabilities over
+  JSON-RPC — `nexus_list_models`, `nexus_list_free_models`, `nexus_stats`,
+  `nexus_route`, `nexus_compression_preview`, `nexus_memory_search`,
+  `nexus_a2a_status`, `nexus_guardrails` (each degrades gracefully when the
+  capability is not wired into the running gateway).
+- **External compression adapter**: `ExternalCompressorRegistry` + `createCavemanCompressor`
+  (delegates to an operator-installed Caveman CLI; Nexus measures REAL savings and
+  never fabricates; a missing upstream fails safe — original text preserved). No keys
+  shipped, no upstream hardcoded.
+- **Sourced free-tier dashboard**: `FREE_TIER_CATALOG` (verified 2026-08, per-provider
+  source URLs) + `aggregateFreeTier()` transparent sum-of-ceilings. New
+  `GET /v1/free-tier/estimate` endpoint and a 5th dashboard summary card showing the
+  documented free-tier ceiling. No invented monthly-token math.
+- **Legitimate proxy posture documented** in SECURITY.md: direct egress by default,
+  SSRF-guarded, admin-opt-in custom proxy only, no MITM/stealth interception.
+
+### Honest gaps (by design, not regression)
+- **A2A**: wire protocol + message routing are implemented (`@anx/a2a`); full
+  multi-agent *orchestration* primitives (planner/executor/critic) are next-release.
+- **Persistent memory** (`@anx/memory`, short/long-term vector store + RAG) and
+  **guardrails** (`RemediationPolicyEngine`, shell-exec blocked) are implemented and
+  exposed via MCP.
+- **Electron**: not built — the dashboard is already installable as a PWA
+  (`manifest.webmanifest` + `sw.js` + `PwaRegister`).
+
 ## [0.4.1] — Phase 23-PRE (2026-08)
 
 ### Added
