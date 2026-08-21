@@ -283,7 +283,7 @@ export class LocalAgentBridge implements LocalAgentRegistryPort {
 
     const gwUrl = opts.gatewayUrl ?? this.gatewayUrl;
     const policy = request.modelPolicy ?? 'nexus/best-coding';
-    let selectedModel = policy;
+    const selectedModel = policy;
     let selectedProvider = 'nexus';
 
     if (this.routing) {
