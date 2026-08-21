@@ -429,6 +429,26 @@ export class ChatCompletionUseCase {
             if (plaintext && plaintext !== ownToken) {
               endpointWithKey = { ...endpoint, apiKey: plaintext } as ProviderEndpoint & { apiKey: string };
             }
+          } else {
+            // select() returned no key — normally means every key for this
+            // provider is on cooldown or invalid. A COOLDOWN key is still a
+            // VALID credential (a transient 429, not a revoked key): fall
+            // back to it rather than giving up, otherwise a single
+            // rate-limit permanently disables the provider ("All providers
+            // exhausted") because the key can never succeed and clear its
+            // own cooldown. Real auth failures are still handled: a genuine
+            // 401/403 marks the key invalid and future requests skip it.
+            const cooldownFallback = this.keyRegistry
+              .listByProvider(endpoint.providerId)
+              .find((k) => k.status === 'cooldown');
+            if (cooldownFallback) {
+              selectedKeyId = cooldownFallback.id;
+              const plaintext = await this.keyRegistry.getPlaintext(cooldownFallback.id);
+              const ownToken = process.env['NEXUS_API_KEY'] ?? 'nexus';
+              if (plaintext && plaintext !== ownToken) {
+                endpointWithKey = { ...endpoint, apiKey: plaintext } as ProviderEndpoint & { apiKey: string };
+              }
+            }
           }
         }
 
@@ -832,9 +852,17 @@ export class ChatCompletionUseCase {
       const altKeyId = this.keyRegistry.select(altEndpoint.providerId, {
         strategy: this.keyRotationStrategy,
       });
-      if (altKeyId) {
-        const altPlaintext = await this.keyRegistry.getPlaintext(altKeyId);
-        if (altPlaintext) {
+      // Cooldown-fallback: a cooldown key is still a valid credential
+      // (transient 429) — prefer it over giving up with no key at all.
+      const altEffectiveKeyId =
+        altKeyId ??
+        this.keyRegistry
+          .listByProvider(altEndpoint.providerId)
+          .find((k) => k.status === 'cooldown')?.id;
+      if (altEffectiveKeyId) {
+        const altPlaintext = await this.keyRegistry.getPlaintext(altEffectiveKeyId);
+        const ownToken = process.env['NEXUS_API_KEY'] ?? 'nexus';
+        if (altPlaintext && altPlaintext !== ownToken) {
           altEndpointWithKey = { ...altEndpoint, apiKey: altPlaintext } as ProviderEndpoint & { apiKey: string };
         }
       }
