@@ -63,4 +63,39 @@ describe('CompressionPipeline (WS5 Phase 2)', () => {
     const res = compressPipeline(input, { engines: ['minify'], keepComments: true });
     expect(res.text).toContain('// important');
   });
+
+  it('session_dedup elides blocks already provided in a prior turn', () => {
+    const seen = new Set<string>([
+      'function boot() {\n  const cfg = loadConfig(path.resolve(__dirname, "cfg.json"));\n  return init(cfg);\n}',
+    ]);
+    const input =
+      'Here is the context again:\n\n' +
+      'function boot() {\n  const cfg = loadConfig(path.resolve(__dirname, "cfg.json"));\n  return init(cfg);\n}\n\nNow continue.';
+    const res = compressPipeline(input, { engines: ['session_dedup'], sessionSeen: seen });
+    expect(res.text).toMatch(/dedup:ref/);
+    expect(res.text).not.toContain('return init(cfg);');
+    expect(res.text).toContain('Now continue.');
+  });
+
+  it('session_dedup is a no-op when nothing was seen before', () => {
+    const input = 'unique block\n\nsecond unique block';
+    const res = compressPipeline(input, { engines: ['session_dedup'] });
+    expect(res.text).toContain('unique block');
+    expect(res.text).toContain('second unique block');
+  });
+
+  it('headroom compacts homogeneous object arrays into columnar form', () => {
+    const input = '[{ "x": 1, "y": 2 }, { "x": 3, "y": 4 }, { "x": 5, "y": 6 }]';
+    const res = compressPipeline(input, { engines: ['headroom'] });
+    expect(res.text).toContain('3 rows');
+    expect(res.text).toMatch(/"x":\[1,3,5\]/);
+    expect(res.text).toMatch(/"y":\[2,4,6\]/);
+  });
+
+  it('headroom leaves heterogeneous / non-object arrays untouched', () => {
+    const input = '[{ "x": 1 }, { "y": 2 }, { "x": 3 }]';
+    const res = compressPipeline(input, { engines: ['headroom'] });
+    expect(res.text).toContain('"x"');
+    expect(res.text).not.toContain('rows');
+  });
 });

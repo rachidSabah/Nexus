@@ -27,7 +27,9 @@ export type CompressionEngineName =
   | 'minify'
   | 'dedupe_lines'
   | 'collapse_arrays'
-  | 'elide_middle';
+  | 'elide_middle'
+  | 'session_dedup'
+  | 'headroom';
 
 export interface EngineBreakdown {
   engine: CompressionEngineName;
@@ -38,7 +40,7 @@ export interface EngineBreakdown {
 }
 
 export interface PipelineOptions {
-  /** Engines to run, in order. Default: all four. */
+  /** Engines to run, in order. Default: all six. */
   engines?: CompressionEngineName[];
   /** Max chars before elide_middle kicks in. Default 4000. */
   elideThreshold?: number;
@@ -46,6 +48,10 @@ export interface PipelineOptions {
   elideKeep?: number;
   /** Disable comment stripping in minify (keeps code semantics safer). */
   keepComments?: boolean;
+  /** Prior-turn text blocks for session_dedup (content-addressed cross-turn elision). */
+  sessionSeen?: Set<string>;
+  /** Minimum block length (chars) for session_dedup to consider. Default 64. */
+  sessionDedupMinLen?: number;
 }
 
 export interface PipelineResult {
@@ -137,6 +143,63 @@ function elideMiddle(text: string, threshold: number, keep: number): string {
   return [...head, `… [${middle} lines elided] …`, ...tail].join('\n');
 }
 
+/**
+ * session_dedup — content-addressed cross-turn deduplication (TokenMizer-inspired).
+ * Elides text blocks already seen in a prior turn of the SAME session by replacing
+ * them with a compact `[dedup:ref N]` marker. The `seen` set is supplied by the
+ * caller (the session history) so this stays pure/deterministic. Lossless because
+ * the model was already given that text earlier in the conversation.
+ */
+export function sessionDedup(text: string, seen: Set<string>, minLen = 64): string {
+  if (seen.size === 0) return text;
+  // Work on paragraph / block granularity (blank-line separated).
+  const blocks = text.split(/\n{2,}/);
+  let ref = 0;
+  const out: string[] = [];
+  for (const block of blocks) {
+    const key = block.trim();
+    if (key.length >= minLen && seen.has(key)) {
+      ref++;
+      out.push(`[dedup:ref ${ref} — content already provided in an earlier turn]`);
+    } else {
+      out.push(block);
+    }
+  }
+  return out.join('\n\n');
+}
+
+/**
+ * headroom — lossless columnar compaction of homogeneous JSON-array payloads.
+ * Turns `[ {a:1,b:2},{a:3,b:4} ]` into a compact `[N rows] a:[1,3] b:[2,4]` form.
+ * Safe only for arrays of same-shape objects; otherwise the original is returned.
+ */
+export function headroom(text: string): string {
+  return text.replace(/\[([\s\S]*?)\]/g, (full: string, body: string) => {
+    const items = body.split('},').map((s) => s.trim()).filter((s) => s.length > 0);
+    if (items.length < 3) return full;
+    const objs: Record<string, string>[] = [];
+    for (const it of items) {
+      const cleaned = it.replace(/^\{/, '').replace(/}$/, '');
+      const pairs = cleaned.split(',').map((p) => p.trim());
+      const o: Record<string, string> = {};
+      let ok = true;
+      for (const p of pairs) {
+        const idx = p.indexOf(':');
+        if (idx < 0) { ok = false; break; }
+        o[p.slice(0, idx).trim()] = p.slice(idx + 1).trim();
+      }
+      if (!ok || Object.keys(o).length === 0) return full;
+      objs.push(o);
+    }
+    const keys = Object.keys(objs[0]!);
+    if (!keys.every((k) => objs.every((o) => k in o))) return full;
+    const cols = keys
+      .map((k) => `${k}:[${objs.map((o) => o[k]).join(',')}]`)
+      .join(' ');
+    return `[ ${objs.length} rows ] ${cols}`;
+  });
+}
+
 const ENGINE_FNS: Record<
   CompressionEngineName,
   (text: string, opts: Required<PipelineOptions>) => string
@@ -145,9 +208,18 @@ const ENGINE_FNS: Record<
   dedupe_lines: (t) => dedupeLines(t),
   collapse_arrays: (t) => collapseArrays(t),
   elide_middle: (t, o) => elideMiddle(t, o.elideThreshold, o.elideKeep),
+  session_dedup: (t, o) => sessionDedup(t, o.sessionSeen ?? new Set<string>(), o.sessionDedupMinLen),
+  headroom: (t) => headroom(t),
 };
 
-const ALL_ENGINES: CompressionEngineName[] = ['minify', 'dedupe_lines', 'collapse_arrays', 'elide_middle'];
+const ALL_ENGINES: CompressionEngineName[] = [
+  'minify',
+  'dedupe_lines',
+  'collapse_arrays',
+  'elide_middle',
+  'session_dedup',
+  'headroom',
+];
 
 /**
  * Run a stacked compression pipeline over a single text block, measuring
@@ -159,6 +231,8 @@ export function compressPipeline(text: string, options: PipelineOptions = {}): P
     elideThreshold: options.elideThreshold ?? 4000,
     elideKeep: options.elideKeep ?? 40,
     keepComments: options.keepComments ?? false,
+    sessionSeen: options.sessionSeen ?? new Set<string>(),
+    sessionDedupMinLen: options.sessionDedupMinLen ?? 64,
   };
 
   const originalChars = text.length;
