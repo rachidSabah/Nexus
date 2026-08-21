@@ -13,6 +13,7 @@
     "clean": "rimraf dist coverage .turbo"
   },
   "dependencies": {
-    "@anx/core": "workspace:*"
+    "@anx/core": "workspace:*",
+    "@anx/token-efficiency": "workspace:*"
   }
 }
