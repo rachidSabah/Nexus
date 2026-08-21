@@ -54,3 +54,18 @@ deployment updated.
 - [ ] Use TLS termination (reverse proxy) if exposing the gateway beyond
       localhost.
 - [ ] Rotate any provider key immediately if you suspect exposure.
+
+## Network egress & proxy posture
+
+Nexus is **local-first** and connects to providers **directly by default**. It does
+**not** perform TLS interception, MITM decryption, or traffic spoofing of any kind.
+
+- Egress defaults to `DIRECT` mode — the gateway works with **zero** configured proxies.
+- Public proxy-list scraping is **disabled by default**; only administrator-configured
+  custom proxies (explicit `http(s)`/`socks` endpoints) ever enter the egress pool.
+- All proxy URLs are validated against **SSRF rules**: `localhost`, loopback, link-local,
+  and RFC1918 private ranges are rejected (`sanitizeUrl` → `SSRF_BLOCKED`).
+- No certificate-authority injection, no fingerprint spoofing, no stealth transport.
+  Nexus respects each provider's Terms of Service.
+
+This posture is enforced in `packages/networking` and covered by its test suite.
