@@ -105,6 +105,12 @@ export async function* parseSseStream(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
+      // SSE spec allows events to be separated by LF LF, CRLF CRLF, or CR CR.
+      // Some providers (e.g. Google Gemini alt=sse) emit CRLF separators;
+      // normalizing CRLF/CR to LF before splitting is required or CRLF
+      // streams parse as zero events (empty stream, only [DONE] emitted).
+      buffer = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
       // SSE events are separated by a blank line.
       let idx: number;
       while ((idx = buffer.indexOf('\n\n')) !== -1) {

@@ -33,7 +33,7 @@ export class HermesAdapter extends BaseAgentAdapter {
       modelSelection: true,
       environmentConfig: true,
       tools: true,
-      customFlags: ['chat', '--prompt', '--non-interactive', '--model'],
+      customFlags: ['-z', '-m', '--in', '--yolo'],
     };
   }
 
@@ -62,10 +62,19 @@ export class HermesAdapter extends BaseAgentAdapter {
     opts: { gatewayUrl: string; selectedModel?: string },
   ): { command: string; args: readonly string[] } {
     const exe = this.cachedExecutable || 'hermes';
-    const args: string[] = ['chat', '--prompt', request.prompt, '--non-interactive'];
+    // Hermes one-shot mode: `hermes -z "PROMPT" [-m MODEL]`. The CLI has no
+    // `chat --prompt` / `--non-interactive` flags (v0.20+ argparse rejects
+    // them), and gateway routing happens via env vars (OPENAI_BASE_URL /
+    // HERMES_BASE_URL), not CLI flags.
+    const args: string[] = ['-z', request.prompt];
 
-    if (opts.selectedModel || request.modelPolicy) {
-      args.push('--model', opts.selectedModel ?? request.modelPolicy ?? 'nexus/best-coding');
+    const model = opts.selectedModel ?? request.modelPolicy;
+    if (model) {
+      args.push('-m', model);
+    }
+
+    if (request.workspace) {
+      args.push('--in', request.workspace);
     }
 
     return { command: exe, args };

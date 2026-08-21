@@ -289,7 +289,11 @@ export class LocalAgentBridge implements LocalAgentRegistryPort {
     if (this.routing) {
       try {
         const decision = await this.routing.resolve({ model: policy });
-        selectedModel = decision.endpoint.id;
+        // The decision carries the ENDPOINT (e.g. `auto-opencode-go`), not a
+        // model id. Passing an endpoint id to a coding agent as `--model`
+        // makes the agent CLI reject it ("invalid model selection") — the
+        // agents receive the gateway policy alias here and the gateway itself
+        // resolves it to the concrete model via env-var base-URL routing.
         selectedProvider = decision.endpoint.providerId;
       } catch {
         // use default policy alias
