@@ -26,6 +26,7 @@ export { ChatCompletionUseCase, computeCost, classifyFailure, type FailureClassi
 export { RoutingEngine } from './application/routing-engine.js';
 export { DefaultFailover } from './application/failover.js';
 export { RoutingStrategy, type RoutingStrategyName, type StrategyCandidate, type StrategySelectionResult } from './application/routing-strategy.js';
+export { FREE_TIER_CATALOG, aggregateFreeTier, type FreeTierProvider, type FreeTierAggregate } from './application/free-tier-catalog.js';
 export { DefaultCostCalculator } from './application/cost-calculator.js';
 export { InMemoryEventBus } from './application/event-bus.js';
 export { InMemoryAuditLog } from './application/audit-log.js';

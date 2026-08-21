@@ -86,7 +86,7 @@ import type {
   OrchestratedExecutionRequest,
   OrchestrationPolicy,
 } from '@anx/core';
-import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe } from '@anx/core';
+import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe, aggregateFreeTier, FREE_TIER_CATALOG } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, createIntegrationRegistry, TRUSTED_AGENT_CATALOG, type IntegrationContext } from '@anx/integrations';
 import {
@@ -1375,6 +1375,27 @@ export class HttpServer {
 
     this.fastify.get('/v1/models/stats', async () => {
       return this.deps.modelRegistry.stats();
+    });
+
+    // GET /v1/free-tier/estimate — SOURCED free-tier quota aggregation.
+    // Returns documented per-provider free quotas (with source URLs) + a
+    // transparent sum-of-ceilings aggregate. No fabricated monthly-token math.
+    this.fastify.get('/v1/free-tier/estimate', async () => {
+      const aggregate = aggregateFreeTier();
+      const liveFree = dedupeModels(this.deps.modelRegistry.listFree());
+      return {
+        verified: aggregate.verified,
+        note: 'Figures are documented provider free-tier ceilings, verified 2026-08. Free tiers rotate — re-audit before relying. Aggregate is a sum-of-ceilings (theoretical max), NOT sustained throughput.',
+        aggregate: {
+          providersCovered: aggregate.providersCovered,
+          sumRequestsPerDayCeiling: aggregate.sumRequestsPerDayCeiling,
+          sumTokensPerMinuteCeiling: aggregate.sumTokensPerMinuteCeiling,
+          sumTokensPerMonthCeiling: aggregate.sumTokensPerMonthCeiling,
+          cardRequiredAnywhere: aggregate.cardRequiredAnywhere,
+        },
+        providers: FREE_TIER_CATALOG,
+        liveFreeModelsInRegistry: liveFree.length,
+      };
     });
 
     this.fastify.get('/v1/debug/models/claude', async () => {

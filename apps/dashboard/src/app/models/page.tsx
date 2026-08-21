@@ -294,6 +294,11 @@ export default function ModelsPage() {
     refreshInterval: 15000,
   });
   const { data: stats } = useSWR<StatsResponse>('/api/v1/models/stats', fetcher, { refreshInterval: 15000 });
+  const { data: freeEstimate } = useSWR<{
+    verified: string;
+    aggregate: { providersCovered: number; sumRequestsPerDayCeiling: number; sumTokensPerMinuteCeiling: number; sumTokensPerMonthCeiling: number; cardRequiredAnywhere: boolean };
+    providers: { provider: string; note: string; requestsPerDay: number | null; tokensPerMinute: number | null; tokensPerMonthEstimate: number | null; cardRequired: boolean; source: string; verified: string }[];
+  }>('/api/v1/free-tier/estimate', fetcher, { refreshInterval: 3600000 });
 
   const models = useMemo(() => {
     const all = discover?.models ?? [];
@@ -396,6 +401,17 @@ export default function ModelsPage() {
         <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-b from-amber-500/10 to-black/40 p-5 backdrop-blur-xl">
           <div className="text-xs text-amber-400/70 font-medium flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Stale</div>
           <div className="mt-1 text-3xl font-extrabold text-amber-300">{isLoading ? '…' : statStale}</div>
+        </div>
+        {/* Sourced free-tier aggregate ceiling (verified 2026-08, with source links) */}
+        <div className="rounded-2xl border border-sky-500/20 bg-gradient-to-b from-sky-500/10 to-black/40 p-5 backdrop-blur-xl">
+          <div className="text-xs text-sky-400/70 font-medium flex items-center gap-1"><Zap className="h-3 w-3" /> Free-tier ceiling</div>
+          <div className="mt-1 text-3xl font-extrabold text-sky-300">
+            {freeEstimate ? freeEstimate.aggregate.sumRequestsPerDayCeiling.toLocaleString() : '…'}
+            <span className="ml-1 text-sm font-semibold text-sky-400/70">req/day</span>
+          </div>
+          <div className="mt-1 text-[11px] text-white/40">
+            sum-of-ceilings across {freeEstimate?.aggregate.providersCovered ?? '—'} providers · verified {freeEstimate?.verified ?? '—'}
+          </div>
         </div>
       </div>
 
