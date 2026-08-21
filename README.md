@@ -1,6 +1,8 @@
 <div align="center">
 
 # Nexus
+<img width="1280" height="640" alt="nexus-social-1280x640" src="https://github.com/user-attachments/assets/3a6ba15d-3952-4589-a9ea-dbfec97a3f8c" />
+
 
 **Universal AI Coding-Agent Gateway & Autonomous Control Plane**
 
