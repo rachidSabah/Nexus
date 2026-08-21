@@ -18,6 +18,8 @@
 
 </div>
 
+> 📦 **Nexus `v0.5.0` is released** — the OmniRoute-competitive feature set is live: six-engine token compression (real measured savings), pluggable routing strategies, a real MCP server exposing every Nexus capability, an external-compression adapter (Caveman CLI hook), and a sourced free-tier dashboard. See the [CHANGELOG](CHANGELOG.md) and the [v0.5.0 release notes](https://github.com/rachidSabah/Nexus/releases/tag/v0.5.0).
+
 ---
 
 ## 🚀 What's New — Competitive Edge Over OmniRoute

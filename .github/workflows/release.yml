@@ -60,8 +60,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Publish to GHCR. Non-fatal: if GHCR push permissions are not
+      # configured for this account, the Docker publish is skipped but the
+      # GitHub Release (next step) is still created.
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
+        continue-on-error: true
         with:
           context: .
           file: ./Dockerfile
