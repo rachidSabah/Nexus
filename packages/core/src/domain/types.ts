@@ -317,6 +317,15 @@ export interface ModelDescriptor {
   readonly id: string;
   /** The provider that exposes this model (e.g. "openai", "anthropic"). */
   readonly providerId: string;
+  /**
+   * Upstream `owned_by` as reported by the provider's /models endpoint
+   * (e.g. "mistral", "zhipu", "deepseek"). Distinct from `providerId`: some
+   * aggregators/federated catalogs (notably Mistral's marketplace) list
+   * foreign-provider models under their real `owned_by` while still reporting
+   * them under the querying `providerId`. Used to drop models a provider
+   * advertises but cannot actually serve.
+   */
+  readonly ownedBy?: string;
   /** Human-readable name (often same as id). */
   readonly displayName?: string;
   /** Description from the provider, if available. */

@@ -35,6 +35,39 @@ export class MistralAdapter extends OpenAIAdapter {
   // Mistral's schema uses `extra="forbid"`, so the OpenAI `user` field is
   // rejected with HTTP 422 "extra_forbidden" — never forward it.
   protected supportsUserField = false;
+
+  /**
+   * Mistral's `/v1/models` endpoint returns a *federated marketplace* catalog:
+   * alongside its ~40 native models (`mistral-*`, `codestral-*`, `ministral-*`,
+   * …) it also lists hundreds of foreign-provider models under namespaced ids
+   * (`z-ai/glm-5.2`, `deepseek/deepseek-v4-flash-vision-exp`, `qwen/qwen3.8-27b`, …).
+   * Mistral cannot actually *serve* those foreign models — a chat request for
+   * `glm-5-2` routed to `auto-mistral` fails with HTTP 403 "not available in
+   * your subscription tier". Registering them under `providerId: mistral`
+   * mis-routes requests away from the provider that genuinely serves them
+   * (OpenRouter for `z-ai/glm-5.2`) and produces the "All providers exhausted"
+   * / 403 interruption class. Only keep Mistral-native models (ids without a
+   * `/` provider-namespace separator) for discovery.
+   */
+  async discoverModels(
+    endpoint: ProviderEndpoint,
+    signal: AbortSignal,
+  ): Promise<readonly ModelDescriptor[]> {
+    const all = await super.discoverModels(endpoint, signal);
+    // Mistral's `/v1/models` returns a *federated marketplace* catalog: it lists
+    // hundreds of foreign-provider models (gpt-*, gemini-*, claude-*, glm-*,
+    // qwen*, deepseek-*, …) alongside its ~40 native models, and reports
+    // `owned_by: "mistral"` for ALL of them (so the upstream owned_by field is
+    // useless for filtering). Mistral cannot actually *serve* those foreign
+    // models — a chat request for `glm-5-2` routed to `auto-mistral` fails with
+    // HTTP 403 "not available in your subscription tier". Registering them under
+    // `providerId: mistral` mis-routes requests away from the provider that
+    // genuinely serves them (OpenRouter for `z-ai/glm-5.2`) and produces the
+    // "All providers exhausted" / 403 interruption class. Keep only models in
+    // Mistral's own namespace (stable, documented prefix convention).
+    const MISTRAL_NATIVE = /^(mistral|ministral|codestral|pixtral|magistral|voxtral|mixtral|open-mistral|open-codestral|mistral-)/i;
+    return all.filter((m) => MISTRAL_NATIVE.test(m.id));
+  }
 }
 
 /**

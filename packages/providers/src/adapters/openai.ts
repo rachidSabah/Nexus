@@ -214,6 +214,11 @@ export class OpenAIAdapter implements ProviderAdapter {
         return {
           id,
           providerId: this.providerId,
+          // Preserve the upstream `owned_by` (e.g. "mistral", "zhipu") so
+          // downstream discovery filters can distinguish a provider's NATIVE
+          // models from foreign models it merely advertises in a federated
+          // marketplace catalog (Mistral lists hundreds of non-Mistral models).
+          ownedBy: m.owned_by,
           displayName: id,
           contextWindow:
             extra.context_window ??
