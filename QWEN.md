@@ -60,3 +60,11 @@ export OPENAI_API_KEY="nexus"
   option if a dedicated key is supplied.
 - Qwen models are **free-tier eligible** when selected from OpenRouter's free
   listings; the dashboard's Free filter surfaces those automatically.
+
+## Note on `glm-5-2` (related Zhipu family)
+
+`glm-5-2` is a Zhipu (z-ai) model, not Qwen. It is served by OpenRouter as
+`z-ai/glm-5.2`. Nexus resolves the bare id `glm-5-2` via its family matcher
+(`^glm-` → zhipu) to a working model. It is **not** routed through Mistral
+(Mistral's `/v1/models` advertises a federated catalog that includes foreign
+models it cannot actually serve — those are filtered out at discovery time).
