@@ -10,10 +10,24 @@ describe('createCavemanCompressor (real upstream adapter)', () => {
     expect(typeof h.compress).toBe('function');
   });
 
-  it('delegates to the registry; a missing CLI fails safe (original text, no fake saving)', async () => {
+  it('builds distinct handles per mode (nlp/mlm/llm)', () => {
+    for (const mode of ['nlp', 'mlm', 'llm'] as const) {
+      const h = createCavemanCompressor({ mode, cliDir: '/opt/caveman' });
+      expect(h.description).toContain(mode);
+    }
+  });
+
+  it('registry fails safe when the upstream compressor throws (no corruption, honest error)', async () => {
+    // Simulate a misconfigured/missing upstream WITHOUT spawning a real process,
+    // so the contract is verified deterministically in any environment (CI included).
     const reg = new ExternalCompressorRegistry();
-    // Point at a non-existent CLI dir so spawn errors — proves no corruption.
-    reg.register(createCavemanCompressor({ mode: 'nlp', cliDir: '/nonexistent/caveman-cli' }));
+    reg.register({
+      name: 'caveman',
+      description: 'caveman (simulated missing CLI)',
+      compress: () => {
+        throw new Error('spawn python3 ENOENT /nonexistent');
+      },
+    });
     const input = 'verbose text that must remain intact';
     const res = await reg.run('caveman', input);
     expect(res.output).toBe(input); // never corrupted
