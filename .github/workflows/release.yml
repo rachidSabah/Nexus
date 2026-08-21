@@ -84,9 +84,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish gateway to npm
-        if: startsWith(github.ref, 'refs/tags/v') && secrets.NPM_TOKEN != ''
+        if: startsWith(github.ref, 'refs/tags/v')
         working-directory: apps/gateway
         run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "NPM_TOKEN secret not set — skipping npm publish."
+            exit 0
+          fi
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" >> ~/.npmrc
           npm version ${{ steps.version.outputs.version }} --no-git-tag-version --allow-same-version
           npm publish --access public
