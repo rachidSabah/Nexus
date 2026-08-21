@@ -343,6 +343,9 @@ importers:
       '@anx/core':
         specifier: workspace:*
         version: link:../core
+      '@anx/token-efficiency':
+        specifier: workspace:*
+        version: link:../token-efficiency
 
   packages/memory:
     dependencies:
