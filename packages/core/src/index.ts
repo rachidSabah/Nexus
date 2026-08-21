@@ -25,6 +25,7 @@ export { classifyPricing, hasFreeSuffix, isZeroPriced, mergePricing, type FreeCl
 export { ChatCompletionUseCase, computeCost, classifyFailure, type FailureClassification } from './application/chat-completion.usecase.js';
 export { RoutingEngine } from './application/routing-engine.js';
 export { DefaultFailover } from './application/failover.js';
+export { RoutingStrategy, type RoutingStrategyName, type StrategyCandidate, type StrategySelectionResult } from './application/routing-strategy.js';
 export { DefaultCostCalculator } from './application/cost-calculator.js';
 export { InMemoryEventBus } from './application/event-bus.js';
 export { InMemoryAuditLog } from './application/audit-log.js';
