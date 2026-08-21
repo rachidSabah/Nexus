@@ -78,4 +78,38 @@ describe('Nexus MCP tools (Feature 6)', () => {
     expect(names).toContain('nexus_stats');
     expect(names).toContain('nexus_route');
   });
+
+  it('nexus_a2a_status reports unavailable when A2A is not wired (honest, no fake)', async () => {
+    const tools = buildNexusTools({ registry });
+    const tool = tools.find((t) => t.name === 'nexus_a2a_status')!;
+    const res = (await tool.invoke({})) as { available: boolean };
+    expect(res.available).toBe(false);
+  });
+
+  it('nexus_a2a_status reports routing-ready when a real coordinator is injected', async () => {
+    const tools = buildNexusTools({
+      registry,
+      a2a: { request: async () => ({}), registry: { list: () => [{ id: 'a1', name: 'Planner', role: 'planner' }] } },
+    });
+    const tool = tools.find((t) => t.name === 'nexus_a2a_status')!;
+    const res = (await tool.invoke({})) as { available: boolean; registeredAgents: number };
+    expect(res.available).toBe(true);
+    expect(res.registeredAgents).toBe(1);
+  });
+
+  it('nexus_guardrails lists enforced policies from a real engine', async () => {
+    const tools = buildNexusTools({
+      registry,
+      guardrails: {
+        listPolicies: () => [
+          { actionType: 'SHELL_EXEC', policyTier: 'NEVER_AUTOMATE', enabled: true, description: 'block' },
+          { actionType: 'RESTART_SERVICE', policyTier: 'AUTO_SAFE', enabled: true },
+        ],
+      },
+    });
+    const tool = tools.find((t) => t.name === 'nexus_guardrails')!;
+    const res = (await tool.invoke({})) as { available: boolean; neverAutomate: string[] };
+    expect(res.available).toBe(true);
+    expect(res.neverAutomate).toContain('SHELL_EXEC');
+  });
 });

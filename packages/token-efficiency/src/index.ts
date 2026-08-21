@@ -29,7 +29,8 @@ export {
   type RankedFile,
   type RepoSelection,
 } from './repo-index.js';
-export { ContextCache, type ContextFingerprint } from './context-cache.js';
+export { ExternalCompressorRegistry, externalCompressors, type ExternalCompressorHandle } from './external-compressor.js';
+export { createCavemanCompressor, type CavemanCompressorOptions, type CavemanMode } from './caveman-adapter.js';
 export { OptimizationMode } from './types.js';
 export type {
   OptMessage,

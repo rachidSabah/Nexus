@@ -4,9 +4,33 @@ import { compressPipeline } from '@anx/token-efficiency';
 
 import { McpServer, type McpTool } from './index.js';
 
+/**
+ * Minimal structural types for the optional capabilities we expose over MCP.
+ * Declared locally (not imported from @anx/memory / @anx/a2a / core internals)
+ * so the mcp-server package keeps a light dependency surface and the tools
+ * degrade gracefully when a capability is not wired into the running gateway.
+ */
+export interface MemoryCapability {
+  search(query: string, opts: { namespace: string; scope?: 'short' | 'long'; limit?: number; threshold?: number }): Promise<readonly { record: { id: string; content: string; namespace: string }; score: number }[]>;
+  list(namespace: string, opts?: { scope?: 'short' | 'long'; limit?: number }): Promise<readonly unknown[]>;
+}
+export interface A2ACapability {
+  request(from: string, to: string, payload: unknown): Promise<unknown>;
+  readonly registry?: { list(): readonly { id: string; name: string; role: string }[] };
+}
+export interface GuardrailCapability {
+  listPolicies(): readonly { actionType: string; policyTier: string; enabled: boolean; description?: string }[];
+}
+
 export interface NexusToolDeps {
   readonly registry: ModelRegistry;
   readonly strategy?: RoutingStrategy;
+  /** Optional: persistent memory (packages/memory). Tool reports unavailable if absent. */
+  readonly memory?: MemoryCapability;
+  /** Optional: A2A coordinator (packages/a2a). Tool reports unavailable if absent. */
+  readonly a2a?: A2ACapability;
+  /** Optional: guardrail policy engine (core runtime-intelligence). Tool reports unavailable if absent. */
+  readonly guardrails?: GuardrailCapability;
 }
 
 /**
@@ -15,7 +39,7 @@ export interface NexusToolDeps {
  * and the token-efficiency compression pipeline.
  */
 export function buildNexusTools(deps: NexusToolDeps): McpTool[] {
-  const { registry, strategy } = deps;
+  const { registry, strategy, memory, a2a, guardrails } = deps;
   const rs: RoutingStrategy = strategy ?? new RoutingStrategy();
 
   const tools: McpTool[] = [
@@ -109,6 +133,54 @@ export function buildNexusTools(deps: NexusToolDeps): McpTool[] {
           finalChars: res.finalChars,
           savingsPct: res.savingsPct,
           engines: res.engines.map((e) => ({ engine: e.engine, charsSaved: e.charsSaved })),
+        };
+      },
+    },
+    {
+      name: 'nexus_memory_search',
+      description: 'Search the gateway persistent memory (short/long-term vector store). Reports unavailable if memory is not wired.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          namespace: { type: 'string', description: 'Memory namespace to search' },
+          scope: { type: 'string', enum: ['short', 'long'] },
+          limit: { type: 'number' },
+        },
+        required: ['query', 'namespace'],
+      },
+      async invoke(args) {
+        if (!memory) return { available: false, reason: 'persistent memory not wired into this gateway' };
+        const results = await memory.search(String(args.query), {
+          namespace: String(args.namespace),
+          scope: (args.scope as 'short' | 'long') ?? 'long',
+          limit: typeof args.limit === 'number' ? args.limit : 5,
+        });
+        return { available: true, count: results.length, results: results.map((r) => ({ id: r.record.id, score: r.score, content: r.record.content.slice(0, 500) })) };
+      },
+    },
+    {
+      name: 'nexus_a2a_status',
+      description: 'Report A2A (agent-to-agent) coordinator status and registered agents. Reports unavailable if A2A is not wired.',
+      inputSchema: { type: 'object', properties: {} },
+      async invoke() {
+        if (!a2a) return { available: false, reason: 'A2A coordinator not wired into this gateway', status: 'scaffold-unavailable' };
+        const agents = a2a.registry?.list() ?? [];
+        return { available: true, status: 'routing-ready', registeredAgents: agents.length, agents };
+      },
+    },
+    {
+      name: 'nexus_guardrails',
+      description: 'List the active remediation/guardrail policies enforced by the gateway (e.g. shell-exec blocking). Honest reflection of what is enforced.',
+      inputSchema: { type: 'object', properties: {} },
+      async invoke() {
+        if (!guardrails) return { available: false, reason: 'guardrail policy engine not wired into this gateway' };
+        const policies = guardrails.listPolicies();
+        return {
+          available: true,
+          enforcedCount: policies.filter((p) => p.enabled).length,
+          neverAutomate: policies.filter((p) => p.policyTier === 'NEVER_AUTOMATE').map((p) => p.actionType),
+          policies: policies.map((p) => ({ actionType: p.actionType, tier: p.policyTier, enabled: p.enabled })),
         };
       },
     },
