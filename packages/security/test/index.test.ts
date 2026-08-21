@@ -9,8 +9,13 @@ import {
 } from '../src/index.js';
 
 describe('EncryptedCredentialVault', () => {
-  it('encrypts and decrypts secrets with the same master key', async () => {
-    const v1 = new EncryptedCredentialVault('master-key-123');
+  it(
+    'encrypts and decrypts secrets with the same master key',
+    async () => {
+      // The constructor eagerly derives 4 scrypt keys (1 master + 3 fallback
+      // migration keys); on a cold/loaded CI runner this can exceed the default
+      // 5s vitest timeout. The round-trip correctness is what we assert.
+      const v1 = new EncryptedCredentialVault('master-key-123');
     const v2 = new EncryptedCredentialVault('master-key-123');
     await v1.set('openai', 'sk-secret');
     const list = await v1.list();
@@ -18,7 +23,7 @@ describe('EncryptedCredentialVault', () => {
     // We can't read from v2 because v1's storage is in-memory only.
     expect(await v1.get('openai')).toBe('sk-secret');
     expect(await v2.get('openai')).toBeUndefined();
-  });
+  }, 15000);
 
   it('returns undefined for unknown provider', async () => {
     const v = new EncryptedCredentialVault('master-key-123');
