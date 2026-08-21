@@ -15,8 +15,6 @@
 *Nexus is not an AI model. Nexus is the universal provider fabric and infrastructure layer between your coding agents and every model provider.*
 
 <br/>
-<img src="./user-attachments/assets/08e97a0c-98fb-4cd1-898a-f2d255e67f24.png" alt="Nexus Universal Dashboard & Control Plane" width="880" />
-
 <img src="./docs/assets/nexus-dashboard.png" alt="Nexus Universal Dashboard & Control Plane" width="880" />
 
 </div>
