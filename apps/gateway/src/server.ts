@@ -6805,11 +6805,6 @@ export class HttpServer {
       }
     };
 
-    // Convenience: hitting the gateway root lands on the dashboard UI.
-    this.fastify.get('/', async (_req, reply) => {
-      return reply.code(302).redirect('/dashboard');
-    });
-
     this.fastify.get('/dashboard', async (req, reply) => {
       return forwardToDashboard(req, reply, '');
     });
@@ -7206,16 +7201,10 @@ export class HttpServer {
       socket.on('error', unsub);
     });
 
-    // ── Root: gateway info ─────────────────────────────────────────────
-    this.fastify.get('/', async () => ({
-      name: 'Agent Nexus Gateway',
-      version: GATEWAY_VERSION,
-      description: 'The most advanced local AI Gateway',
-      docs: '/docs',
-      health: '/health',
-      metrics: '/metrics',
-      openapi: '/v1/openapi.json',
-    }));
+    // ── Root: redirect to the dashboard UI ─────────────────────────────
+    this.fastify.get('/', async (_req, reply) => {
+      return reply.code(302).redirect('/dashboard');
+    });
   }
 
   /**
