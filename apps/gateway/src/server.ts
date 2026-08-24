@@ -743,6 +743,84 @@ export class HttpServer {
       return reply;
     });
 
+    // ── System update (read-only check) ───────────────────────────────────
+    // Reports whether a newer Nexus revision is available on the tracked
+    // upstream without modifying anything. Safe to call from the dashboard
+    // "Updater" panel.
+    this.fastify.get('/v1/system/update/check', async (_request, reply) => {
+      try {
+        const { execSync } = await import('node:child_process');
+        const cwd = process.cwd();
+        // Determine the current version from package.json.
+        let localVersion = 'unknown';
+        try {
+          const pkg = JSON.parse(execSync('cat package.json', { cwd }).toString());
+          localVersion = pkg.version ?? 'unknown';
+        } catch { /* ignore */ }
+        // Fetch remote refs (does not touch working tree).
+        let remoteAvailable = false;
+        let remoteVersion = 'unknown';
+        try {
+          execSync('git fetch --quiet origin', { cwd, timeout: 15_000 });
+          const rev = execSync('git rev-parse --quiet --verify origin/main', { cwd }).toString().trim();
+          remoteAvailable = rev.length > 0;
+          // Best-effort: read remote package.json version without checkout.
+          const remotePkg = execSync(`git show origin/main:package.json`, { cwd }).toString();
+          remoteVersion = JSON.parse(remotePkg).version ?? 'unknown';
+        } catch { /* offline / no remote */ }
+        return reply.send({
+          ok: true,
+          localVersion,
+          remoteVersion,
+          updateAvailable: remoteAvailable && remoteVersion !== 'unknown' && remoteVersion !== localVersion,
+          checkedAt: new Date().toISOString(),
+        });
+      } catch (err: any) {
+        return reply.code(200).send({ ok: false, error: (err as Error).message });
+      }
+    });
+
+    // ── System update (apply) ─────────────────────────────────────────────
+    // Pulls the latest revision, reinstalls, rebuilds, then re-spawns this
+    // gateway (same safe self-restart pattern as /v1/system/gateway/restart).
+    // Runs as a detached child so the request can return immediately.
+    this.fastify.post('/v1/system/update', async (_request, reply) => {
+      try {
+        const cwd = process.cwd();
+        const logFile = `${cwd}/.agent-nexus-update.log`;
+        const cmd = process.platform === 'win32'
+          ? `git pull --ff-only origin main && pnpm install && pnpm build >> ${logFile} 2>&1`
+          : `git pull --ff-only origin main && pnpm install && pnpm build >> ${logFile} 2>&1`;
+        // Spawn the actual update command via the shell.
+        const updater = nodeSpawn(cmd, [], {
+          cwd,
+          env: process.env,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          shell: true,
+        });
+        updater.unref();
+        // Re-spawn the gateway after the build finishes so it picks up changes.
+        setTimeout(() => {
+          try {
+            const restart = spawnProcess(process.execPath, process.argv.slice(1), {
+              cwd,
+              env: process.env,
+              detached: true,
+              stdio: 'ignore',
+              windowsHide: false,
+            });
+            restart.unref();
+            setTimeout(() => process.exit(0), 1200);
+          } catch { /* best-effort */ }
+        }, 90_000);
+        return reply.code(202).send({ ok: true, message: 'update started (pull + install + build + restart)', log: logFile });
+      } catch (err: any) {
+        return reply.code(500).send({ ok: false, message: (err as Error).message });
+      }
+    });
+
     // GET /v1/system/metrics — Comprehensive Operations Metrics
     this.fastify.get('/v1/system/metrics', async () => {
       const opsMetrics = this.metricsTracker.getMetrics();

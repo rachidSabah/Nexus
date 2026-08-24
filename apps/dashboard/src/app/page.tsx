@@ -63,8 +63,8 @@ export default function OverviewPage() {
               <Zap className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-3 text-3xl font-black tracking-tight text-emerald-300">{health?.endpoints.healthy ?? 0}</div>
-          <div className="mt-1 text-[11px] text-white/40">{health?.endpoints.total ?? 0} endpoints · {health?.endpoints.open ?? 0} circuit-open</div>
+          <div className="mt-3 text-3xl font-black tracking-tight text-emerald-300">{health?.endpoints?.healthy ?? 0}</div>
+          <div className="mt-1 text-[11px] text-white/40">{health?.endpoints?.total ?? 0} endpoints · {health?.endpoints?.open ?? 0} circuit-open</div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />
         </div>
 
