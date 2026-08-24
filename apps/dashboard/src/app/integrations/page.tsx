@@ -321,8 +321,8 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
           {canStart && (
             <button
               type="button"
-              disabled={busy !== null || running || !effectiveModel}
-              onClick={() => run('start', (id: string) => start(id, effectiveModel))}
+              disabled={busy !== null || running}
+              onClick={() => run('start', (id: string) => start(id, effectiveModel || undefined))}
               className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Play className="h-3.5 w-3.5" /> {busy === 'start' ? '…' : 'Start'}

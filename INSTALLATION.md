@@ -41,10 +41,18 @@ pnpm --filter @anx/dashboard dev   # dashboard on :3000
 4. Point your coding agent at `http://127.0.0.1:8787/v1` as its base URL.
 5. Pick a routing policy (e.g. `nexus/best-coding`) and start coding.
 
-## Uninstall (Windows)
+## Uninstall
+
+### Windows (PowerShell)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall-windows.ps1 | iex"
+irm https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall.ps1 | iex
+```
+
+### Linux / WSL / macOS (bash)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/uninstall.sh | bash
 ```
 
 The uninstaller removes the CLI and local config but **never deletes your
