@@ -65,16 +65,45 @@ Write-Host "  pnpm $pnpmVer OK"
 Write-Step 'Setting up Nexus repository...'
 New-Item -ItemType Directory -Force -Path $INSTALL_DIR | Out-Null
 
+# A valid checkout needs the git metadata plus the workspace manifest/lockfile.
+# Checking these lets us fail fast (and clearly) instead of cascading into
+# nonsense build errors when the clone was incomplete or stale.
+function Test-ValidRepo($dir) {
+  return (Test-Path "$dir\.git") -and (Test-Path "$dir\pnpm-lock.yaml") -and (Test-Path "$dir\package.json")
+}
+
 if (Test-Path "$REPO_DIR\.git") {
   Write-Host '  Updating existing clone...'
   git -C $REPO_DIR pull --ff-only
+  if ($LASTEXITCODE -ne 0) {
+    throw "git pull failed for $REPO_DIR. Run 'git -C $REPO_DIR pull' manually or delete the directory and re-run."
+  }
 } else {
+  # A non-empty directory without a .git is a stale/partial checkout from a
+  # previous (failed) install. Back it up so we can clone a clean copy, rather
+  # than letting `git clone` fail on a non-empty target.
+  $stale = $false
+  if (Test-Path $REPO_DIR) {
+    $children = Get-ChildItem -LiteralPath $REPO_DIR -Force -ErrorAction SilentlyContinue
+    if ($children.Count -gt 0) { $stale = $true }
+  }
+  if ($stale) {
+    $bak = "$REPO_DIR.bak-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    Write-Host "  Stale non-git directory found - backing up to $bak" -ForegroundColor Yellow
+    Move-Item -Path $REPO_DIR -Destination $bak -Force
+  }
   Write-Host "  Cloning $REPO_URL ..."
   git clone --depth 1 $REPO_URL $REPO_DIR
+  if ($LASTEXITCODE -ne 0 -or -not (Test-ValidRepo $REPO_DIR)) {
+    throw "git clone failed or repo is incomplete at $REPO_DIR. Check network access to github.com and re-run."
+  }
 }
 
 # --- 5. build + link CLI ---
 Write-Step 'Installing dependencies and building...'
+if (-not (Test-ValidRepo $REPO_DIR)) {
+  throw "Repository at $REPO_DIR is missing required files. Re-run the installer."
+}
 Push-Location $REPO_DIR
 try {
   # On a fresh clone the lockfile may not be perfectly in sync; fall back to a
@@ -86,7 +115,6 @@ try {
   }
   # Ensure the CLI package is linked + built so the `anx` bin exists.
   # (@anx/cli is a root devDependency, so pnpm links its bin into node_modules/.bin.)
-  pnpm install
   pnpm --filter @anx/cli build
   pnpm build
 } finally {
@@ -150,10 +178,15 @@ if (-not (Test-Path "$INSTALL_DIR\config.json")) {
   Write-Host '  Existing config preserved.'
 }
 
-# Copy .env.example if no .env exists
+# Copy .env.example if no .env exists (non-fatal - the dashboard/gateway run fine
+# without a repo-level .env; API keys are configured via the dashboard UI).
 if (-not (Test-Path "$REPO_DIR\.env")) {
-  Copy-Item "$REPO_DIR\.env.example" "$REPO_DIR\.env"
-  Write-Host '  Created .env from .env.example - add your API keys.'
+  if (Test-Path "$REPO_DIR\.env.example") {
+    Copy-Item "$REPO_DIR\.env.example" "$REPO_DIR\.env"
+    Write-Host '  Created .env from .env.example - add your API keys.'
+  } else {
+    Write-Host '  No .env.example found - skipping .env creation (optional).' -ForegroundColor Yellow
+  }
 }
 
 # --- 7. start gateway + dashboard (with real health verification) ---
