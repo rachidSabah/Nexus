@@ -59,7 +59,7 @@ describe('GatewayRuntime integration', () => {
   });
 
   it('redirects / (root) to the dashboard UI', async () => {
-    const r = await fetch('http://localhost:18787/');
+    const r = await fetch('http://localhost:18787/', { redirect: 'manual' });
     expect(r.status).toBe(302);
     expect(r.headers.get('location')).toBe('/dashboard');
   });
