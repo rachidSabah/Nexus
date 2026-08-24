@@ -58,11 +58,10 @@ describe('GatewayRuntime integration', () => {
     expect(r.headers.get('content-type')).toContain('text/plain');
   });
 
-  it('exposes / (root info) endpoint', async () => {
+  it('redirects / (root) to the dashboard UI', async () => {
     const r = await fetch('http://localhost:18787/');
-    expect(r.ok).toBe(true);
-    const body = await r.json();
-    expect(body['name']).toBe('Agent Nexus Gateway');
+    expect(r.status).toBe(302);
+    expect(r.headers.get('location')).toBe('/dashboard');
   });
 
   it('returns 400 for malformed /v1/chat/completions request', async () => {
