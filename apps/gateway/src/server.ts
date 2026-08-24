@@ -6819,6 +6819,17 @@ export class HttpServer {
       return forwardToDashboard(req, reply, subpath);
     });
 
+    // Forward the dashboard's API prefix (/api/*) to the Next server, which
+    // rewrites /api/:path* -> gateway/:path* (see apps/dashboard/next.config.mjs).
+    // Without this, loading the dashboard at :8787/dashboard makes the browser
+    // issue same-origin /api/* requests that the gateway can't answer (it only
+    // exposes /v1/*), causing useHealth() to be undefined and a white-screen
+    // "Cannot read properties of undefined (reading 'healthy')" crash.
+    this.fastify.all('/api/*', async (req, reply) => {
+      const subpath = req.url.replace(/^\/+/, '');
+      return forwardToDashboard(req, reply, subpath);
+    });
+
     // ─── Phase 4: Agents ───────────────────────────────────────────────
     this.fastify.get('/v1/agents', async () => {
       return this.deps.agents.list();
