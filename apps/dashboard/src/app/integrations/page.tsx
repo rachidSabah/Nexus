@@ -324,6 +324,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               disabled={busy !== null || running}
               onClick={() => run('start', (id: string) => start(id, effectiveModel || undefined))}
               className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={running ? `${status.displayName} is already running` : `Launch ${status.displayName} agent process`}
             >
               <Play className="h-3.5 w-3.5" /> {busy === 'start' ? '…' : 'Start'}
             </button>
@@ -335,6 +336,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
               disabled={busy !== null || !running}
               onClick={() => setConfirm('stop')}
               className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={running ? `Stop ${status.displayName} process (PID: ${runtime?.pid ?? 'active'})` : `${status.displayName} is currently stopped (click Start to launch)`}
             >
               <Square className="h-3.5 w-3.5" /> {busy === 'stop' ? '…' : 'Stop'}
             </button>
