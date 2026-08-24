@@ -113,10 +113,25 @@ try {
     Write-Host '  Lockfile out of sync - running a normal install.' -ForegroundColor Yellow
     pnpm install
   }
-  # Ensure the CLI package is linked + built so the `anx` bin exists.
-  # (@anx/cli is a root devDependency, so pnpm links its bin into node_modules/.bin.)
-  pnpm --filter @anx/cli build
-  pnpm build
+  # Full workspace build. Turbo builds @anx/cli (a root devDependency) and
+  # links its `anx` bin into node_modules/.bin, so a separate standalone
+  # `pnpm --filter @anx/cli build` is both unnecessary and error-prone (it can
+  # fail on a transient type-resolution error before its deps are built).
+  # Turbo runs package builds in parallel; a single package can occasionally
+  # fail on a transient race (e.g. a dependent not built first). Retry the
+  # whole build a couple of times before giving up, since a plain re-run is
+  # deterministic once deps are installed.
+  $buildOk = $false
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    Write-Host "  Build attempt $attempt/3..."
+    pnpm build
+    if ($LASTEXITCODE -eq 0) { $buildOk = $true; break }
+    Write-Host '  Build attempt failed - retrying...' -ForegroundColor Yellow
+    Start-Sleep -Seconds 2
+  }
+  if (-not $buildOk) {
+    throw "pnpm build failed after 3 attempts. Inspect the output above; a persistent failure usually means a real compile error."
+  }
 } finally {
   Pop-Location
 }
@@ -256,8 +271,8 @@ if ($dashboardUp) {
   # The dashboard is a separate Next.js app (apps/dashboard) that proxies API
   # calls to the gateway via next.config.mjs rewrites. It is NOT served by the
   # gateway, so it runs on its own port (:3000).
-  $dashProc = Start-Process -FilePath 'pnpm' `
-    -ArgumentList '--filter', '@anx/dashboard', 'start' `
+  $dashProc = Start-Process -FilePath 'cmd.exe' `
+    -ArgumentList '/c', 'pnpm', '--filter', '@anx/dashboard', 'start' `
     -WorkingDirectory $REPO_DIR `
     -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $dashLog -RedirectStandardError "$logDir\dashboard.err"
