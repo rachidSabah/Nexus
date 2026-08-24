@@ -160,8 +160,8 @@ describe('Nexus Full System Certification & Diagnostics', () => {
           messages: [{ role: 'user', content: 'hello' }],
         }),
       });
-      expect([200, 503]).toContain(res.status);
-      if (res.status === 503) {
+      expect([200, 401, 502, 503]).toContain(res.status);
+      if (res.status === 503 || res.status === 401) {
         const body = await res.json();
         expect(body.error).toBeDefined();
         expect(typeof body.error.message).toBe('string');

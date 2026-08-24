@@ -6806,12 +6806,14 @@ export class HttpServer {
     };
 
     this.fastify.get('/dashboard', async (req, reply) => {
-      return forwardToDashboard(req, reply, '');
+      const queryStr = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      return reply.code(302).redirect(`${dashboardTarget.replace(/\/+$/, '')}${queryStr}`);
     });
 
     this.fastify.get('/dashboard/*', async (req, reply) => {
       const subpath = (req.params as { '*': string })['*'] || '';
-      return forwardToDashboard(req, reply, subpath);
+      const queryStr = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      return reply.code(302).redirect(`${dashboardTarget.replace(/\/+$/, '')}/${subpath.replace(/^\/+/, '')}${queryStr}`);
     });
 
     this.fastify.get('/_next/*', async (req, reply) => {

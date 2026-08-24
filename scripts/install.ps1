@@ -298,16 +298,15 @@ if (-not $dashboardOk) {
 # --- 8. auto-open browser & report ---
 Write-Step 'Opening Agent Nexus Control Plane in default browser...'
 try {
-  Start-Process "http://127.0.0.1:$GATEWAY_PORT/dashboard"
+  Start-Process "http://127.0.0.1:$DASHBOARD_PORT"
 } catch {
-  Write-Host "  Could not auto-open browser; please navigate to http://127.0.0.1:$GATEWAY_PORT/dashboard" -ForegroundColor Yellow
+  Write-Host "  Could not auto-open browser; please navigate to http://127.0.0.1:$DASHBOARD_PORT" -ForegroundColor Yellow
 }
 
 Write-Step 'Done.'
 Write-Host ''
 Write-Host "  Gateway   : http://127.0.0.1:$GATEWAY_PORT  (health: OK)" -ForegroundColor Green
-Write-Host "  Dashboard : http://127.0.0.1:$GATEWAY_PORT/dashboard  (HTTP: OK)" -ForegroundColor Green
-Write-Host "  Direct UI : http://127.0.0.1:$DASHBOARD_PORT" -ForegroundColor Green
+Write-Host "  Dashboard : http://127.0.0.1:$DASHBOARD_PORT  (HTTP: OK)" -ForegroundColor Green
 Write-Host "  Config    : $INSTALL_DIR\config.json"
 Write-Host "  Logs      : $logDir"
 Write-Host "  Repo      : $REPO_DIR"
@@ -319,7 +318,7 @@ if ($anxResolved) {
 }
 Write-Host ''
 Write-Host '  Next steps:'
-Write-Host "    1. Configure provider API keys in Dashboard (http://127.0.0.1:$GATEWAY_PORT/dashboard)"
+Write-Host "    1. Configure provider API keys in Dashboard (http://127.0.0.1:$DASHBOARD_PORT)"
 Write-Host "    2. Point your coding agent at: http://127.0.0.1:$GATEWAY_PORT/v1"
 Write-Host '    3. Manage agents from the dashboard or CLI:'
 Write-Host '         anx agents list'

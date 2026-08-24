@@ -11,6 +11,8 @@ describe('GatewayRuntime integration', () => {
   beforeAll(async () => {
     // Isolate this suite from the real vault: never read/write the user's
     // live credentials (a stray persist() there wipes their API keys).
+    delete process.env['OPENAI_API_KEY'];
+    delete process.env['ANTHROPIC_API_KEY'];
     process.env['ANX_VAULT_PATH'] = join(tmpdir(), 'anx-test-vault.json');
     process.env['AGENT_NEXUS_VAULT_KEY'] = 'anx-test-key-0123456789abcdef';
     process.env['ANX_CONFIG'] = '';

@@ -330,8 +330,12 @@ export class DefaultMemory implements Memory {
       // If no embeddings provider is available, store without embedding
       // (exact-match search only — no semantic recall).
       if (!record.embedding && this.embeddings) {
-        const embedding = await this.embeddings.embed(data);
-        Object.assign(record, { embedding });
+        try {
+          const embedding = await this.embeddings.embed(data);
+          Object.assign(record, { embedding });
+        } catch {
+          // Gracefully continue without embedding if upstream embedder is unavailable
+        }
       }
       await this.longTermStore.upsert(record);
     }
@@ -384,12 +388,17 @@ export class DefaultMemory implements Memory {
         // long-term search (short-term substring search above already ran).
         return [];
       }
-      const embedding = typeof query === 'string' ? await this.embeddings.embed(query) : query;
-      const results = await this.longTermStore.search(embedding, {
-        namespace: opts.namespace,
-        limit,
-        threshold,
-      });
+      let results: readonly MemorySearchResult[] = [];
+      try {
+        const embedding = typeof query === 'string' ? await this.embeddings.embed(query) : query;
+        results = await this.longTermStore.search(embedding, {
+          namespace: opts.namespace,
+          limit,
+          threshold,
+        });
+      } catch {
+        results = [];
+      }
 
       await this.events.publish(
         buildEvent<MemoryRetrievedEvent>(

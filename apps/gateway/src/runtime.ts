@@ -251,7 +251,7 @@ export class GatewayRuntime {
       cooldownMs: config.routing.cooldownMs,
     });
     const audit = new InMemoryAuditLog();
-    const vaultPath = config.security.vaultPath ?? join(homedir(), '.agent-nexus', 'vault.json');
+    const vaultPath = process.env['ANX_VAULT_PATH'] ?? config.security.vaultPath ?? join(homedir(), '.agent-nexus', 'vault.json');
     let vaultKey = config.security.vaultKey ?? process.env['AGENT_NEXUS_VAULT_KEY'];
 
     // Auto-generate or restore persistent master vault key on disk so API keys persist across restarts
