@@ -6807,7 +6807,7 @@ export class HttpServer {
 
     // Convenience: hitting the gateway root lands on the dashboard UI.
     this.fastify.get('/', async (_req, reply) => {
-      return reply.redirect(302, '/dashboard');
+      return reply.code(302).redirect('/dashboard');
     });
 
     this.fastify.get('/dashboard', async (req, reply) => {
