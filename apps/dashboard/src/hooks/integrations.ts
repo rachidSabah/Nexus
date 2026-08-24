@@ -109,16 +109,17 @@ export function useModelCount() {
   };
 }
 
-async function action(url: string, body?: unknown): Promise<void> {
+async function action(url: string, body?: unknown): Promise<{ ok?: boolean; message?: string }> {
   const res = await fetch(url, {
     method: 'POST',
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error((data as { message?: string }).message || `HTTP ${res.status}`);
+    throw new Error((data as { message?: string; error?: { message?: string } }).message || (data as { error?: { message?: string } }).error?.message || `HTTP ${res.status}`);
   }
+  return data as { ok?: boolean; message?: string };
 }
 
 /** Generic, agent-agnostic lifecycle actions. id is the integration id. */
@@ -131,7 +132,7 @@ export function useIntegrationActions() {
   const stop = useCallback((id: string) => action(`/api/v1/integrations/${id}/stop`), []);
   const restart = useCallback((id: string) => action(`/api/v1/integrations/${id}/restart`), []);
   const rebind = useCallback(
-    (id: string) => action(`/api/v1/agents/${id}/rebind`),
+    (id: string) => action(`/api/v1/integrations/${id}/install`, { force: true }),
     [],
   );
   const installAgent = useCallback(
@@ -143,11 +144,11 @@ export function useIntegrationActions() {
     [],
   );
   const verify = useCallback(
-    (id: string) => action(`/api/v1/integrations/${id}/verify`) as Promise<void>,
+    (id: string) => action(`/api/v1/integrations/${id}/verify`),
     [],
   );
   const uninstall = useCallback(
-    (id: string) => action(`/api/v1/agents/${id}/uninstall`),
+    (id: string) => action(`/api/v1/integrations/${id}/uninstall`),
     [],
   );
   const unbuckle = useCallback(

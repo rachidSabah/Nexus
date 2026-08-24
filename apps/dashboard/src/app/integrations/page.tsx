@@ -36,11 +36,14 @@ import {
 
 function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMutate: () => void }) {
   const { start, stop, restart, rebind, installAgent, updateAgent, verify, uninstall, unbuckle } = useIntegrationActions();
-  const detail = useIntegrationStatus(status.id).data;
-  const runtime = useIntegrationRuntime(status.id).data;
+  const statusHook = useIntegrationStatus(status.id);
+  const runtimeHook = useIntegrationRuntime(status.id);
+  const detail = statusHook.data;
+  const runtime = runtimeHook.data;
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
 
   // ── Per-agent model picker ───────────────────────────────────────────────
@@ -117,14 +120,28 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
   }, [installCmd]);
 
   const run = useCallback(
-    async (key: string, fn: (id: string) => Promise<void>) => {
+    async (key: string, fn: (id: string) => Promise<{ ok?: boolean; message?: string } | void>) => {
       setBusy(key);
       setError(null);
+      setSuccess(null);
       try {
-        await fn(status.id);
+        const res = await fn(status.id);
+        const msg = res && typeof res === 'object' && res.message ? res.message : `${key} completed successfully`;
+        setSuccess(msg);
+        setTimeout(() => setSuccess(null), 5000);
+        statusHook.mutate();
+        runtimeHook.mutate();
         onMutate();
-        setTimeout(onMutate, 800);
-        setTimeout(onMutate, 2000);
+        setTimeout(() => {
+          statusHook.mutate();
+          runtimeHook.mutate();
+          onMutate();
+        }, 800);
+        setTimeout(() => {
+          statusHook.mutate();
+          runtimeHook.mutate();
+          onMutate();
+        }, 2000);
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -132,7 +149,7 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
         setConfirm(null);
       }
     },
-    [status.id, onMutate],
+    [status.id, onMutate, statusHook, runtimeHook],
   );
 
   const healthLabel = detail?.health ?? (running ? 'healthy' : 'exited');
@@ -227,17 +244,30 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
       {/* Lifecycle controls — gated by adapter capabilities */}
       <div className="mt-4">
         <div className="flex flex-wrap gap-2">
-          {/* Action 1: Install Binary Package (npm / pip) */}
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => run('install', installAgent)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25 disabled:opacity-40"
-            title={`Install ${status.displayName} package binary on your system`}
-          >
-            <Rocket className={`h-3.5 w-3.5 ${busy === 'install' ? 'animate-pulse' : ''}`} />
-            {busy === 'install' ? 'Installing…' : status.installed ? 'Reinstall Agent' : 'Install Agent'}
-          </button>
+          {/* Action 1: Install Binary Package (npm / pip) or Download Link for manual editors */}
+          {recipe?.type === 'manual' && !status.installed ? (
+            <a
+              href={recipe?.guideUrl || status.homepage || 'https://www.cursor.com'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
+              title={`Download & Install ${status.displayName} from official website`}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Download &amp; Install ↗
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => run('install', installAgent)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25 disabled:opacity-40"
+              title={`Install ${status.displayName} package binary on your system`}
+            >
+              <Rocket className={`h-3.5 w-3.5 ${busy === 'install' ? 'animate-pulse' : ''}`} />
+              {busy === 'install' ? 'Installing…' : status.installed ? 'Reinstall Agent' : 'Install Agent'}
+            </button>
+          )}
 
           {/* Action 2: Update Agent to Latest Version */}
           {status.installed && (
@@ -385,9 +415,17 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
           </button>
         </div>
 
+        {success && (
+          <div className="mt-2.5 flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-medium text-emerald-300">
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            <span>{success}</span>
+          </div>
+        )}
+
         {error && (
-          <div className="mt-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-300">
-            {error}
+          <div className="mt-2.5 flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-medium text-rose-300">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 text-rose-400" />
+            <span>{error}</span>
           </div>
         )}
 

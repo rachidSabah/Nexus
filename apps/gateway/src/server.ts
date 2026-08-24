@@ -6526,6 +6526,17 @@ export class HttpServer {
       return res;
     });
 
+    this.fastify.post('/v1/integrations/:id/rebind', async (request) => {
+      const { id } = request.params as { id: string };
+      const adapter = resolveIntegration(id);
+      const ctx = integrationCtx(request);
+      await this.deps.events.publish(agentEvent('agent.configuration.started', { agentId: id }) as any);
+      const res = await adapter.install({ ...ctx, force: true });
+      await this.deps.events.publish(agentEvent('agent.configuration.completed', { agentId: id, ok: res.ok, message: res.message }) as any);
+      await this.deps.events.publish(agentEvent('agent.binding.changed', { agentId: id, configured: res.ok }) as any);
+      return res;
+    });
+
     this.fastify.post('/v1/integrations/:id/verify', async (request) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
