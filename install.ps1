@@ -211,8 +211,12 @@ if ($dashboardUp) {
 } else {
   Write-Step 'Starting dashboard (background)...'
   $dashLog = "$logDir\dashboard.log"
-  $dashProc = Start-Process -FilePath 'pnpm' `
-    -ArgumentList '--filter', '@anx/dashboard', 'start' `
+  # pnpm on Windows is a shell shim without a .exe extension, so Start-Process
+  # (which requires a real Win32 executable) rejects it with
+  # "%1 is not a valid Win32 application". Launch it through cmd.exe, which
+  # resolves pnpm from PATH - matching how the gateway is launched via node.
+  $dashProc = Start-Process -FilePath 'cmd.exe' `
+    -ArgumentList '/c pnpm --filter @anx/dashboard start' `
     -WorkingDirectory $REPO_DIR `
     -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $dashLog -RedirectStandardError "$logDir\dashboard.err"

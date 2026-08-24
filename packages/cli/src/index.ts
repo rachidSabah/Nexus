@@ -49,6 +49,8 @@ export class NexusCli {
         return this.doctor(rest);
       case 'config':
         return this.config(rest);
+      case 'update':
+        return this.update(rest);
       case 'dev':
       case 'start':
       case 'launch':
@@ -453,6 +455,15 @@ export class NexusCli {
     } else {
       process.stderr.write('Usage: anx config init\n');
     }
+  }
+
+  // ─── Update ───────────────────────────────────────────────────────────
+  // Pulls the latest Agent Nexus Gateway from the official repository,
+  // reinstalls, rebuilds, and restarts the services. Cross-platform logic
+  // lives in src/update.ts so the command stays thin and testable.
+  private async update(args: string[]): Promise<void> {
+    const { runUpdate } = await import('./update.js');
+    await runUpdate(args);
   }
 
   // ─── Cert ────────────────────────────────────────────────────────────
@@ -871,6 +882,8 @@ COMMANDS
                              (OS, gateway, providers, keys, agents, network)
   config                     Manage configuration
     init                    Create .anxrc.json with default values
+  update [check]             Pull updates from the official repo, rebuild & restart
+                             (use 'anx update check' to preview without applying)
   version                    Print CLI version
   help                       Show this help
 
