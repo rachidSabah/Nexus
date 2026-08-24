@@ -3947,7 +3947,7 @@ export class HttpServer {
       model: string,
       request: any,
     ): { messages: unknown; changed: boolean } => {
-      const envMode = (process.env['ANX_TOKEN_MODE'] ?? 'off').toLowerCase();
+      const envMode = (process.env['ANX_TOKEN_OPT_MODE'] ?? process.env['ANX_TOKEN_MODE'] ?? 'off').toLowerCase();
       const headerMode = (
         (request.headers['x-nexus-token-mode'] as string | undefined)?.trim()
         || ((request.query as { token_mode?: string })?.token_mode)?.trim()
