@@ -10,6 +10,8 @@ import {
   buildEvent,
   type CacheHitEvent,
   type CacheMissEvent,
+  type CompressionCompletedEvent,
+  type CompressionFallbackEvent,
   type FailoverTriggeredEvent,
   type ProviderRequestFailedEvent,
   type ProviderRequestStartedEvent,
@@ -43,6 +45,7 @@ import type {
 import type { PrivacyConfig } from './privacy.js';
 import { DEFAULT_PRIVACY } from './privacy.js';
 import type { RequestTracer } from './request-tracer.js';
+import type { PromptCompressor } from './prompt-compressor.js';
 
 export interface ChatCompletionUseCaseOptions {
   /** Optional cache. When provided, exact-match cache is consulted before routing. */
@@ -75,6 +78,9 @@ export interface ChatCompletionUseCaseOptions {
   /** Optional budget manager. When provided, budget mode (normal | cost_aware | free_only | blocked)
    *  shapes routing preference and spend is recorded on success. Disabled budgets are a no-op. */
   budgetManager?: BudgetManager;
+  /** Optional live prompt compressor (runtime-selected profile). When provided, the
+   *  request is compressed exactly once on the live path, fail-open, before routing. */
+  promptCompressor?: PromptCompressor;
 }
 
 /**
@@ -110,6 +116,7 @@ export class ChatCompletionUseCase {
   private readonly tracer?: RequestTracer;
   private readonly budgetManager?: BudgetManager;
   private readonly rateLimitTracker?: import('./rate-limit-tracker.js').ProactiveRateLimitTracker;
+  private readonly promptCompressor?: PromptCompressor;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -132,6 +139,7 @@ export class ChatCompletionUseCase {
     this.tracer = options.tracer;
     this.budgetManager = options.budgetManager;
     this.rateLimitTracker = options.rateLimitTracker;
+    this.promptCompressor = options.promptCompressor;
   }
 
   async execute(
@@ -173,6 +181,52 @@ export class ChatCompletionUseCase {
           effectiveRequest = results[i]!;
           break;
         }
+      }
+    }
+
+    // ─── Live request compression (single pass, fail-open) ─────────────────
+    // This is the ONLY live compression point. The gateway demo route calls
+    // the same PromptCompressor instance, so there is exactly one
+    // implementation and no risk of double compression. The profile is
+    // runtime-selectable (default 'none' = no behavior change). If the
+    // compressor throws, we fall back to the original request and emit a
+    // compression.fallback event — compression is an optimization, never a
+    // dependency, so the agent request is never corrupted or blocked.
+    if (this.promptCompressor && this.promptCompressor.getConfig().activeProfile !== 'none') {
+      try {
+        const start = Date.now();
+        const result = await this.promptCompressor.compress(effectiveRequest);
+        effectiveRequest = result.request;
+        const durationMs = Date.now() - start;
+        await this.events.publish(
+          buildEvent<CompressionCompletedEvent>(
+            'compression.completed',
+            {
+              requestId,
+              profile: this.promptCompressor.getConfig().activeProfile,
+              originalChars: result.originalChars,
+              compressedChars: result.compressedChars,
+              charsSaved: Math.max(0, result.originalChars - result.compressedChars),
+              tokensSaved: result.tokensSaved,
+              engines: result.strategies,
+              durationMs,
+            },
+            correlationId,
+          ),
+        );
+      } catch (compErr) {
+        // Fail-open: keep the original (uncompressed) request.
+        await this.events.publish(
+          buildEvent<CompressionFallbackEvent>(
+            'compression.fallback',
+            {
+              requestId,
+              reason: (compErr as Error).message,
+              preservedOriginal: true,
+            },
+            correlationId,
+          ),
+        );
       }
     }
 

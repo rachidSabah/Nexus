@@ -49,6 +49,7 @@ import { PluginRuntime } from '@anx/plugins';
 import { createDefaultAdapters } from '@anx/providers';
 import { AgentRuntime, type TaskExecutor } from '@anx/runtime';
 import { EncryptedCredentialVault, RbacService, BUILTIN_ROLES, JwtService, hashApiKey } from '@anx/security';
+import { compressPipeline, externalCompressors } from '@anx/token-efficiency';
 
 /**
  * Build the handler for the `sandbox.execute` agent tool.
@@ -529,7 +530,13 @@ export class GatewayRuntime {
     // money on coding-agent workloads where boilerplate system prompts
     // (e.g. Claude Code's 2000-token system prompt) are sent in every
     // request.
-    const promptCompressor = new PromptCompressor({ enabled: true });
+    const promptCompressor = new PromptCompressor(
+      { enabled: true, activeProfile: 'none' },
+      // Injected so @anx/core stays dependency-free. The active profile
+      // defaults to 'none' so existing installs keep their current
+      // (uncompressed) behavior until an operator activates one.
+      { pipeline: compressPipeline as never, external: externalCompressors as never },
+    );
 
     // Proactive rate-limit tracker — parses X-RateLimit-* headers from
     // provider responses and feeds them into the KeyRegistry's adaptive

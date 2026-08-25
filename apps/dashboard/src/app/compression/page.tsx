@@ -240,6 +240,22 @@ export default function CompressionLabPage() {
   const cfg = policy?.config;
   const maxPct = Math.max(1, ...(data?.engines.map((e) => e.pct) ?? [1]));
 
+  // ── Compression profiles (runtime-selectable, single live pass) ───────────
+  const PROFILES: {
+    id: 'none' | 'safe-stack' | 'caveman' | 'ponytail' | 'rtk';
+    label: string;
+    kind: 'LOSSLESS' | 'EXTERNAL' | 'BEHAVIOR';
+    engines: string;
+    note: string;
+  }[] = [
+    { id: 'none', label: 'None', kind: 'LOSSLESS', engines: '—', note: 'Compression disabled. Default — zero behavior change.' },
+    { id: 'safe-stack', label: 'Safe-Stack', kind: 'LOSSLESS', engines: 'whitespace · system-dedup · schema · minify · session-dedup · headroom', note: 'Strictly lossless. No semantic rewrite, no dropped content.' },
+    { id: 'caveman', label: 'Caveman', kind: 'EXTERNAL', engines: 'caveman (external)', note: 'EXTERNAL / OPERATOR CONFIGURATION REQUIRED. No-op if upstream CLI absent.' },
+    { id: 'ponytail', label: 'Ponytail', kind: 'BEHAVIOR', engines: 'ruleset / behavior', note: 'BEHAVIOR / RULESET. Injects AGENTS.md if configured; no-op otherwise.' },
+    { id: 'rtk', label: 'RTK', kind: 'EXTERNAL', engines: 'rtk (external)', note: 'EXTERNAL / OPERATOR CONFIGURATION REQUIRED. No-op if upstream absent.' },
+  ];
+  const activeProfile: string = (cfg as { activeProfile?: string } | undefined)?.activeProfile ?? 'none';
+
   // ── Copy / Apply ───────────────────────────────────────────────────────────
   const [copied, setCopied] = useState(false);
 
@@ -309,6 +325,53 @@ export default function CompressionLabPage() {
             >
               <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${cfg?.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
             </button>
+          </div>
+
+          {/* Active profile — single live compression pass, runtime switchable */}
+          <div className="mt-4 border-t border-white/10 pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/50 mb-1">
+              Active Compression Profile
+            </p>
+            <p className="text-[10px] text-white/30 mb-3">
+              Applied to live gateway traffic on next request. No restart required.
+            </p>
+            <div className="flex flex-col gap-2">
+              {PROFILES.map((p) => {
+                const isActive = activeProfile === p.id;
+                const kindColor =
+                  p.kind === 'LOSSLESS' ? 'text-emerald-400' : p.kind === 'EXTERNAL' ? 'text-amber-400' : 'text-sky-400';
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => updatePolicy({ activeProfile: p.id })}
+                    className={`flex items-start justify-between gap-3 rounded-xl border p-3 text-left transition-all ${
+                      isActive
+                        ? 'border-violet-500/50 bg-violet-500/10'
+                        : 'border-white/5 bg-white/[0.02] hover:border-white/15'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold ${isActive ? 'text-white' : 'text-white/70'}`}>
+                          {p.label}
+                        </span>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${kindColor} bg-white/5`}>
+                          {p.kind}
+                        </span>
+                        {isActive && (
+                          <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-emerald-300">
+                            active
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 truncate text-[10px] text-white/30">{p.engines}</p>
+                      <p className="mt-0.5 text-[10px] text-white/40 leading-tight">{p.note}</p>
+                    </div>
+                    <div className={`mt-1 h-4 w-4 shrink-0 rounded-full border-2 ${isActive ? 'border-violet-400 bg-violet-400' : 'border-white/20'}`} />
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Strategy toggles */}

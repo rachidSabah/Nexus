@@ -19,17 +19,82 @@
 
 import type { ChatCompletionRequest, ChatMessage } from '../domain/types.js';
 
+/**
+ * Compression profile selector. The active profile decides which engine set
+ * runs on the LIVE gateway request path.
+ *
+ *  - 'none'        → no compression (default; zero behavior change on upgrade)
+ *  - 'safe-stack'  → strictly lossless: whitespace + system-prompt dedup +
+ *                    schema compression + minify + session_dedup + headroom
+ *  - 'caveman'     → external (operator-configured upstream); no-op if absent
+ *  - 'ponytail'    → behavioral ruleset (operator-injected AGENTS.md); no-op otherwise
+ *  - 'rtk'         → external (operator-configured upstream); no-op if absent
+ */
+export type CompressionProfile = 'none' | 'safe-stack' | 'caveman' | 'ponytail' | 'rtk';
+
+/** Engines that make up each live profile (single source of truth). */
+export const PROFILE_ENGINES: Record<CompressionProfile, string[]> = {
+  none: [],
+  'safe-stack': [
+    'whitespaceNormalization',
+    'systemPromptDedup',
+    'schemaCompression',
+    'minify',
+    'session_dedup',
+    'headroom',
+  ],
+  caveman: ['caveman'],
+  ponytail: ['ponytail'],
+  rtk: ['rtk'],
+};
+
+/**
+ * Structural contract for the injected `token-efficiency` pipeline. `@anx/core`
+ * stays dependency-free; the gateway injects the real implementation.
+ */
+export interface ExternalPipelineFn {
+  (text: string, opts: { engines?: string[]; keepComments?: boolean; sessionSeen?: Set<string> }): {
+    text: string;
+    originalChars: number;
+    finalChars: number;
+    originalTokens: number;
+    finalTokens: number;
+    totalCharsSaved: number;
+    totalTokensSaved: number;
+    savingsPct: number;
+    engines: Array<{ engine: string; charsSaved: number; tokensSaved: number }>;
+  };
+}
+
+/**
+ * Structural contract for the injected external compressor registry
+ * (caveman / rtk). Honest no-op when an engine is not registered.
+ */
+export interface ExternalCompressorRegistryLike {
+  has(name: string): boolean;
+  run(
+    name: string,
+    text: string,
+  ): Promise<{ delegated: boolean; output: string; charsIn: number; charsOut: number; charsSaved: number; error?: string }>;
+}
+
 export interface CompressionResult {
   /** The compressed request. */
   request: ChatCompletionRequest;
   /** Estimated tokens saved. */
   tokensSaved: number;
-  /** What was compressed. */
+  /** Strategies that ran (built-in names + `pipeline:<engine>` / `external:<name>`). */
   strategies: string[];
+  /** Measured character counts (truthful, never fabricated). */
+  originalChars: number;
+  compressedChars: number;
 }
 
 export interface CompressionConfig {
+  /** Master enable switch. */
   enabled: boolean;
+  /** Runtime-selected compression profile. Defaults to 'none' (no behavior change). */
+  activeProfile: CompressionProfile;
   /** Normalize excessive whitespace and blank lines (>2 newlines) losslessly. */
   whitespaceNormalization: boolean;
   /** Compact older tool execution dumps (> 3,000 chars) keeping head + tail. */
@@ -44,6 +109,7 @@ export interface CompressionConfig {
 
 export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   enabled: true,
+  activeProfile: 'none',
   whitespaceNormalization: true,
   toolOutputCompaction: true,
   systemPromptDedup: true,
@@ -51,120 +117,139 @@ export const DEFAULT_COMPRESSION_CONFIG: CompressionConfig = {
   summarizeThreshold: 40,
 };
 
+const VALID_PROFILES: CompressionProfile[] = ['none', 'safe-stack', 'caveman', 'ponytail', 'rtk'];
+
 export class PromptCompressor {
   private config: CompressionConfig;
   private totalTokensSaved = 0;
   private totalRequests = 0;
+  /** Injected `token-efficiency` pipeline (minify / session_dedup / headroom). */
+  private readonly pipeline?: ExternalPipelineFn;
+  /** Injected external compressor registry (caveman / rtk). */
+  private readonly external?: ExternalCompressorRegistryLike;
 
-  constructor(config: Partial<CompressionConfig> = {}) {
+  constructor(
+    config: Partial<CompressionConfig> = {},
+    deps: { pipeline?: ExternalPipelineFn; external?: ExternalCompressorRegistryLike } = {},
+  ) {
     this.config = { ...DEFAULT_COMPRESSION_CONFIG, ...config };
+    this.pipeline = deps.pipeline;
+    this.external = deps.external;
   }
 
-  /** Compresses a chat completion request. Returns the compressed request + stats. */
-  compress(request: ChatCompletionRequest): CompressionResult {
-    if (!this.config.enabled) {
-      return { request, tokensSaved: 0, strategies: [] };
+  /**
+   * Compresses a chat completion request for the LIVE gateway path.
+   * Profile-gated and fail-open: any error is thrown so the caller can fall
+   * back to the original request without corrupting or blocking it.
+   */
+  async compress(request: ChatCompletionRequest): Promise<CompressionResult> {
+    const profile: CompressionProfile = this.config.activeProfile ?? 'none';
+
+    // No active profile (or compressor disabled) → exact pass-through.
+    if (profile === 'none' || !this.config.enabled) {
+      const chars = this.requestChars(request);
+      return { request, tokensSaved: 0, strategies: [], originalChars: chars, compressedChars: chars };
     }
 
     const strategies: string[] = [];
-    let tokensSaved = 0;
+    const originalChars = this.requestChars(request);
     let messages: ChatMessage[] = [...request.messages];
     let tools = request.tools;
 
-    // 1. Lossless Whitespace & Blank Line Normalization
-    if (this.config.whitespaceNormalization && messages.length > 0) {
-      const before = this.estimateMessagesTokens(messages);
-      messages = messages.map((m) => {
-        if (typeof m.content === 'string') {
-          const normalized = this.normalizeWhitespace(m.content);
-          if (normalized !== m.content) {
-            return { ...m, content: normalized };
+    try {
+      if (profile === 'safe-stack') {
+        // 1. Lossless Whitespace & Blank Line Normalization (built-in)
+        if (this.config.whitespaceNormalization) {
+          const before = this.estimateMessagesTokens(messages);
+          messages = messages.map((m) => {
+            if (typeof m.content === 'string') {
+              const normalized = this.normalizeWhitespace(m.content);
+              if (normalized !== m.content) return { ...m, content: normalized };
+            }
+            return m;
+          });
+          const after = this.estimateMessagesTokens(messages);
+          const saved = Math.max(0, before - after);
+          if (saved > 0) {
+            strategies.push('whitespace_normalization');
           }
         }
-        return m;
-      });
-      const after = this.estimateMessagesTokens(messages);
-      const saved = before - after;
-      if (saved > 0) {
-        tokensSaved += saved;
-        strategies.push(`whitespace_normalization (-${saved} tokens)`);
-      }
-    }
 
-    // 2. System prompt deduplication & cleanup
-    if (this.config.systemPromptDedup && messages.length > 1) {
-      const before = this.estimateMessagesTokens(messages);
-      messages = this.dedupSystemMessages(messages);
-      const after = this.estimateMessagesTokens(messages);
-      const saved = before - after;
-      if (saved > 0) {
-        tokensSaved += saved;
-        strategies.push(`system_prompt_dedup (-${saved} tokens)`);
-      }
-    }
-
-    // 3. Tool Output Tail-Preserving Compaction for older turns
-    if (this.config.toolOutputCompaction && messages.length > 4) {
-      const before = this.estimateMessagesTokens(messages);
-      messages = this.compactOlderToolOutputs(messages);
-      const after = this.estimateMessagesTokens(messages);
-      const saved = before - after;
-      if (saved > 0) {
-        tokensSaved += saved;
-        strategies.push(`tool_output_compaction (-${saved} tokens)`);
-      }
-    }
-
-    // 4. Tool schema metadata pruning
-    if (this.config.schemaCompression && tools && tools.length > 0) {
-      const before = JSON.stringify(tools).length;
-      const compressedTools = (tools as Array<Record<string, unknown>>).map((t) => {
-        const fn = t['function'] as Record<string, unknown> | undefined;
-        if (!fn) return t;
-        const compressed = { ...fn };
-        // Remove redundant $schema, title, and undefined annotations
-        if (compressed['parameters'] && typeof compressed['parameters'] === 'object') {
-          const params = { ...(compressed['parameters'] as Record<string, unknown>) };
-          delete params['$schema'];
-          delete params['title'];
-          if (params['additionalProperties'] === false) {
-            delete params['additionalProperties'];
+        // 2. System Prompt De-duplication (built-in)
+        if (this.config.systemPromptDedup) {
+          const seen = new Set<string>();
+          const deduped: ChatMessage[] = [];
+          for (const m of messages) {
+            if (m.role === 'system' && typeof m.content === 'string') {
+              const key = m.content.trim();
+              if (seen.has(key)) continue;
+              seen.add(key);
+            }
+            deduped.push(m);
           }
-          compressed['parameters'] = params;
+          if (deduped.length < messages.length) {
+            messages = deduped;
+            strategies.push('system_prompt_dedup');
+          }
         }
-        return { ...t, function: compressed };
-      });
-      const after = JSON.stringify(compressedTools).length;
-      const saved = Math.max(0, Math.round((before - after) / 4));
-      if (saved > 0) {
-        tokensSaved += saved;
-        strategies.push(`schema_compression (-${saved} tokens)`);
-        tools = compressedTools as never;
+
+        // 3. Schema Compression (built-in)
+        if (this.config.schemaCompression && request.tools) {
+          const cleaned = request.tools.map((t) => this.cleanToolSchema(t));
+          tools = cleaned as typeof request.tools;
+          strategies.push('schema_compression');
+        }
+
+        // 4. Pipeline engines (injected token-efficiency: minify / session_dedup / headroom)
+        if (this.pipeline) {
+          const engines = ['minify', 'session_dedup', 'headroom'];
+          messages = messages.map((m) => {
+            if (typeof m.content === 'string') {
+              const r = this.pipeline!(m.content, {
+                engines,
+                keepComments: false,
+                sessionSeen: new Set<string>(),
+              });
+              if (r.text !== m.content) return { ...m, content: r.text };
+            }
+            return m;
+          });
+          for (const e of this.pipeline('', { engines }).engines) {
+            strategies.push(`pipeline:${e.engine}`);
+          }
+        }
+      } else if ((profile === 'caveman' || profile === 'rtk') && this.external) {
+        // External compressors: no-op (delegated:false) when not registered.
+        if (this.external.has(profile)) {
+          messages = await Promise.all(
+            messages.map(async (m) => {
+              if (typeof m.content !== 'string') return m;
+              const out = await this.external!.run(profile, m.content);
+              return { ...m, content: out.output };
+            }),
+          );
+          strategies.push(`${profile} (external)`);
+        }
+        // If not registered → unchanged request, 0 savings (honest no-op).
       }
+      // 'ponytail' → behavioral ruleset; no prompt transform.
+
+      const compressedChars = this.requestChars({ ...request, messages, tools });
+      const charsSaved = Math.max(0, originalChars - compressedChars);
+      this.totalRequests++;
+      this.totalTokensSaved += Math.round(charsSaved / 4);
+      return {
+        request: { ...request, messages, tools },
+        tokensSaved: Math.round(charsSaved / 4),
+        strategies,
+        originalChars,
+        compressedChars,
+      };
+    } catch (err) {
+      // Fail-open: never corrupt or block the agent request. Preserve the
+      // original cause so the fallback event reports the real failure.
+      throw new Error(`compression profile '${profile}' failed: ${(err as Error).message}`);
     }
-
-    // 5. Conversation summarization when approaching long context limits
-    if (this.config.summarizeThreshold > 0 && messages.length > this.config.summarizeThreshold) {
-      const before = this.estimateMessagesTokens(messages);
-      messages = this.summarizeOlderMessages(messages);
-      const after = this.estimateMessagesTokens(messages);
-      const saved = before - after;
-      if (saved > 0) {
-        tokensSaved += saved;
-        strategies.push(`conversation_summarization (-${saved} tokens)`);
-      }
-    }
-
-    const compressedRequest: ChatCompletionRequest = {
-      ...request,
-      messages,
-      tools,
-    };
-
-    this.totalTokensSaved += tokensSaved;
-    this.totalRequests++;
-
-    return { request: compressedRequest, tokensSaved, strategies };
   }
 
   /** Returns aggregate stats for the dashboard. */
@@ -182,12 +267,33 @@ export class PromptCompressor {
     return { ...this.config };
   }
 
-  /** Updates config at runtime. */
+  /** Updates config at runtime. Invalid profiles are ignored (caller validates). */
   updateConfig(updates: Partial<CompressionConfig>): void {
+    if (updates.activeProfile !== undefined) {
+      const p = updates.activeProfile as CompressionProfile;
+      if (VALID_PROFILES.includes(p)) {
+        this.config = { ...this.config, activeProfile: p };
+      }
+      // Invalid profile → leave activeProfile unchanged (never coerce/crash).
+      const { activeProfile: _dropped, ...rest } = updates;
+      this.config = { ...this.config, ...rest };
+      return;
+    }
     this.config = { ...this.config, ...updates };
   }
 
   // ─── Internal Optimization Logic ──────────────────────────────────────────
+
+  private requestChars(req: ChatCompletionRequest): number {
+    let chars = 0;
+    for (const m of req.messages) {
+      if (typeof m.content === 'string') chars += m.content.length;
+      else chars += JSON.stringify(m.content).length;
+      if (m.toolCalls) chars += JSON.stringify(m.toolCalls).length;
+    }
+    if (req.tools) chars += JSON.stringify(req.tools).length;
+    return chars;
+  }
 
   private normalizeWhitespace(text: string): string {
     // Collapse 3 or more newlines to 2, and trim trailing whitespace per line
@@ -199,26 +305,12 @@ export class PromptCompressor {
       .replace(/\n{3,}/g, '\n\n');
   }
 
-  private dedupSystemMessages(messages: ChatMessage[]): ChatMessage[] {
-    const result: ChatMessage[] = [];
-    const seenSystemTexts = new Set<string>();
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i]!;
-      if (msg.role === 'system' && typeof msg.content === 'string') {
-        const key = msg.content.trim();
-        if (seenSystemTexts.has(key)) {
-          // Skip exact duplicate system message
-          continue;
-        }
-        seenSystemTexts.add(key);
-      }
-      result.push(msg);
-    }
-    return result;
-  }
-
-  private compactOlderToolOutputs(messages: ChatMessage[]): ChatMessage[] {
+  /**
+   * Tool Output Tail-Preserving Compaction for older turns.
+   * Retained for a future explicit "aggressive" profile/toggle (NOT enabled in
+   * safe-stack, which must stay strictly lossless).
+   */
+  compactOlderToolOutputs(messages: ChatMessage[]): ChatMessage[] {
     // Leave the last 3 messages completely untouched so the model has 100% raw output
     const activeWindow = 3;
     if (messages.length <= activeWindow) return messages;
@@ -242,7 +334,17 @@ export class PromptCompressor {
     });
   }
 
-  private summarizeOlderMessages(messages: ChatMessage[]): ChatMessage[] {
+  /**
+   * Conversation summarization for long contexts.
+   * Retained for a future explicit "aggressive" profile/toggle (NOT enabled in
+   * safe-stack, which must stay strictly lossless).
+   */
+  /**
+   * Conversation summarization for long contexts.
+   * Retained for a future explicit "aggressive" profile/toggle (NOT enabled in
+   * safe-stack, which must stay strictly lossless).
+   */
+  summarizeOlderMessages(messages: ChatMessage[]): ChatMessage[] {
     // Keep system messages and the last 15 messages verbatim
     const keepCount = Math.min(15, Math.floor(this.config.summarizeThreshold / 2));
     const systemMessages = messages.filter((m) => m.role === 'system');
@@ -266,6 +368,23 @@ export class PromptCompressor {
     };
 
     return [...systemMessages, summary, ...toKeep];
+  }
+
+  private cleanToolSchema(tool: unknown): Record<string, unknown> {
+    const t = tool as Record<string, unknown>;
+    const fn = t['function'] as Record<string, unknown> | undefined;
+    if (!fn) return t;
+    const compressed = { ...fn };
+    if (compressed['parameters'] && typeof compressed['parameters'] === 'object') {
+      const params = { ...(compressed['parameters'] as Record<string, unknown>) };
+      delete params['$schema'];
+      delete params['title'];
+      if (params['additionalProperties'] === false) {
+        delete params['additionalProperties'];
+      }
+      compressed['parameters'] = params;
+    }
+    return { ...t, function: compressed };
   }
 
   private estimateMessagesTokens(messages: readonly ChatMessage[]): number {

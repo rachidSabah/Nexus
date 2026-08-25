@@ -770,6 +770,34 @@ export interface RuntimeIncidentEscalatedEvent extends DomainEvent {
   };
 }
 
+/** Emitted when a live request is compressed on the gateway path (measured, never fabricated). */
+export interface CompressionCompletedEvent extends DomainEvent {
+  readonly type: 'compression.completed';
+  readonly payload: {
+    readonly requestId: string;
+    /** Active profile at compression time. */
+    readonly profile: string;
+    readonly originalChars: number;
+    readonly compressedChars: number;
+    readonly charsSaved: number;
+    readonly tokensSaved: number;
+    /** Engines that ran (built-in names + `pipeline:<engine>` / `external:<name>`). */
+    readonly engines: string[];
+    readonly durationMs: number;
+  };
+}
+
+/** Emitted when live compression fails — the original request is preserved and sent uncompressed. */
+export interface CompressionFallbackEvent extends DomainEvent {
+  readonly type: 'compression.fallback';
+  readonly payload: {
+    readonly requestId: string;
+    readonly reason: string;
+    /** Always true: fail-open never corrupts or blocks the agent request. */
+    readonly preservedOriginal: boolean;
+  };
+}
+
 /**
  * Internal helper: build a typed event.
  */

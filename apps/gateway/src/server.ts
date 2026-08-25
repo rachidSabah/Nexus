@@ -4000,6 +4000,12 @@ export class HttpServer {
         || ''
       ).toLowerCase();
       const mode = headerMode || envMode;
+      // Single live-compression guarantee: when the profile-based
+      // PromptCompressor is active, it OWNS the live compression pass. Never
+      // double-compress with the separate applyLiveOptimization path.
+      if (this.deps.promptCompressor.getConfig().activeProfile !== 'none') {
+        return { messages, changed: false };
+      }
       if (mode === 'off' || !mode) return { messages, changed: false };
 
       try {
@@ -5033,9 +5039,10 @@ export class HttpServer {
       };
     });
 
-    this.fastify.post('/v1/compression', async (request) => {
+    this.fastify.post('/v1/compression', async (request, reply) => {
       const body = request.body as {
         enable?: boolean;
+        activeProfile?: string;
         strategies?: {
           stopWordRemoval?: boolean;
           schemaCompression?: boolean;
@@ -5045,12 +5052,25 @@ export class HttpServer {
       };
       const updates: {
         enabled?: boolean;
+        activeProfile?: 'none' | 'safe-stack' | 'caveman' | 'ponytail' | 'rtk';
         stopWordRemoval?: boolean;
         schemaCompression?: boolean;
         systemPromptDedup?: boolean;
         summarizeThreshold?: number;
       } = {};
       if (body.enable !== undefined) updates.enabled = body.enable;
+      // Runtime profile switch (no restart). Invalid profiles are rejected with
+      // 400 — the gateway must never crash and must never silently coerce.
+      if (body.activeProfile !== undefined) {
+        const VALID = ['none', 'safe-stack', 'caveman', 'ponytail', 'rtk'];
+        if (!VALID.includes(body.activeProfile)) {
+          return reply.code(400).send({
+            ok: false,
+            error: `invalid activeProfile '${body.activeProfile}'. Supported: ${VALID.join(', ')}`,
+          });
+        }
+        updates.activeProfile = body.activeProfile as 'none' | 'safe-stack' | 'caveman' | 'ponytail' | 'rtk';
+      }
       if (body.strategies) {
         if (body.strategies.stopWordRemoval !== undefined) updates.stopWordRemoval = body.strategies.stopWordRemoval;
         if (body.strategies.schemaCompression !== undefined) updates.schemaCompression = body.strategies.schemaCompression;
@@ -5987,7 +6007,7 @@ export class HttpServer {
         messages: body.messages as any,
         tools: body.tools as any,
       };
-      const result = this.deps.promptCompressor.compress(mockReq);
+      const result = await this.deps.promptCompressor.compress(mockReq);
 
       const origChars = JSON.stringify(body.messages).length;
       const optChars = JSON.stringify(result.request.messages).length;
