@@ -54,6 +54,9 @@ export {
   OpenCodeIntegration,
   OpenCodeGoIntegration,
 } from './adapters/opencode.js';
+export { OpenCodeZenIntegration } from './adapters/opencode-zen.js';
+export { GeminiCliIntegration } from './adapters/gemini-cli.js';
+export { OpenHandsIntegration } from './adapters/openhands.js';
 export { QwenCodeIntegration } from './adapters/qwen-code.js';
 export { CursorIntegration } from './adapters/cursor.js';
 export { ContinueIntegration } from './adapters/continue.js';
@@ -66,6 +69,8 @@ export { JetBrainsIntegration } from './adapters/jetbrains.js';
 export { NeovimIntegration } from './adapters/neovim.js';
 export { EmacsIntegration } from './adapters/emacs.js';
 export { DeepSeekHarnessIntegration } from './adapters/deepseek-harness.js';
+export { GooseIntegration } from './adapters/goose.js';
+export { CrushIntegration } from './adapters/crush.js';
 
 export {
   TRUSTED_AGENT_CATALOG,

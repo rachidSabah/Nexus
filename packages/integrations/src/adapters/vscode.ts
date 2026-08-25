@@ -32,9 +32,7 @@ export class VsCodeIntegration extends BaseIntegration {
   protected configFiles() {
     return [
       {
-        path: this.isMac()
-          ? 'Library/Application Support/Code/User/settings.json'
-          : '.vscode/settings.json',
+        path: this.userSettingsRelPath(),
         merge: 'json-merge' as const,
         content: (ctx: IntegrationContext) =>
           jsonString({
@@ -56,7 +54,31 @@ export class VsCodeIntegration extends BaseIntegration {
     ];
   }
 
-  private isMac(): boolean {
-    return process.platform === 'darwin';
+  /**
+   * Returns the platform-correct relative path (from home dir) to the VS Code
+   * global user settings file.
+   *
+   * macOS:   ~/Library/Application Support/Code/User/settings.json
+   * Windows: ~/AppData/Roaming/Code/User/settings.json
+   *            (resolved via APPDATA env for portability)
+   * Linux:   ~/.config/Code/User/settings.json
+   */
+  private userSettingsRelPath(): string {
+    switch (process.platform) {
+      case 'darwin':
+        return 'Library/Application Support/Code/User/settings.json';
+      case 'win32': {
+        // APPDATA is always set on Windows; fall back to relative path if not.
+        const appData = process.env.APPDATA;
+        if (appData) {
+          // BaseIntegration.writeConfigFile resolves against home() when the path
+          // does not start with / or a drive letter. Use relative form instead.
+          return 'AppData/Roaming/Code/User/settings.json';
+        }
+        return 'AppData/Roaming/Code/User/settings.json';
+      }
+      default:
+        return '.config/Code/User/settings.json';
+    }
   }
 }

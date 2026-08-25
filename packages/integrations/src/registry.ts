@@ -4,16 +4,21 @@ import { ClaudeCodeIntegration } from './adapters/claude-code.js';
 import { ClineIntegration } from './adapters/cline.js';
 import { CodexCliIntegration } from './adapters/codex-cli.js';
 import { ContinueIntegration } from './adapters/continue.js';
+import { CrushIntegration } from './adapters/crush.js';
 import { CursorIntegration } from './adapters/cursor.js';
 import { DeepSeekHarnessIntegration } from './adapters/deepseek-harness.js';
 import { EmacsIntegration } from './adapters/emacs.js';
+import { GeminiCliIntegration } from './adapters/gemini-cli.js';
+import { GooseIntegration } from './adapters/goose.js';
 import { HermesCliIntegration } from './adapters/hermes-cli.js';
 import { JetBrainsIntegration } from './adapters/jetbrains.js';
 import { NeovimIntegration } from './adapters/neovim.js';
+import { OpenCodeZenIntegration } from './adapters/opencode-zen.js';
 import {
   OpenCodeIntegration,
   OpenCodeGoIntegration,
 } from './adapters/opencode.js';
+import { OpenHandsIntegration } from './adapters/openhands.js';
 import { QwenCodeIntegration } from './adapters/qwen-code.js';
 import { RooCodeIntegration } from './adapters/roo-code.js';
 import { VsCodeIntegration } from './adapters/vscode.js';
@@ -28,12 +33,17 @@ export const BUILTIN_INTEGRATIONS: IntegrationAdapter[] = [
   // ─── CLI tools ───────────────────────────────────────────────────────────
   new ClaudeCodeIntegration(),
   new CodexCliIntegration(),
+  new GeminiCliIntegration(),
   new QwenCodeIntegration(),
   new HermesCliIntegration(),
   new OpenCodeIntegration(),
   new OpenCodeGoIntegration(),
+  new OpenCodeZenIntegration(),
   new AiderIntegration(),
+  new OpenHandsIntegration(),
   new DeepSeekHarnessIntegration(),
+  new GooseIntegration(),
+  new CrushIntegration(),
 
   // ─── Editors ─────────────────────────────────────────────────────────────
   new CursorIntegration(),

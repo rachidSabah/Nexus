@@ -228,8 +228,8 @@ const ALL_ENGINES: CompressionEngineName[] = [
 export function compressPipeline(text: string, options: PipelineOptions = {}): PipelineResult {
   const opts: Required<PipelineOptions> = {
     engines: options.engines ?? ALL_ENGINES,
-    elideThreshold: options.elideThreshold ?? 4000,
-    elideKeep: options.elideKeep ?? 40,
+    elideThreshold: options.elideThreshold ?? 2000,
+    elideKeep: options.elideKeep ?? 25,
     keepComments: options.keepComments ?? false,
     sessionSeen: options.sessionSeen ?? new Set<string>(),
     sessionDedupMinLen: options.sessionDedupMinLen ?? 64,

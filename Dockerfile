@@ -32,23 +32,24 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=8787
 
-# Copy built application
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/apps/gateway/dist ./apps/gateway/dist
-COPY --from=builder /app/apps/gateway/package.json ./apps/gateway/package.json
-COPY --from=builder /app/apps/gateway/node_modules ./apps/gateway/node_modules
-COPY --from=builder /app/apps/dashboard/.next ./apps/dashboard/.next
-COPY --from=builder /app/apps/dashboard/package.json ./apps/dashboard/package.json
-COPY --from=builder /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
-COPY --from=builder /app/packages ./packages
-COPY --from=builder /app/apps/gateway/agent-nexus.config.example.json ./agent-nexus.config.json
-
-EXPOSE 8787 3000
-
 # Run as non-root for security (Phase 16 §16).
 RUN addgroup -S nexus && adduser -S nexus -G nexus
+
+# Copy built application — owned by the nexus user so the process can write
+# runtime config files (agent-nexus.config.json, temp pids, etc.)
+COPY --from=builder --chown=nexus:nexus /app/package.json ./package.json
+COPY --from=builder --chown=nexus:nexus /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY --from=builder --chown=nexus:nexus /app/node_modules ./node_modules
+COPY --from=builder --chown=nexus:nexus /app/apps/gateway/dist ./apps/gateway/dist
+COPY --from=builder --chown=nexus:nexus /app/apps/gateway/package.json ./apps/gateway/package.json
+COPY --from=builder --chown=nexus:nexus /app/apps/gateway/node_modules ./apps/gateway/node_modules
+COPY --from=builder --chown=nexus:nexus /app/apps/dashboard/.next ./apps/dashboard/.next
+COPY --from=builder --chown=nexus:nexus /app/apps/dashboard/package.json ./apps/dashboard/package.json
+COPY --from=builder --chown=nexus:nexus /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
+COPY --from=builder --chown=nexus:nexus /app/packages ./packages
+COPY --from=builder --chown=nexus:nexus /app/apps/gateway/agent-nexus.config.example.json ./agent-nexus.config.json
+EXPOSE 8787 3000
+
 USER nexus
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

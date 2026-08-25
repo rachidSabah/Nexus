@@ -249,7 +249,8 @@ export class AgentDetector {
   /** Checks if an npm global package is installed. */
   private async checkNpmGlobal(pkg: string): Promise<{ version: string } | undefined> {
     try {
-      const { stdout } = await execAsync(`npm ls -g ${pkg} --json --depth=0 2>/dev/null`, { timeout: 5000 });
+      const nullDev = process.platform === 'win32' ? '2>nul' : '2>/dev/null';
+      const { stdout } = await execAsync(`npm ls -g ${pkg} --json --depth=0 ${nullDev}`, { timeout: 5000 });
       const body = JSON.parse(stdout) as {
         dependencies?: Record<string, { version?: string }>;
       };

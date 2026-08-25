@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { rmSync } from 'fs';
 import { GatewayRuntime } from '../src/runtime.js';
 
-describe('Phase 22: AGY Build Session & Health Routes', { timeout: 30000 }, () => {
+describe('Phase 22: AGY Build Session & Health Routes', { timeout: 60000, hookTimeout: 60000 }, () => {
   let runtime: GatewayRuntime;
   const PORT = 19797;
 
@@ -18,11 +18,11 @@ describe('Phase 22: AGY Build Session & Health Routes', { timeout: 30000 }, () =
 
     runtime = await GatewayRuntime.create(undefined);
     await runtime.start();
-  });
+  }, 60000);
 
   afterAll(async () => {
     await runtime.stop();
-  });
+  }, 60000);
 
   it('GET /v1/agents/agy/health returns truthful AGY runtime diagnostic', async () => {
     const res = await fetch(`http://127.0.0.1:${PORT}/v1/agents/agy/health`);

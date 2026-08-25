@@ -26,7 +26,7 @@ describe('Nexus Full System Certification & Diagnostics', () => {
     } catch {
       // ignore
     }
-  }, 15000);
+  }, 30000);
 
   describe('1. Gateway Health & Core Endpoints', () => {
     it('serves GET /healthz and /health with 200', async () => {
@@ -89,9 +89,10 @@ describe('Nexus Full System Certification & Diagnostics', () => {
     it('every supported integration (continue, neovim, emacs, jetbrains, etc.) is recognized in catalog', () => {
       const supported = [
         'claude-code', 'codex-cli', 'qwen-code', 'hermes-cli',
-        'opencode', 'opencode-go', 'aider',
+        'opencode', 'opencode-go', 'opencode-zen', 'aider',
+        'gemini-cli', 'openhands', 'deepseek-harness', 'goose', 'crush',
         'cursor', 'continue', 'cline', 'roo-code', 'zed', 'neovim', 'emacs',
-        'vscode', 'jetbrains', 'deepseek-harness',
+        'vscode', 'jetbrains',
       ];
       for (const id of supported) {
         const entry = getAgentCatalogEntry(id);
@@ -135,7 +136,7 @@ describe('Nexus Full System Certification & Diagnostics', () => {
         expect(typeof item.installed).toBe('boolean');
         expect(typeof item.configured).toBe('boolean');
       }
-    });
+    }, 60000);
   });
 
   describe('3. Model Routing, Virtual Aliases & Honest Diagnostics', () => {

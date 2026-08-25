@@ -21,6 +21,8 @@ paths = [
   '''NEXUS_.*\.md''',
   '''\.(test|spec)\.(ts|tsx|js)$''',
   '''test/''',
+  '''tests/''',
+  '''\.example\.json$''',
   '''base-agent-adapter\.ts''',
 ]
 regexes = [

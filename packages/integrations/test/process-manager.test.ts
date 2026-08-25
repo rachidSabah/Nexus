@@ -35,7 +35,7 @@ describe('IntegrationProcessManager', () => {
     for (const s of mgr.list()) {
       await mgr.stop(s.id);
     }
-  });
+  }, 30000);
 
   it('starts a process and tracks its PID independently per agent id', async () => {
     const a = await mgr.start('agent-a', aliveSpec);

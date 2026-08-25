@@ -46,7 +46,9 @@ import {
 } from '@anx/core';
 import { DurableIdempotencyStore, BackupRestoreEngine, DurableIncidentStore } from '@anx/persistence';
 import { AgentRuntimeManager } from './agent-runtime-manager.js';
+import { AgentInstallationEngine } from './agent-installation-engine.js';
 import { UnifiedAgentRegistry } from './unified-agent-registry.js';
+import { ObsidianKnowledgeAdapter } from '@anx/memory';
 import { IntegrationBuildingAgentAdapter, type BuildingAgentPort } from './building-agent-port.js';
 import {
   PolicyEngine,
@@ -5873,24 +5875,38 @@ export class HttpServer {
 
     this.fastify.post('/v1/compression/pipeline-preview', async (request, reply) => {
       // WS5 competitive feature: LIVE per-engine compression savings.
-      // Runs the stacked CompressionPipeline (minify → dedupe → collapse →
-      // elide) on raw text and returns REAL, measured per-engine savings.
-      // Unlike a static "X% saved" claim, this recomputes on every request
-      // against the user's actual content.
+      // Runs all 6 stacked engines (minify → dedupe_lines → collapse_arrays →
+      // elide_middle → session_dedup → headroom) and returns REAL per-engine savings.
+      // priorContent seeds the session_dedup engine so cross-turn deduplication fires.
       const body = request.body as {
         text?: string;
-        engines?: ('minify' | 'dedupe_lines' | 'collapse_arrays' | 'elide_middle')[];
+        engines?: ('minify' | 'dedupe_lines' | 'collapse_arrays' | 'elide_middle' | 'session_dedup' | 'headroom')[];
         elideThreshold?: number;
+        elideKeep?: number;
         keepComments?: boolean;
+        /** Optional prior-session text to seed session_dedup cross-turn deduplication. */
+        priorContent?: string;
       };
       const text = body?.text;
       if (typeof text !== 'string' || text.length === 0) {
         return reply.code(400).send({ error: { message: 'text (non-empty string) is required' } });
       }
+
+      // Build sessionSeen from priorContent (paragraph-block granularity, minLen 64).
+      const sessionSeen = new Set<string>();
+      if (typeof body.priorContent === 'string' && body.priorContent.length > 0) {
+        for (const block of body.priorContent.split(/\n{2,}/)) {
+          const key = block.trim();
+          if (key.length >= 64) sessionSeen.add(key);
+        }
+      }
+
       const result = compressPipeline(text, {
         engines: body.engines,
         elideThreshold: body.elideThreshold,
+        elideKeep: body.elideKeep,
         keepComments: body.keepComments,
+        sessionSeen,
       });
       return reply.send({
         originalChars: result.originalChars,
@@ -6570,26 +6586,125 @@ export class HttpServer {
     this.fastify.get('/v1/agent-catalog', handleAgentCatalog);
     this.fastify.get('/agent-catalog', handleAgentCatalog);
 
+    // Agent Installation Jobs API (Background engine with live logs and state recovery)
+    const installEngine = AgentInstallationEngine.getInstance();
+
+    this.fastify.get('/v1/agents/install-jobs', async (request) => {
+      const query = (request.query ?? {}) as { agentId?: string };
+      const jobs = installEngine.listJobs(query.agentId);
+      return { jobs, count: jobs.length };
+    });
+
+    this.fastify.get('/v1/agents/install-jobs/:jobId', async (request, reply) => {
+      const { jobId } = request.params as { jobId: string };
+      const job = installEngine.getJob(jobId);
+      if (!job) {
+        return reply.code(404).send({ error: `Installation job not found: ${jobId}` });
+      }
+      return job;
+    });
+
+    this.fastify.post('/v1/agents/install-jobs/:jobId/cancel', async (request, reply) => {
+      const { jobId } = request.params as { jobId: string };
+      const ok = await installEngine.cancelJob(jobId);
+      return reply.code(ok ? 200 : 400).send({ ok, cancelled: ok });
+    });
+
     this.fastify.post('/v1/agents/:id/install', async (request, reply) => {
       const { id } = request.params as { id: string };
-      const body = (request.body as { force?: boolean } | undefined) ?? {};
-      const manager = new AgentRuntimeManager();
-      await this.deps.events.publish(agentEvent('agent.install.started', { agentId: id }) as any);
-      const result = await manager.installAgent(id, {
-        gatewayUrl: `http://${request.headers['host'] ?? '127.0.0.1:8787'}`,
+      const body = (request.body as { force?: boolean; defaultModel?: string; async?: boolean } | undefined) ?? {};
+      const gatewayUrl = `http://${request.headers['host'] ?? '127.0.0.1:8787'}`;
+      
+      const job = await installEngine.startInstallJob(id, {
+        gatewayUrl,
         force: body.force,
+        defaultModel: body.defaultModel,
       });
-      await this.deps.events.publish(agentEvent('agent.install.completed', { agentId: id, ok: result.ok, message: result.message }) as any);
+
+      await this.deps.events.publish(agentEvent('agent.install.started', { agentId: id, jobId: job.id }) as any);
       await this.getAuditLogger().record({
         event: 'config.changed',
         principal: 'system',
         action: 'agent.install',
         resource: id,
         agentId: id,
-        success: result.ok,
-        metadata: { agentId: id, resultState: result.state, message: result.message },
+        success: job.status !== 'FAILED',
+        metadata: { agentId: id, jobId: job.id, status: job.status },
       });
-      return reply.code(result.ok ? 200 : 400).send(result);
+
+      return reply.code(job.status === 'FAILED' ? 400 : 202).send({
+        installationId: job.id,
+        agentId: id,
+        agentName: job.agentName,
+        status: job.status,
+        stage: job.stage,
+        pid: job.pid,
+        job,
+      });
+    });
+
+    // ─── Optional Obsidian Knowledge Service API ───────────────────────
+    const obsidianAdapter = new ObsidianKnowledgeAdapter();
+
+    this.fastify.get('/v1/knowledge/status', async () => {
+      const status = await obsidianAdapter.getStatus();
+      const config = obsidianAdapter.getConfig();
+      return { ok: true, obsidian: { ...status, config } };
+    });
+
+    this.fastify.post('/v1/knowledge/configure', async (request) => {
+      const body = (request.body ?? {}) as { vaultPath?: string; apiPort?: number; apiKey?: string; enabled?: boolean };
+      obsidianAdapter.setConfig(body);
+      const status = await obsidianAdapter.getStatus();
+      return { ok: true, obsidian: { ...status, config: obsidianAdapter.getConfig() } };
+    });
+
+    this.fastify.get('/v1/knowledge/search', async (request, reply) => {
+      const query = (request.query ?? {}) as { q?: string; limit?: string };
+      if (!query.q) {
+        return reply.code(400).send({ error: 'Missing required search query parameter: q' });
+      }
+      const results = await obsidianAdapter.searchNotes(query.q, query.limit ? parseInt(query.limit, 10) : 20);
+      return { results, count: results.length };
+    });
+
+    this.fastify.get('/v1/knowledge/read', async (request, reply) => {
+      const query = (request.query ?? {}) as { path?: string };
+      if (!query.path) {
+        return reply.code(400).send({ error: 'Missing required parameter: path' });
+      }
+      try {
+        const note = await obsidianAdapter.readNote(query.path);
+        return note;
+      } catch (err) {
+        return reply.code(404).send({ error: (err as Error).message });
+      }
+    });
+
+    this.fastify.post('/v1/knowledge/write', async (request, reply) => {
+      const body = (request.body ?? {}) as { path?: string; content?: string; append?: boolean };
+      if (!body.path || body.content === undefined) {
+        return reply.code(400).send({ error: 'Missing required fields: path, content' });
+      }
+      try {
+        const res = await obsidianAdapter.writeNote(body.path, body.content, { append: body.append });
+        return res;
+      } catch (err) {
+        return reply.code(400).send({ error: (err as Error).message });
+      }
+    });
+
+    this.fastify.post('/v1/knowledge/delete', async (request, reply) => {
+      const body = (request.body ?? {}) as { path?: string };
+      if (!body.path) {
+        return reply.code(400).send({ error: 'Missing required field: path' });
+      }
+      try {
+        const res = await obsidianAdapter.deleteNote(body.path);
+        return res;
+      } catch (err) {
+        return reply.code(400).send({ error: (err as Error).message });
+      }
     });
 
     this.fastify.post('/v1/agents/:id/start', async (request, reply) => {

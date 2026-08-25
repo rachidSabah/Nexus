@@ -31,13 +31,16 @@ import {
   useGatewayHealth,
   useModelCount,
   useIntegrationActions,
+  useInstallJobs,
   type IntegrationStatus,
 } from '@/hooks/integrations';
 
 function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMutate: () => void }) {
-  const { start, stop, restart, rebind, installAgent, updateAgent, verify, uninstall, unbuckle } = useIntegrationActions();
+  const { start, stop, restart, rebind, installAgent, cancelInstall, updateAgent, verify, uninstall, unbuckle } = useIntegrationActions();
   const statusHook = useIntegrationStatus(status.id);
   const runtimeHook = useIntegrationRuntime(status.id);
+  const { data: installJobsData } = useInstallJobs(status.id);
+  const activeJob = installJobsData?.jobs?.find((j) => j.status === 'RUNNING' || j.status === 'QUEUED');
   const detail = statusHook.data;
   const runtime = runtimeHook.data;
   const [copied, setCopied] = useState(false);
@@ -241,33 +244,59 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
         )}
       </div>
 
+      {/* Real-time Background Installation Progress Panel */}
+      {activeJob && (
+        <div className="mt-3 rounded-xl border border-nexus-500/40 bg-nexus-950/40 p-3 text-[11px]">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-nexus-300">
+              <Rocket className="h-3.5 w-3.5 animate-pulse" />
+              <span>Background Installation: {activeJob.stage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => cancelInstall(activeJob.id)}
+              className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-300 hover:bg-rose-500/20"
+            >
+              Cancel
+            </button>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[10px] text-white/60">
+            <span>Method: {activeJob.method}</span>
+            <span>PID: {activeJob.pid ?? '—'}</span>
+            <span>Progress: {activeJob.percentage}%</span>
+          </div>
+          <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full bg-gradient-to-r from-nexus-500 to-emerald-400 transition-all duration-300"
+              style={{ width: `${activeJob.percentage}%` }}
+            />
+          </div>
+          {activeJob.logs.length > 0 && (
+            <div className="mt-2 max-h-24 overflow-y-auto rounded bg-black/60 p-2 font-mono text-[10px] text-white/70">
+              {activeJob.logs.slice(-4).map((l, i) => (
+                <div key={i} className={l.stream === 'stderr' ? 'text-rose-300' : 'text-white/70'}>
+                  {l.message}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Lifecycle controls — gated by adapter capabilities */}
       <div className="mt-4">
         <div className="flex flex-wrap gap-2">
-          {/* Action 1: Install Binary Package (npm / pip) or Download Link for manual editors */}
-          {recipe?.type === 'manual' && !status.installed ? (
-            <a
-              href={recipe?.guideUrl || status.homepage || 'https://www.cursor.com'}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25"
-              title={`Download & Install ${status.displayName} from official website`}
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Download &amp; Install ↗
-            </a>
-          ) : (
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => run('install', installAgent)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25 disabled:opacity-40"
-              title={`Install ${status.displayName} package binary on your system`}
-            >
-              <Rocket className={`h-3.5 w-3.5 ${busy === 'install' ? 'animate-pulse' : ''}`} />
-              {busy === 'install' ? 'Installing…' : status.installed ? 'Reinstall Agent' : 'Install Agent'}
-            </button>
-          )}
+          {/* Action 1: Controlled Background Installer */}
+          <button
+            type="button"
+            disabled={busy !== null || activeJob !== undefined}
+            onClick={() => run('install', installAgent)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25 disabled:opacity-40"
+            title={`Install ${status.displayName} package binary on your system in background`}
+          >
+            <Rocket className={`h-3.5 w-3.5 ${busy === 'install' || activeJob ? 'animate-pulse' : ''}`} />
+            {activeJob ? `Installing (${activeJob.stage})…` : busy === 'install' ? 'Starting…' : status.installed ? 'Reinstall Agent' : 'Install Agent'}
+          </button>
 
           {/* Action 2: Update Agent to Latest Version */}
           {status.installed && (

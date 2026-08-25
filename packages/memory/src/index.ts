@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { writeFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { writeFile, mkdir, readFile, readdir, stat, unlink } from 'node:fs/promises';
+import { homedir, platform } from 'node:os';
+import { dirname, join, resolve, normalize, relative } from 'node:path';
 
 import {
   buildEvent,
@@ -797,3 +798,250 @@ export class FakeEmbeddingsProvider implements EmbeddingsProvider {
 
 // ─── RAG Pipeline ───────────────────────────────────────────────────────
 export { RagPipeline, TextChunker, DEFAULT_RAG_CONFIG, type RagConfig, type RagChunk, type RagIngestResult, type RagRetrieveResult } from "./rag.js";
+
+// ─── Optional Obsidian Knowledge Adapter ──────────────────────────────────
+export type ObsidianServiceStatus =
+  | 'NOT_DETECTED'
+  | 'DETECTED'
+  | 'CONFIGURED'
+  | 'CONNECTED'
+  | 'READY'
+  | 'ERROR'
+  | 'DISABLED';
+
+export interface ObsidianConfig {
+  vaultPath?: string;
+  apiPort?: number;
+  apiKey?: string;
+  enabled?: boolean;
+}
+
+export interface ObsidianNoteMetadata {
+  path: string;
+  title: string;
+  tags: string[];
+  frontmatter: Record<string, unknown>;
+  headings: string[];
+  mtime: number;
+  size: number;
+}
+
+export interface ObsidianSearchResult {
+  path: string;
+  title: string;
+  snippet: string;
+  score: number;
+}
+
+export class ObsidianKnowledgeAdapter {
+  private config: ObsidianConfig = {
+    enabled: true,
+  };
+  private status: ObsidianServiceStatus = 'NOT_DETECTED';
+  private errorMessage?: string;
+
+  constructor(initialConfig?: Partial<ObsidianConfig>) {
+    if (initialConfig) {
+      this.config = { ...this.config, ...initialConfig };
+    }
+  }
+
+  public setConfig(patch: Partial<ObsidianConfig>): void {
+    this.config = { ...this.config, ...patch };
+  }
+
+  public getConfig(): { enabled: boolean; vaultPath?: string; apiPort?: number; configured: boolean } {
+    return {
+      enabled: this.config.enabled ?? true,
+      vaultPath: this.config.vaultPath,
+      apiPort: this.config.apiPort,
+      configured: Boolean(this.config.vaultPath || this.config.apiKey),
+    };
+  }
+
+  public async getStatus(): Promise<{ status: ObsidianServiceStatus; message?: string; vaultConfigured: boolean }> {
+    try {
+      if (this.config.enabled === false) {
+        this.status = 'DISABLED';
+        return { status: this.status, vaultConfigured: Boolean(this.config.vaultPath) };
+      }
+
+      if (this.config.vaultPath) {
+        const vaultResolved = resolve(this.config.vaultPath);
+        if (existsSync(vaultResolved)) {
+          this.status = 'READY';
+          return { status: this.status, message: `Obsidian vault active at ${vaultResolved}`, vaultConfigured: true };
+        } else {
+          this.status = 'ERROR';
+          this.errorMessage = `Configured vault directory does not exist: ${vaultResolved}`;
+          return { status: this.status, message: this.errorMessage, vaultConfigured: true };
+        }
+      }
+
+      const discovered = await this.discoverObsidian();
+      if (discovered) {
+        this.status = 'DETECTED';
+        return { status: this.status, message: `Obsidian detected on system (${discovered})`, vaultConfigured: false };
+      }
+
+      this.status = 'NOT_DETECTED';
+      return { status: this.status, message: 'Obsidian application or vault not detected', vaultConfigured: false };
+    } catch (err) {
+      this.status = 'ERROR';
+      this.errorMessage = (err as Error).message;
+      return { status: this.status, message: this.errorMessage, vaultConfigured: false };
+    }
+  }
+
+  private async discoverObsidian(): Promise<string | undefined> {
+    const userHome = homedir();
+    if (platform() === 'win32') {
+      const candidates = [
+        join(process.env.LOCALAPPDATA || join(userHome, 'AppData', 'Local'), 'Programs', 'Obsidian', 'Obsidian.exe'),
+        join(process.env.ProgramFiles || 'C:\\Program Files', 'Obsidian', 'Obsidian.exe'),
+        join(userHome, 'AppData', 'Roaming', 'obsidian'),
+      ];
+      for (const c of candidates) {
+        if (existsSync(c)) return c;
+      }
+    } else if (platform() === 'darwin') {
+      const candidates = [
+        '/Applications/Obsidian.app',
+        join(userHome, 'Library', 'Application Support', 'obsidian'),
+      ];
+      for (const c of candidates) {
+        if (existsSync(c)) return c;
+      }
+    } else {
+      const candidates = [
+        '/usr/bin/obsidian',
+        '/usr/local/bin/obsidian',
+        join(userHome, '.config', 'obsidian'),
+      ];
+      for (const c of candidates) {
+        if (existsSync(c)) return c;
+      }
+    }
+    return undefined;
+  }
+
+  private sanitizeRelativePath(relPath: string): string {
+    const norm = normalize(relPath).replace(/^[\\/]+/, '');
+    if (norm.includes('..') || (this.config.vaultPath && resolve(join(this.config.vaultPath, norm)) !== join(resolve(this.config.vaultPath), norm))) {
+      throw new Error(`Security Violation: Path traversal outside vault boundary is forbidden (${relPath})`);
+    }
+    return norm;
+  }
+
+  public async searchNotes(query: string, limit: number = 20): Promise<ObsidianSearchResult[]> {
+    if (!this.config.vaultPath || !existsSync(this.config.vaultPath)) {
+      return [];
+    }
+
+    const q = query.toLowerCase();
+    const results: ObsidianSearchResult[] = [];
+    const files = await this.walkDir(this.config.vaultPath);
+
+    for (const f of files) {
+      if (!f.endsWith('.md')) continue;
+      const rel = relative(this.config.vaultPath, f).replace(/\\/g, '/');
+      try {
+        const content = await readFile(f, 'utf8');
+        const titleMatch = content.match(/^#\s+(.+)$/m);
+        const title: string = titleMatch && titleMatch[1] ? titleMatch[1] : rel.replace(/\.md$/, '');
+        const contentLower = content.toLowerCase();
+
+        let score = 0;
+        if (rel.toLowerCase().includes(q)) score += 10;
+        if (title.toLowerCase().includes(q)) score += 8;
+        if (contentLower.includes(q)) score += 5;
+
+        if (score > 0) {
+          const idx = contentLower.indexOf(q);
+          const start = Math.max(0, idx - 40);
+          const end = Math.min(content.length, idx + 100);
+          const snippet = (start > 0 ? '...' : '') + content.substring(start, end).replace(/\r?\n/g, ' ') + (end < content.length ? '...' : '');
+          results.push({ path: rel, title, snippet, score });
+        }
+      } catch {
+        // ignore unreadable
+      }
+    }
+
+    return results.sort((a, b) => b.score - a.score).slice(0, limit);
+  }
+
+  public async readNote(notePath: string): Promise<{ path: string; content: string; metadata: Partial<ObsidianNoteMetadata> }> {
+    if (!this.config.vaultPath) throw new Error('Obsidian vaultPath is not configured');
+    const safePath = this.sanitizeRelativePath(notePath);
+    const full = join(resolve(this.config.vaultPath), safePath.endsWith('.md') ? safePath : `${safePath}.md`);
+    if (!existsSync(full)) {
+      throw new Error(`Note not found: ${notePath}`);
+    }
+
+    const content = await readFile(full, 'utf8');
+    const st = await stat(full);
+    const titleMatch = content.match(/^#\s+(.+)$/m);
+    const headings = (content.match(/^#{1,6}\s+(.+)$/gm) || []).map((h) => h.replace(/^#+\s+/, ''));
+    const tags = Array.from(new Set((content.match(/#[a-zA-Z0-9_-]+/g) || []).map((t) => t.substring(1))));
+
+    return {
+      path: safePath,
+      content,
+      metadata: {
+        path: safePath,
+        title: titleMatch ? titleMatch[1] : safePath,
+        headings,
+        tags,
+        mtime: st.mtimeMs,
+        size: st.size,
+      },
+    };
+  }
+
+  public async writeNote(notePath: string, content: string, opts: { append?: boolean } = {}): Promise<{ ok: boolean; path: string }> {
+    if (!this.config.vaultPath) throw new Error('Obsidian vaultPath is not configured');
+    const safePath = this.sanitizeRelativePath(notePath);
+    const full = join(resolve(this.config.vaultPath), safePath.endsWith('.md') ? safePath : `${safePath}.md`);
+    await mkdir(resolve(join(full, '..')), { recursive: true });
+
+    if (opts.append && existsSync(full)) {
+      const existing = await readFile(full, 'utf8');
+      await writeFile(full, existing + (existing.endsWith('\n') ? '' : '\n') + content, 'utf8');
+    } else {
+      await writeFile(full, content, 'utf8');
+    }
+
+    return { ok: true, path: safePath };
+  }
+
+  public async deleteNote(notePath: string): Promise<{ ok: boolean }> {
+    if (!this.config.vaultPath) throw new Error('Obsidian vaultPath is not configured');
+    const safePath = this.sanitizeRelativePath(notePath);
+    const full = join(resolve(this.config.vaultPath), safePath.endsWith('.md') ? safePath : `${safePath}.md`);
+    if (existsSync(full)) {
+      await unlink(full);
+      return { ok: true };
+    }
+    return { ok: false };
+  }
+
+  private async walkDir(dir: string): Promise<string[]> {
+    let files: string[] = [];
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          files = files.concat(await this.walkDir(full));
+        } else {
+          files.push(full);
+        }
+      }
+    } catch {
+      // ignore unreadable dirs
+    }
+    return files;
+  }
+}

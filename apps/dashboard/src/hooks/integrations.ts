@@ -122,6 +122,56 @@ async function action(url: string, body?: unknown): Promise<{ ok?: boolean; mess
   return data as { ok?: boolean; message?: string };
 }
 
+export interface InstallationLogEntry {
+  timestamp: string;
+  stream: 'stdout' | 'stderr' | 'system';
+  message: string;
+}
+
+export interface InstallationJob {
+  readonly id: string;
+  readonly agentId: string;
+  readonly agentName: string;
+  readonly method: string;
+  readonly platform: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  stage: string;
+  pid?: number;
+  startTime: number;
+  completionTime?: number;
+  durationMs?: number;
+  percentage: number;
+  logs: InstallationLogEntry[];
+  error?: string;
+  exitCode?: number;
+  result?: {
+    ok: boolean;
+    installed: boolean;
+    configured: boolean;
+    version?: string;
+    executable?: string;
+    message: string;
+    actions: string[];
+    errors?: string[];
+  };
+}
+
+export function useInstallJobs(agentId?: string) {
+  return useSWR<{ jobs: InstallationJob[]; count: number }>(
+    agentId ? `/api/v1/agents/install-jobs?agentId=${agentId}` : '/api/v1/agents/install-jobs',
+    fetcher,
+    { refreshInterval: 1500 },
+  );
+}
+
+export function useInstallJob(jobId?: string) {
+  return useSWR<InstallationJob>(
+    jobId ? `/api/v1/agents/install-jobs/${jobId}` : null,
+    fetcher,
+    { refreshInterval: 1000 },
+  );
+}
+
 /** Generic, agent-agnostic lifecycle actions. id is the integration id. */
 export function useIntegrationActions() {
   const start = useCallback(
@@ -137,6 +187,10 @@ export function useIntegrationActions() {
   );
   const installAgent = useCallback(
     (id: string) => action(`/api/v1/agents/${id}/install`, { force: true }),
+    [],
+  );
+  const cancelInstall = useCallback(
+    (jobId: string) => action(`/api/v1/agents/install-jobs/${jobId}/cancel`),
     [],
   );
   const updateAgent = useCallback(
@@ -157,5 +211,5 @@ export function useIntegrationActions() {
   );
   const restartGateway = useCallback(() => action('/api/v1/system/gateway/restart'), []);
 
-  return { start, stop, restart, rebind, installAgent, updateAgent, verify, uninstall, unbuckle, restartGateway };
+  return { start, stop, restart, rebind, installAgent, cancelInstall, updateAgent, verify, uninstall, unbuckle, restartGateway };
 }

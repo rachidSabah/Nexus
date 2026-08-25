@@ -79,3 +79,10 @@ tmp/
 
 # Isolated debug worktrees (agentic debug playground — never commit)
 .worktrees/
+
+# AI assistant scratch / CI debug dumps (never commit)
+.aider.chat.history.md
+.aider.input.history
+.aider.tags.cache.v4/
+ci.json
+cijobs.json
