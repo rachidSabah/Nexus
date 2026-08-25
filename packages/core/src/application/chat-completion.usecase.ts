@@ -572,6 +572,17 @@ export class ChatCompletionUseCase {
           costUsd: cost.totalCostUsd,
         };
 
+        // Token accounting: upstreams vary in usage shape (OpenAI-compatible
+        // providers emit snake_case `prompt_tokens`/`completion_tokens`, while
+        // some gateways emit camelCase `promptTokens`). The KeyRegistry uses
+        // the same dual fallback (see recordSuccess below); mirror it here so
+        // the per-request telemetry matches the vault's token counts instead
+        // of shipping `undefined`.
+        const usage = response.usage as unknown as Record<string, unknown> | undefined;
+        const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        const inTok = num(usage?.promptTokens ?? usage?.prompt_tokens);
+        const outTok = num(usage?.completionTokens ?? usage?.completion_tokens);
+
         await this.events.publish(
           buildEvent<ProviderRequestSucceededEvent>(
             'provider.request.succeeded',
@@ -581,8 +592,8 @@ export class ChatCompletionUseCase {
               providerId: endpoint.providerId,
               attempt,
               latencyMs,
-              inputTokens: response.usage.promptTokens,
-              outputTokens: response.usage.completionTokens,
+              inputTokens: inTok,
+              outputTokens: outTok,
               costUsd: cost.totalCostUsd,
             },
             correlationId,
