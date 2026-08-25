@@ -1,3 +1,14 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# Allowlist of dependencies whose postinstall/build scripts may run. pnpm 10+
+# hard-fails (ERR_PNPM_IGNORED_BUILDS, exit 1) during `pnpm install` when build
+# scripts exist but are not explicitly approved. Listing the native deps we
+# actually need (esbuild for builds, node-pty for the gateway terminal bridge)
+# lets install succeed on pnpm 9–11 alike. keytar is intentionally omitted: it
+# builds against the OS keychain and is optional for the gateway, so leaving it
+# unlisted keeps install portable on machines without a full native toolchain.
+onlyBuiltDependencies:
+  - esbuild
+  - node-pty

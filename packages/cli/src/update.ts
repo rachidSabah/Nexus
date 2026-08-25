@@ -20,7 +20,7 @@ const REPO_URL = 'https://github.com/rachidSabah/Nexus';
 const GATEWAY_PORT = 8787;
 const DASHBOARD_PORT = 3000;
 
-function resolveRepoDir(): string | null {
+export function resolveRepoDir(): string | null {
   const fromEnv = process.env['NEXUS_REPO_DIR'];
   if (fromEnv && existsSync(join(fromEnv, '.git'))) return fromEnv;
 

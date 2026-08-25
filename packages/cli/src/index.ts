@@ -1,9 +1,14 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+
 import {
   BUILTIN_INTEGRATIONS,
   createIntegrationRegistry,
   type IntegrationContext,
 } from '@anx/integrations';
 import { NexusClient } from '@anx/sdk';
+
+import { resolveRepoDir } from './update.js';
 
 /**
  * Agent Nexus Gateway CLI.
@@ -81,15 +86,25 @@ export class NexusCli {
 
     process.stdout.write(`\n🚀 Starting Agent Nexus Gateway & Dashboard...\n`);
 
+    // Always launch from the actual Nexus repository, never from an arbitrary
+    // cwd (e.g. the user's home dir). Running `pnpm` elsewhere is what made
+    // `anx start` invoke a global pnpm that hard-failed on ignored build
+    // scripts. Resolve via NEXUS_REPO_DIR / ANX_HOME, else the installed clone.
+    const repoDir = resolveRepoDir() ?? process.cwd();
+
+    // Prefer the repo's own pnpm shim so we don't depend on a possibly
+    // incompatible global pnpm on PATH.
+    const repoPnpm = join(repoDir, 'node_modules', '.bin', 'pnpm');
+    const command = existsSync(repoPnpm) ? repoPnpm : 'pnpm';
+
     // In dev mode (default when running anx dev/launch), spawn pnpm dev which runs fast watch servers.
     // If --no-dev or --start is set, launch standalone prebuilt start commands for fast execution.
-    const command = devMode || flags['start'] !== 'true' ? 'pnpm' : 'pnpm';
     const commandArgs = devMode || flags['start'] !== 'true' ? ['dev'] : ['run', 'start'];
 
     const proc = spawn(command, commandArgs, {
       stdio: 'inherit',
       shell: true,
-      cwd: process.cwd(),
+      cwd: repoDir,
     });
 
     if (openBrowser) {
