@@ -1,5 +1,5 @@
 import { BaseIntegration, jsonString } from '../base.js';
-import type { IntegrationContext } from '../contract.js';
+import type { IntegrationContext, LaunchSpec } from '../contract.js';
 import { resolveModel } from '../contract.js';
 
 /**
@@ -40,5 +40,21 @@ export class CrushIntegration extends BaseIntegration {
           }),
       },
     ];
+  }
+
+  // Crush is a standalone interactive CLI — it can be launched and tracked by
+  // PID like Aider/Hermes, so the dashboard Start/Stop/Restart buttons appear.
+  async getLaunchSpec(ctx: IntegrationContext): Promise<LaunchSpec | null> {
+    const exe = await this.resolveExecutable('crush');
+    return {
+      executable: exe,
+      args: [],
+      interactive: true,
+      env: {
+        OPENAI_API_BASE: `${ctx.gatewayUrl}/v1`,
+        OPENAI_API_KEY: ctx.apiKey ?? 'nexus',
+      },
+      display: `crush → ${ctx.gatewayUrl}`,
+    };
   }
 }

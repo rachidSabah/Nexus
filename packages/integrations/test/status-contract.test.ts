@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ClaudeCodeIntegration } from '../src/adapters/claude-code.js';
+import { GooseIntegration } from '../src/adapters/goose.js';
+import { CrushIntegration } from '../src/adapters/crush.js';
 import { normalizeGatewayUrl } from '../src/contract.js';
 
 const baseCtx = {
@@ -48,6 +50,19 @@ describe('IntegrationStatus rich contract', () => {
     if (s.configuredEndpoint) {
       const matches = normalizeGatewayUrl(s.configuredEndpoint) === normalizeGatewayUrl(`${baseCtx.gatewayUrl}/v1`);
       expect(s.mismatch).toBe(!matches);
+    }
+  });
+
+  // Regression: standalone CLI agents (Goose, Crush) must advertise managed
+  // lifecycle support so the dashboard renders Start/Stop/Restart buttons.
+  // Without getLaunchSpec() these default to false and the buttons silently vanish.
+  it('standalone CLI agents (goose, crush) advertise supportsStart/Stop/Restart', async () => {
+    for (const Adapter of [GooseIntegration, CrushIntegration]) {
+      const adapter = new Adapter();
+      const caps = await adapter.capabilities(baseCtx as any);
+      expect(caps.supportsStart).toBe(true);
+      expect(caps.supportsStop).toBe(true);
+      expect(caps.supportsRestart).toBe(true);
     }
   });
 });
