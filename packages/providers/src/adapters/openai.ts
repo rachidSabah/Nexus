@@ -180,7 +180,22 @@ export class OpenAIAdapter implements ProviderAdapter {
         // returns no per-model pricing we leave the model UNKNOWN (isFree:false).
         const freeBySuffix = hasFreeSuffix(id);
         const isLocal = endpoint.providerId === 'ollama';
-        const isNvidia = endpoint.providerId === 'nvidia-nim' || endpoint.providerId === 'nvidia';
+        // NVIDIA NIM hosted inference: provider-enforced free tier (quota-limited).
+        // NVIDIA's /v1/models returns NO per-model pricing (verified live: only
+        // {id, object, created, owned_by} for all 95 models), so a
+        // `hasRealZeroPrice` signal never fires. The hosted NIM API is documented
+        // as a free tier for inference, so we classify confirmed NVIDIA NIM
+        // endpoints as provider-enforced FREE_TIER. This matches the signal listed
+        // above ("NVIDIA NIM hosted free tier (provider-enforced)") and is
+        // explicitly labeled quotaLimited + source 'provider_metadata' (not a
+        // measured $0), so it is never confused with a paid model that happens to
+        // omit pricing. Detection covers the canonical provider ids and any base
+        // URL on the nvidia host.
+        const baseUrl = this.resolveBase(endpoint).toLowerCase();
+        const isNvidiaNim =
+          endpoint.providerId === 'nvidia-nim' ||
+          endpoint.providerId === 'nvidia' ||
+          baseUrl.includes('nvidia');
         const hasLivePricing = extra.pricing != null || extra.per_request_rate != null;
         // Genuine zero-cost only when the provider actually returned a per-model
         // price that parses to exactly 0 (numeric compare; the raw field is a
@@ -189,18 +204,18 @@ export class OpenAIAdapter implements ProviderAdapter {
           (extra.pricing != null &&
             Number(extra.pricing.prompt) === 0 &&
             Number(extra.pricing.completion) === 0) ||
-          extra.per_request_rate != null && Number(extra.per_request_rate) === 0;
+          (extra.per_request_rate != null && Number(extra.per_request_rate) === 0);
         const isFree =
           freeBySuffix
           || isLocal
-          || (isNvidia && hasRealZeroPrice)
+          || isNvidiaNim
           || hasRealZeroPrice;
         const livePricing = {
-          inputPer1M: inputPer1M ?? (hasRealZeroPrice ? 0 : undefined),
-          outputPer1M: outputPer1M ?? (hasRealZeroPrice ? 0 : undefined),
+          inputPer1M: inputPer1M ?? (isFree ? 0 : undefined),
+          outputPer1M: outputPer1M ?? (isFree ? 0 : undefined),
           isFree,
           // Provider-enforced free alias or NVIDIA NIM hosted free tier → quota-limited.
-          quotaLimited: freeBySuffix || (isNvidia && hasRealZeroPrice),
+          quotaLimited: freeBySuffix || isNvidiaNim,
           currency: 'USD',
           source: (hasLivePricing
             ? 'live'

@@ -325,6 +325,46 @@ describe('OpenAIAdapter', () => {
     expect(m?.pricing?.source).toBe('provider_metadata');
   });
 
+  it('classifies NVIDIA NIM models as FREE_TIER even with no per-model pricing', async () => {
+    // Reproduces the reported bug: NVIDIA NIM's /v1/models returns ONLY
+    // {id, object, created, owned_by} — no pricing/context fields whatsoever
+    // (verified live against integrate.api.nvidia.com). The old code gated the
+    // NVIDIA free signal behind `hasRealZeroPrice`, so every NIM model landed as
+    // UNKNOWN / free:false. NIM hosted inference is a provider-enforced free
+    // tier, so all NIM models must be FREE_TIER + quotaLimited + source
+    // 'provider_metadata'.
+    const modelsPayload = {
+      data: [
+        { id: 'nvidia/llama-3.1-nemotron-70b-instruct', object: 'model', owned_by: 'nvidia' },
+        { id: '01-ai/yi-large', object: 'model', created: 735790403, owned_by: '01-ai' },
+        { id: 'google/gemma-3-27b-it', object: 'model', created: 735790403, owned_by: 'google' },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => modelsPayload,
+      text: async () => JSON.stringify(modelsPayload),
+    }));
+
+    const adapter = new OpenAIAdapter();
+    const endpoint = makeEndpoint({ providerId: 'nvidia-nim' });
+    const discovered = await adapter.discoverModels(endpoint, new AbortController().signal);
+    const byId = Object.fromEntries(discovered.map((m) => [m.id, m]));
+
+    for (const id of [
+      'nvidia/llama-3.1-nemotron-70b-instruct',
+      '01-ai/yi-large',
+      'google/gemma-3-27b-it',
+    ]) {
+      const m = byId[id];
+      expect(m, `model ${id} present`).toBeDefined();
+      expect(m.pricing?.isFree, `${id} isFree`).toBe(true);
+      expect(m.pricing?.freeTier, `${id} freeTier`).toBe('FREE_TIER');
+      expect(m.pricing?.quotaLimited, `${id} quotaLimited`).toBe(true);
+      expect(m.pricing?.source, `${id} source`).toBe('provider_metadata');
+    }
+  });
+
   it('parses SSE stream correctly', async () => {
     const encoder = new TextEncoder();
     const sse = [

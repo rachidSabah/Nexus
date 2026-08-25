@@ -346,16 +346,13 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     category: 'agent',
     homepage: 'https://github.com/deepseek-ai/deepseek-harness',
     binaryNames: ['dsh'],
+    npmPackage: '@deepseek-ai/dsh',
     installRecipe: {
-      type: 'manual',
+      type: 'npm',
+      packageName: '@deepseek-ai/dsh',
       guideUrl: 'https://github.com/deepseek-ai/deepseek-harness',
     },
-    // DeepSeek Harness is a plugin harness that runs a web UI via `dsh web`
-    // (default http://127.0.0.1:3080). It is NOT an OpenAI-compatible CLI that
-    // accepts OPENAI_BASE_URL the way Codex does, so model binding through the
-    // Nexus OpenAI proxy is unsupported for now. It does support real process
-    // lifecycle (start `dsh web`, stop the PID), hence lifecycle-capable.
-    supportedProtocols: [],
+    supportedProtocols: ['OpenAI-compatible'],
     configPaths: ['.deepseek/harness'],
   },
 ];

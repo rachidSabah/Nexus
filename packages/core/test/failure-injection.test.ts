@@ -40,10 +40,10 @@ describe('failure injection: error classification (TEST 2-6, 8)', () => {
     expect(c.retryable).toBe(true);
   });
 
-  it('TEST 5: 404 → NO key action, endpoint marked unavailable, not retryable', () => {
+  it('TEST 5: 404 → NO key action, endpoint degraded (not circuit broken), not retryable', () => {
     const c = classifyFailure(new ProviderResponseError('e', 404, 'model not found'));
     expect(c.keyAction).toBe('none');
-    expect(c.endpointAction).toBe('mark_unavailable');
+    expect(c.endpointAction).toBe('record_failure');
     expect(c.retryable).toBe(false);
   });
 

@@ -5,6 +5,7 @@ import { useMemo, useState, useEffect } from 'react';
 import useSWR from 'swr';
 
 import { ContextWindowEditor } from '@/components/ContextWindowEditor';
+import { ErrorResolveButton } from '@/components/ErrorResolveButton';
 import { etagFetcher } from '@/lib/etagFetcher';
 
 const fetcher = etagFetcher;
@@ -103,18 +104,47 @@ function PerModelProbe({ model }: { model: DiscoveredModel }) {
         </button>
       </div>
       {detail && (
-        <div className={`mt-3 rounded-lg border px-3 py-2 text-xs font-mono ${badge}`}>
-          {status === 'ok' ? (
-            <span>✓ Reachable — {detail.latencyMs ? `${detail.latencyMs}ms` : 'ok'}</span>
-          ) : (
-            <span>✗ {detail.error ?? 'Unreachable'}</span>
+        <div className={`mt-3 rounded-lg border px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 ${badge}`}>
+          <div>
+            {status === 'ok' ? (
+              <span>✓ Reachable — {detail.latencyMs ? `${detail.latencyMs}ms` : 'ok'}</span>
+            ) : (
+              <span>✗ {detail.error ?? 'Unreachable'}</span>
+            )}
+          </div>
+          {status === 'fail' && (
+            <ErrorResolveButton
+              target={{
+                type: 'model',
+                id: model.providerId,
+                secondaryId: model.id,
+                displayName: `${model.providerId}/${model.id}`,
+              }}
+              size="xs"
+              variant="badge"
+            />
           )}
         </div>
       )}
       {status === 'idle' && (
-        <p className="mt-2 text-[11px] text-white/40">
-          Sends a 1-token request to the real upstream to confirm the model is live (200 / 401 / 402 / timeout).
-        </p>
+        <div className="mt-2 flex items-center justify-between">
+          <p className="text-[11px] text-white/40">
+            Sends a 1-token request to the real upstream to confirm the model is live (200 / 401 / 402 / timeout).
+          </p>
+          {model.stale && (
+            <ErrorResolveButton
+              target={{
+                type: 'model',
+                id: model.providerId,
+                secondaryId: model.id,
+                displayName: `${model.providerId}/${model.id}`,
+              }}
+              errorCount={1}
+              size="xs"
+              variant="badge"
+            />
+          )}
+        </div>
       )}
     </div>
   );

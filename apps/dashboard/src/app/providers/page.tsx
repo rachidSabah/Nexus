@@ -6,6 +6,7 @@ import { useState } from 'react';
 import useSWR from 'swr';
 
 import { EndpointManager } from '@/components/EndpointManager';
+import { ErrorResolveButton } from '@/components/ErrorResolveButton';
 import { ProviderTable } from '@/components/ProviderTable';
 import { useEndpoints } from '@/hooks/api';
 import type { Provider } from '@/hooks/api';
@@ -25,6 +26,10 @@ interface EnrichedProvider extends Provider {
   modelsCount?: number;
   keysCount?: number;
   activeKeysCount?: number;
+  activeErrorsCount?: number;
+  errorsCount?: number;
+  circuitBreakerState?: 'closed' | 'open' | 'half_open';
+  lastErrorDiagnostic?: any;
   lastSync?: number;
   lastError?: string;
 }
@@ -211,65 +216,99 @@ export default function ProvidersPage() {
           const isHealthy = p.health === 'healthy';
           const isSyncing = syncingProvider === p.providerId;
 
-          return (
-            <div
-              key={p.id}
-              className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.05] to-black/40 p-5 backdrop-blur-xl transition hover:border-nexus-500/40"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-mono text-base font-bold text-white">{p.displayName || p.providerId}</div>
-                  <div className="text-xs text-white/40 font-mono">{p.baseUrl}</div>
-                </div>
-                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${
-                  isHealthy
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                    : 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-                }`}>
-                  <span className={`h-1.5 w-1.5 rounded-full ${isHealthy ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                  {p.status ?? p.health}
-                </span>
-              </div>
+            const errorCount = (p.activeErrorsCount ?? 0) || (p.errorsCount ?? 0) || (!isHealthy ? 1 : 0);
+            const hasError = !isHealthy || errorCount > 0;
 
-              <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-2.5">
-                  <div className="text-white/40 text-[10px] font-medium uppercase">Models</div>
-                  <div className="text-sm font-bold text-nexus-300 mt-0.5">{p.modelsCount ?? 0} discovered</div>
+            return (
+              <div
+                key={p.id}
+                className={`relative overflow-hidden rounded-2xl border p-5 backdrop-blur-xl transition ${
+                  hasError
+                    ? 'border-rose-500/30 bg-gradient-to-b from-rose-950/20 to-black/40 hover:border-rose-500/50'
+                    : 'border-white/10 bg-gradient-to-b from-white/[0.05] to-black/40 hover:border-nexus-500/40'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-mono text-base font-bold text-white">{p.displayName || p.providerId}</div>
+                    <div className="text-xs text-white/40 font-mono">{p.baseUrl}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border ${
+                      isHealthy
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                        : 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                    }`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${isHealthy ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                      {p.circuitBreakerState === 'open' ? 'CIRCUIT OPEN' : p.status ?? p.health}
+                    </span>
+                  </div>
                 </div>
-                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-2.5">
-                  <div className="text-white/40 text-[10px] font-medium uppercase">Active Keys</div>
-                  <div className="text-sm font-bold text-emerald-400 mt-0.5">{keyInfo ? `${keyInfo.active}/${keyInfo.total}` : '0 keys'}</div>
-                </div>
-              </div>
 
-              <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-3">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleSync(p.providerId)}
-                    disabled={isSyncing}
-                    className="flex items-center gap-1 text-[11px] rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+                {hasError && (
+                  <div className="mt-3 flex items-center justify-between rounded-xl border border-rose-500/20 bg-rose-500/10 p-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
+                      <span className="text-xs font-semibold text-rose-200">
+                        {p.lastError ? p.lastError.slice(0, 45) : 'Provider Error Detected'}
+                      </span>
+                    </div>
+                    <ErrorResolveButton
+                      target={{ type: 'provider', id: p.providerId, displayName: p.displayName }}
+                      errorCount={errorCount}
+                      diagnostic={p.lastErrorDiagnostic}
+                      size="xs"
+                      variant="badge"
+                    />
+                  </div>
+                )}
+
+                <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-xl border border-white/5 bg-white/[0.02] p-2.5">
+                    <div className="text-white/40 text-[10px] font-medium uppercase">Models</div>
+                    <div className="text-sm font-bold text-nexus-300 mt-0.5">{p.modelsCount ?? 0} discovered</div>
+                  </div>
+                  <div className="rounded-xl border border-white/5 bg-white/[0.02] p-2.5">
+                    <div className="text-white/40 text-[10px] font-medium uppercase">Active Keys</div>
+                    <div className="text-sm font-bold text-emerald-400 mt-0.5">{keyInfo ? `${keyInfo.active}/${keyInfo.total}` : '0 keys'}</div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-3">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleSync(p.providerId)}
+                      disabled={isSyncing}
+                      className="flex items-center gap-1 text-[11px] rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${isSyncing ? 'animate-spin text-nexus-400' : ''}`} />
+                      {isSyncing ? 'Syncing...' : 'Sync Models'}
+                    </button>
+                    <ErrorResolveButton
+                      target={{ type: 'provider', id: p.providerId, displayName: p.displayName }}
+                      errorCount={errorCount}
+                      diagnostic={p.lastErrorDiagnostic}
+                      size="xs"
+                      variant="icon"
+                    />
+                    <button
+                      onClick={() => handleDelete(p.id)}
+                      className="flex items-center gap-1 text-[11px] rounded-lg border border-rose-500/20 bg-rose-500/10 px-2 py-1 text-rose-300 transition hover:bg-rose-500/20"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+
+                  <Link
+                    href={`/models?provider=${p.providerId}`}
+                    className="text-xs text-nexus-400 font-medium hover:underline"
                   >
-                    <RefreshCw className={`h-3 w-3 ${isSyncing ? 'animate-spin text-nexus-400' : ''}`} />
-                    {isSyncing ? 'Syncing...' : 'Sync Models'}
-                  </button>
-                  <button
-                    onClick={() => handleDelete(p.id)}
-                    className="flex items-center gap-1 text-[11px] rounded-lg border border-rose-500/20 bg-rose-500/10 px-2 py-1 text-rose-300 transition hover:bg-rose-500/20"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
+                    View Models &rarr;
+                  </Link>
                 </div>
-
-                <Link
-                  href={`/models?provider=${p.providerId}`}
-                  className="text-xs text-nexus-400 font-medium hover:underline"
-                >
-                  View Models &rarr;
-                </Link>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
         {(providers ?? []).length === 0 && !isLoading && (
           <div className="rounded-2xl border border-dashed border-white/10 p-12 text-center text-xs text-white/40 col-span-full">
             No providers registered on gateway. Click &ldquo;Add Provider&rdquo; to connect your first provider.

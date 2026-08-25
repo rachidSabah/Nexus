@@ -4,6 +4,7 @@ import { ShieldCheck, Activity, Terminal, GitBranch, AlertTriangle, CheckCircle2
 import { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 
+import { ErrorResolveButton } from '@/components/ErrorResolveButton';
 import { etagFetcher } from '@/lib/etagFetcher';
 
 interface LiveEvent {
@@ -204,16 +205,27 @@ export default function ResiliencePage() {
             {providers.map(([pid, p]) => {
               const tripped = p.open > 0;
               const deg = p.degraded > 0;
+              const hasError = tripped || deg || p.totalErrors > 0 || p.invalidKeys > 0;
               return (
-                <div key={pid} className="rounded-lg border border-white/10 bg-black/30 px-3 py-2">
+                <div key={pid} className={`rounded-lg border px-3 py-2 ${hasError ? 'border-rose-500/20 bg-rose-950/10' : 'border-white/10 bg-black/30'}`}>
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-2 text-[11px] font-semibold text-white/80">
                       <span className={`h-2 w-2 rounded-full ${tripped ? 'bg-rose-400' : deg ? 'bg-amber-400' : 'bg-emerald-400'}`} />
                       {pid}
                     </span>
-                    <span className="text-[10px] text-white/40">
-                      {p.healthy}/{p.endpointCount} ok
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-white/40">
+                        {p.healthy}/{p.endpointCount} ok
+                      </span>
+                      {hasError && (
+                        <ErrorResolveButton
+                          target={{ type: 'provider', id: pid, displayName: pid }}
+                          errorCount={p.totalErrors || (tripped ? 1 : 0)}
+                          size="xs"
+                          variant="badge"
+                        />
+                      )}
+                    </div>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-3 text-[10px] text-white/40">
                     {tripped && <span className="text-rose-300">circuit_open ({p.open})</span>}

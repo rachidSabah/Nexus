@@ -281,9 +281,9 @@ export class ModelAliasRegistry {
       // spec mandates. Resolved identically at request time.
       {
         alias: 'nexus/auto',
-        description: 'Alias for the best AVAILABLE free model (prefers the opencode-zen free tier, e.g. hy3-free) so the vibe-coding agent runs free-by-default',
-        filter: { freeOnly: true },
-        ranking: 'highest_quality',
+        description: 'Intelligent auto routing: prefers healthy free models, falls back to best capable candidate',
+        filter: {},
+        ranking: 'balanced',
         builtin: true,
       },
       {

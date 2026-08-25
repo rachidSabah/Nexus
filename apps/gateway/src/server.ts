@@ -55,6 +55,8 @@ import {
   type IncidentStatus,
   type SubsystemName,
   type RemediationPolicyRule,
+  ErrorDiagnosticRegistry,
+  LiveErrorResolver,
 } from '@anx/core';
 import { DurableIdempotencyStore, BackupRestoreEngine, DurableIncidentStore } from '@anx/persistence';
 import { AgentRuntimeManager } from './agent-runtime-manager.js';
@@ -216,6 +218,8 @@ export interface HttpServerDeps {
   // Manual failover / fallback-model configuration store (persists per-model
   // ordered fallback chains to disk; augments automatic failover).
   readonly falloverConfig?: FalloverConfigStore;
+  readonly errorRegistry?: ErrorDiagnosticRegistry;
+  readonly liveErrorResolver?: LiveErrorResolver;
 }
 
 // ── Token-economics accumulator (§30) — real measurements only, capped ring. ──
@@ -293,11 +297,25 @@ export class HttpServer {
   readonly remediationEngine: RemediationEngine;
   readonly incidentManager: IncidentManager;
   readonly selfHealingOrchestrator: SelfHealingOrchestrator;
+  readonly errorRegistry: ErrorDiagnosticRegistry;
+  readonly liveErrorResolver: LiveErrorResolver;
   // WS4-C: detached background task store (survive agent disconnect on long runs)
   readonly taskStore: DetachedTaskStore = new DetachedTaskStore();
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
+    this.errorRegistry = deps.errorRegistry ?? new ErrorDiagnosticRegistry();
+    this.liveErrorResolver = deps.liveErrorResolver ?? new LiveErrorResolver({
+      routing: deps.routing,
+      keyRegistry: deps.keyRegistry,
+      modelRegistry: deps.modelRegistry,
+      errorRegistry: this.errorRegistry,
+      adapters: deps.adapters,
+      events: deps.events,
+      modelRediscoverCallback: async () => {
+        await this.deps.modelRegistry.refresh();
+      },
+    });
     this.localAgentBridge = deps.localAgentBridge ?? new LocalAgentBridge({
       gatewayUrl: `http://${deps.config.server.host}:${deps.config.server.port}`,
       routing: deps.routing,
@@ -3520,15 +3538,13 @@ export class HttpServer {
       return endpoints.map((e) => {
         const providerModels = allModels.filter((m) => m.providerId === e.providerId);
         const providerKeys = allKeys.filter((k) => k.providerId === e.providerId);
-        // A cooldown key is still a usable credential — it merely hit a
-        // transient rate-limit (e.g. a single 429) and is briefly backed off.
-        // Counting it as "active" here keeps the provider in the free_only /
-        // selectable pool so a single transient rate-limit does NOT disable the
-        // whole provider (the death-spiral where cooldown -> activeKeys=0 ->
-        // free_only excludes provider -> "All providers exhausted"). Only
-        // truly invalid/revoked keys are unusable.
         const activeKeys = providerKeys.filter((k) => k.status === 'active' || k.status === 'cooldown');
         const diag = providerDiags ? providerDiags[e.providerId] : undefined;
+        const activeErrors = this.errorRegistry.listActive(e.providerId);
+        const lastErrDiag = activeErrors[0];
+        const circuitBreakerState = e.health === 'circuit_open' ? 'open' : e.health === 'degraded' ? 'half_open' : 'closed';
+        const keyErrorsSum = providerKeys.reduce((acc, k) => acc + (k.errors || 0), 0);
+        const totalErrors = keyErrorsSum + activeErrors.length;
 
         return {
           id: e.id,
@@ -3536,10 +3552,14 @@ export class HttpServer {
           displayName: e.displayName,
           baseUrl: e.baseUrl,
           health: e.health,
+          circuitBreakerState,
           status: e.health === 'healthy' ? 'READY' : e.health === 'degraded' ? 'DEGRADED' : 'UNAVAILABLE',
           modelsCount: providerModels.length,
           keysCount: providerKeys.length,
           activeKeysCount: activeKeys.length,
+          activeErrorsCount: activeErrors.length,
+          errorsCount: totalErrors,
+          lastErrorDiagnostic: lastErrDiag ?? null,
           priority: e.priority,
           weight: e.weight,
           region: e.region,
@@ -3548,7 +3568,7 @@ export class HttpServer {
           pricing: e.pricing,
           lastSync: diag?.lastDiscovery ?? e.updatedAt ?? Date.now(),
           lastSuccess: diag?.lastSuccess ?? e.updatedAt ?? Date.now(),
-          lastError: diag?.lastError,
+          lastError: lastErrDiag?.upstreamMessage ?? diag?.lastError,
           updatedAt: e.updatedAt ?? Date.now(),
         };
       });
@@ -3808,6 +3828,49 @@ export class HttpServer {
         updated: result.updated,
         lastSync: Date.now(),
         error: result.error,
+      };
+    });
+
+    // POST /v1/providers/:id/resolve — live remediation & verification engine (DIAGNOSE -> REMEDIATE -> VERIFY -> RECOVER)
+    this.fastify.post('/v1/providers/:id/resolve', async (request) => {
+      const { id } = request.params as { id: string };
+      const report = await this.liveErrorResolver.resolveProvider(id);
+      return report;
+    });
+
+    // GET /v1/providers/:id/diagnostics — rich error diagnostic records for a specific provider
+    this.fastify.get('/v1/providers/:id/diagnostics', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const endpoint = this.deps.routing.listEndpoints().find((e) => e.id === id || e.providerId === id);
+      if (!endpoint) {
+        return reply.code(404).send({ error: { message: `Provider '${id}' not found` } });
+      }
+      const providerId = endpoint.providerId;
+      const allErrors = this.errorRegistry.list({ providerId });
+      const activeErrors = allErrors.filter((e) => !e.resolved);
+      const keys = this.deps.keyRegistry.listByProvider(providerId);
+      const models = this.deps.modelRegistry.list().filter((m) => m.providerId === providerId);
+
+      return {
+        providerId,
+        displayName: endpoint.displayName,
+        baseUrl: endpoint.baseUrl,
+        health: endpoint.health,
+        circuitBreakerState: endpoint.health === 'circuit_open' ? 'open' : endpoint.health === 'degraded' ? 'half_open' : 'closed',
+        activeErrorsCount: activeErrors.length,
+        activeErrors,
+        history: allErrors.slice(0, 20),
+        keysSummary: {
+          total: keys.length,
+          active: keys.filter((k) => k.status === 'active').length,
+          cooldown: keys.filter((k) => k.status === 'cooldown').length,
+          invalid: keys.filter((k) => k.status === 'invalid').length,
+        },
+        modelsSummary: {
+          total: models.length,
+          healthy: models.filter((m) => !m.stale).length,
+          unhealthy: models.filter((m) => m.stale).length,
+        },
       };
     });
 
@@ -4426,8 +4489,12 @@ export class HttpServer {
           },
         };
 
+        const fallbackChain = [
+          aliasResolution.model,
+          ...(this.deps.falloverConfig?.get(aliasResolution.model) ?? []),
+        ];
         try {
-          await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveReq, aliasResolution.model), sink, new AbortController().signal);
+          await this.executeChatFallbackChain(effectiveReq, request, fallbackChain, sink);
         } catch (err) {
           const http = this.httpErrorFor(err as Error);
           if (!reply.raw.headersSent) {
@@ -4448,9 +4515,13 @@ export class HttpServer {
         return reply;
       }
 
-      // Non-streaming path: translate response back to Anthropic format.
+      // Non-streaming path: translate response back to Anthropic format with fallback chain.
+      const fallbackChain = [
+        aliasResolution.model,
+        ...(this.deps.falloverConfig?.get(aliasResolution.model) ?? []),
+      ];
       try {
-        const response = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveReq, aliasResolution.model), undefined, new AbortController().signal);
+        const response = (await this.executeChatFallbackChain(effectiveReq, request, fallbackChain, undefined)) as ChatCompletionResponse;
         return translateToAnthropicResponse(response, anthropicReq.model);
       } catch (err) {
         const http = this.httpErrorFor(err as Error);
@@ -5418,24 +5489,85 @@ export class HttpServer {
       const keys = q.provider
         ? this.deps.keyRegistry.listByProvider(q.provider)
         : this.deps.keyRegistry.listAll();
-      // Never expose plaintext — only metadata + lastFour.
-      return keys.map((k) => ({
-        id: k.id,
-        providerId: k.providerId,
-        label: k.label,
-        lastFour: k.lastFour,
-        status: k.status,
-        requests: k.requests,
-        tokens: k.tokens,
-        errors: k.errors,
-        rateLimitedCount: k.rateLimitedCount,
-        latencyMs: Math.round(k.latencyMs),
-        lastSuccessAt: k.lastSuccessAt || null,
-        lastFailureAt: k.lastFailureAt || null,
-        lastFailureReason: k.lastFailureReason ?? null,
-        cooldownUntil: k.cooldownUntil || null,
-        registeredAt: k.registeredAt,
-      }));
+      // Never expose plaintext — only metadata + lastFour + diagnostic state.
+      return keys.map((k) => {
+        const keyErrors = this.errorRegistry.list({ keyId: k.id, resolved: false });
+        const lastErr = keyErrors[0];
+        return {
+          id: k.id,
+          providerId: k.providerId,
+          label: k.label,
+          lastFour: k.lastFour,
+          status: k.status,
+          requests: k.requests,
+          tokens: k.tokens,
+          errors: k.errors,
+          rateLimitedCount: k.rateLimitedCount,
+          latencyMs: Math.round(k.latencyMs),
+          lastSuccessAt: k.lastSuccessAt || null,
+          lastFailureAt: k.lastFailureAt || null,
+          lastFailureReason: k.lastFailureReason ?? (lastErr ? lastErr.upstreamMessage : null),
+          cooldownUntil: k.cooldownUntil || null,
+          registeredAt: k.registeredAt,
+          activeErrorsCount: keyErrors.length,
+          lastErrorDiagnostic: lastErr ?? null,
+        };
+      });
+    });
+
+    // POST /v1/keys/:id/resolve — live key remediation & upstream verification
+    this.fastify.post('/v1/keys/:id/resolve', async (request) => {
+      const { id } = request.params as { id: string };
+      const report = await this.liveErrorResolver.resolveKey(id);
+      return report;
+    });
+
+    // POST /v1/models/:providerId/:modelId/resolve — live model remediation & verification
+    this.fastify.post('/v1/models/:providerId/:modelId/resolve', async (request) => {
+      const { providerId, modelId } = request.params as { providerId: string; modelId: string };
+      const report = await this.liveErrorResolver.resolveModel(providerId, modelId);
+      return report;
+    });
+
+    // ── Structured Error Diagnostics & Live Resolution Engine ────────────
+    // GET /v1/errors — list all error diagnostics with filtering
+    this.fastify.get('/v1/errors', async (request) => {
+      const q = request.query as {
+        provider?: string;
+        key?: string;
+        model?: string;
+        category?: string;
+        resolved?: string;
+      };
+      const resolvedFilter = q.resolved === 'true' ? true : q.resolved === 'false' ? false : undefined;
+      const errors = this.errorRegistry.list({
+        providerId: q.provider,
+        keyId: q.key,
+        modelId: q.model,
+        category: q.category,
+        resolved: resolvedFilter,
+      });
+      return {
+        errors,
+        stats: this.errorRegistry.stats(),
+      };
+    });
+
+    // GET /v1/errors/:id — get structured diagnostic record by ID
+    this.fastify.get('/v1/errors/:id', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const diagnostic = this.errorRegistry.get(id);
+      if (!diagnostic) {
+        return reply.code(404).send(this.reply404('Error diagnostic record not found'));
+      }
+      return { diagnostic };
+    });
+
+    // POST /v1/errors/:id/resolve — live remediation & recovery for a specific diagnostic
+    this.fastify.post('/v1/errors/:id/resolve', async (request) => {
+      const { id } = request.params as { id: string };
+      const report = await this.liveErrorResolver.resolveDiagnostic(id);
+      return report;
     });
 
     // Register a new API key for a provider.
@@ -7616,15 +7748,26 @@ export class HttpServer {
     for (let i = 0; i < chain.length; i++) {
       const requestedModel = chain[i]!;
       const effectiveBody = buildEffective(requestedModel);
+      const targetProvider = this.preferredProviderFor(effectiveBody.model, undefined) || 'auto';
       try {
         if (sink) {
           await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), sink, new AbortController().signal);
+          this.errorRegistry.recordSuccess(targetProvider, undefined, effectiveBody.model);
           return;
         }
-        return await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), undefined, new AbortController().signal);
+        const res = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), undefined, new AbortController().signal);
+        this.errorRegistry.recordSuccess(targetProvider, undefined, effectiveBody.model);
+        return res;
       } catch (err) {
         lastErr = err;
         const errMsg = (err as Error).message ?? '';
+        const { status } = this.httpErrorFor(err as Error);
+        this.errorRegistry.recordError({
+          providerId: targetProvider,
+          modelId: effectiveBody.model,
+          error: err,
+          status,
+        });
         if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
           this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
         }

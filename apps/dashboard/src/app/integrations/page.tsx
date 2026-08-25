@@ -322,16 +322,16 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
       {/* Lifecycle controls — gated by adapter capabilities */}
       <div className="mt-4">
         <div className="flex flex-wrap gap-2">
-          {/* Action 1: Controlled Background Installer */}
+          {/* Action 1: Controlled Background Installer / Connector Configurer */}
           <button
             type="button"
             disabled={busy !== null || activeJob !== undefined}
             onClick={() => run('install', installAgent)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25 disabled:opacity-40"
-            title={`Install ${status.displayName} package binary on your system in background`}
+            title={recipe?.type === 'manual' ? `Configure ${status.displayName} connector files for Nexus Gateway` : `Install ${status.displayName} package binary on your system in background`}
           >
             <Rocket className={`h-3.5 w-3.5 ${busy === 'install' || activeJob ? 'animate-pulse' : ''}`} />
-            {activeJob ? `Installing (${activeJob.stage})…` : busy === 'install' ? 'Starting…' : status.installed ? 'Reinstall Agent' : 'Install Agent'}
+            {activeJob ? `Installing (${activeJob.stage})…` : busy === 'install' ? 'Starting…' : status.installed ? (recipe?.type === 'manual' ? 'Reconfigure Connector' : 'Reinstall Agent') : (recipe?.type === 'manual' ? 'Configure Connector' : 'Install Agent')}
           </button>
 
           {/* Action 2: Update Agent to Latest Version */}

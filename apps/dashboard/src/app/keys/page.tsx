@@ -23,6 +23,7 @@ import {
 import { useState, useMemo, useRef } from 'react';
 import useSWR from 'swr';
 
+import { ErrorResolveButton } from '@/components/ErrorResolveButton';
 import { etagFetcher } from '@/lib/etagFetcher';
 
 const fetcher = etagFetcher;
@@ -47,6 +48,10 @@ const KNOWN_PROVIDER_IDS = [
   'vllm',
   'lmstudio',
   'litellm',
+  'cohere',
+  'ai21',
+  'perplexity',
+  'bedrock',
   'azure-openai',
 ] as const;
 
@@ -66,6 +71,8 @@ interface ApiKey {
   lastFailureReason: string | null;
   cooldownUntil: number | null;
   registeredAt: number;
+  activeErrorsCount?: number;
+  lastErrorDiagnostic?: any;
 }
 
 interface Provider {
@@ -692,117 +699,137 @@ export default function KeysPage() {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => {
-                      setNewKey({ ...newKey, providerId: pid });
-                      setShowAdd(true);
-                    }}
-                    className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 transition hover:bg-white/10"
-                  >
-                    <Plus className="h-3.5 w-3.5 text-nexus-400" /> Add Key for {pid}
-                  </button>
-                </div>
+                    <div className="flex items-center gap-2">
+                      {(invalidCount > 0 || cooldownCount > 0 || provider?.health !== 'healthy') && (
+                        <ErrorResolveButton
+                          target={{ type: 'provider', id: pid, displayName: pid }}
+                          errorCount={invalidCount + cooldownCount}
+                          size="xs"
+                          variant="badge"
+                        />
+                      )}
+                      <button
+                        onClick={() => {
+                          setNewKey({ ...newKey, providerId: pid });
+                          setShowAdd(true);
+                        }}
+                        className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/80 transition hover:bg-white/10"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-nexus-400" /> Add Key for {pid}
+                      </button>
+                    </div>
+                  </div>
 
-                {/* Cyber Table Matrix */}
-                {providerKeys.length === 0 ? (
-                  <div className="px-5 py-6 text-center text-xs text-white/40">
-                    No keys vaulted for <span className="font-mono text-white/60">{pid}</span>. Add keys above to enable non-stop automatic rotation.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-white/5 bg-black/20 text-white/40 uppercase tracking-wider font-semibold text-[10px]">
-                          <th className="px-5 py-3">Status</th>
-                          <th className="px-4 py-3">Masked Key</th>
-                          <th className="px-4 py-3">Label</th>
-                          <th className="px-4 py-3">Requests</th>
-                          <th className="px-4 py-3">Tokens</th>
-                          <th className="px-4 py-3">Errors</th>
-                          <th className="px-4 py-3">429s</th>
-                          <th className="px-4 py-3">Latency</th>
-                          <th className="px-4 py-3">Last Active</th>
-                          <th className="px-5 py-3 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/[0.02]">
-                        {providerKeys.map((k) => {
-                          const StatusIcon = statusIcons[k.status] ?? AlertCircle;
-                          const testResult = testResults[k.id];
-                          return (
-                            <tr key={k.id} className="group transition hover:bg-white/[0.02]">
-                              <td className="px-5 py-3.5">
-                                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize ${statusColors[k.status] ?? ''}`}>
-                                  <StatusIcon className="h-3 w-3" />
-                                  {k.status}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3.5 font-mono text-white/80 font-semibold">
-                                ••••{k.lastFour}
-                              </td>
-                              <td className="px-4 py-3.5 text-white/60">{k.label ?? '—'}</td>
-                              <td className="px-4 py-3.5 font-mono text-white/70">{k.requests}</td>
-                              <td className="px-4 py-3.5 font-mono text-white/70">{k.tokens != null ? k.tokens.toLocaleString() : '0'}</td>
-                              <td className="px-4 py-3.5 font-mono">
-                                {k.errors > 0 ? <span className="text-rose-400 font-bold">{k.errors}</span> : <span className="text-white/40">0</span>}
-                              </td>
-                              <td className="px-4 py-3.5 font-mono">
-                                {k.rateLimitedCount > 0 ? <span className="text-amber-400 font-bold">{k.rateLimitedCount}</span> : <span className="text-white/40">0</span>}
-                              </td>
-                              <td className="px-4 py-3.5 font-mono text-white/70">
-                                {k.latencyMs > 0 ? `${k.latencyMs}ms` : '—'}
-                              </td>
-                              <td className="px-4 py-3.5 text-white/40">
-                                {k.lastSuccessAt ? new Date(k.lastSuccessAt).toLocaleTimeString() : '—'}
-                              </td>
-                              <td className="px-5 py-3.5 text-right">
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <button
-                                    onClick={() => testKey(k.id)}
-                                    disabled={testing === k.id}
-                                    title="Verify Key Endpoint Health"
-                                    className="rounded-lg border border-white/5 bg-white/5 p-1.5 text-white/60 transition hover:border-nexus-500/40 hover:bg-nexus-500/10 hover:text-nexus-300 disabled:opacity-30"
-                                  >
-                                    {testing === k.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin text-nexus-400" /> : <TestTube className="h-3.5 w-3.5" />}
-                                  </button>
-                                  <button
-                                    onClick={() => resetKey(k.id)}
-                                    disabled={k.status === 'active'}
-                                    title="Reset Cooldown / Status Backoff"
-                                    className="rounded-lg border border-white/5 bg-white/5 p-1.5 text-white/60 transition hover:border-amber-500/40 hover:bg-amber-500/10 hover:text-amber-400 disabled:opacity-30"
-                                  >
-                                    <Zap className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={() => healKey(k.id)}
-                                    title="Heal: reset failure counters and re-probe endpoint health"
-                                    className="rounded-lg border border-white/5 bg-white/5 p-1.5 text-white/60 transition hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-300"
-                                  >
-                                    <Stethoscope className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={() => deleteKey(k.id)}
-                                    title="Revoke Key from Vault"
-                                    className="rounded-lg border border-white/5 bg-white/5 p-1.5 text-white/60 transition hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-                                {testResult && (
-                                  <div className={`mt-1 text-[10px] ${testResult.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                    {testResult.ok
-                                      ? `OK · ${testResult.latencyMs}ms · ${testResult.model}`
-                                      : `FAIL · ${typeof testResult.error === 'string' ? testResult.error : (testResult.error ? JSON.stringify(testResult.error) : 'unknown')}`}
+                  {/* Cyber Table Matrix */}
+                  {providerKeys.length === 0 ? (
+                    <div className="px-5 py-6 text-center text-xs text-white/40">
+                      No keys vaulted for <span className="font-mono text-white/60">{pid}</span>. Add keys above to enable non-stop automatic rotation.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-white/5 bg-black/20 text-white/40 uppercase tracking-wider font-semibold text-[10px]">
+                            <th className="px-5 py-3">Status</th>
+                            <th className="px-4 py-3">Masked Key</th>
+                            <th className="px-4 py-3">Label</th>
+                            <th className="px-4 py-3">Requests</th>
+                            <th className="px-4 py-3">Tokens</th>
+                            <th className="px-4 py-3">Errors</th>
+                            <th className="px-4 py-3">429s</th>
+                            <th className="px-4 py-3">Latency</th>
+                            <th className="px-4 py-3">Last Active</th>
+                            <th className="px-5 py-3 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/[0.02]">
+                          {providerKeys.map((k) => {
+                            const StatusIcon = statusIcons[k.status] ?? AlertCircle;
+                            const testResult = testResults[k.id];
+                            const hasKeyError = k.status !== 'active' || k.errors > 0 || (k.activeErrorsCount ?? 0) > 0;
+                            return (
+                              <tr key={k.id} className="group transition hover:bg-white/[0.02]">
+                                <td className="px-5 py-3.5">
+                                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize ${statusColors[k.status] ?? ''}`}>
+                                    <StatusIcon className="h-3 w-3" />
+                                    {k.status}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3.5 font-mono text-white/80 font-semibold">
+                                  ••••{k.lastFour}
+                                </td>
+                                <td className="px-4 py-3.5 text-white/60">{k.label ?? '—'}</td>
+                                <td className="px-4 py-3.5 font-mono text-white/70">{k.requests}</td>
+                                <td className="px-4 py-3.5 font-mono text-white/70">{k.tokens != null ? k.tokens.toLocaleString() : '0'}</td>
+                                <td className="px-4 py-3.5 font-mono">
+                                  {k.errors > 0 ? <span className="text-rose-400 font-bold">{k.errors}</span> : <span className="text-white/40">0</span>}
+                                </td>
+                                <td className="px-4 py-3.5 font-mono">
+                                  {k.rateLimitedCount > 0 ? <span className="text-amber-400 font-bold">{k.rateLimitedCount}</span> : <span className="text-white/40">0</span>}
+                                </td>
+                                <td className="px-4 py-3.5 font-mono text-white/70">
+                                  {k.latencyMs > 0 ? `${k.latencyMs}ms` : '—'}
+                                </td>
+                                <td className="px-4 py-3.5 text-white/40">
+                                  {k.lastSuccessAt ? new Date(k.lastSuccessAt).toLocaleTimeString() : '—'}
+                                </td>
+                                <td className="px-5 py-3.5 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {hasKeyError && (
+                                      <ErrorResolveButton
+                                        target={{ type: 'key', id: k.id, displayName: `${pid} (••••${k.lastFour})` }}
+                                        errorCount={k.errors || 1}
+                                        diagnostic={k.lastErrorDiagnostic}
+                                        size="xs"
+                                        variant="badge"
+                                      />
+                                    )}
+                                    <button
+                                      onClick={() => testKey(k.id)}
+                                      disabled={testing === k.id}
+                                      title="Verify Key Endpoint Health"
+                                      className="rounded-lg border border-white/5 bg-white/5 p-1.5 text-white/60 transition hover:border-nexus-500/40 hover:bg-nexus-500/10 hover:text-nexus-300 disabled:opacity-30"
+                                    >
+                                      {testing === k.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin text-nexus-400" /> : <TestTube className="h-3.5 w-3.5" />}
+                                    </button>
+                                    <button
+                                      onClick={() => resetKey(k.id)}
+                                      disabled={k.status === 'active'}
+                                      title="Reset Cooldown / Status Backoff"
+                                      className="rounded-lg border border-white/5 bg-white/5 p-1.5 text-white/60 transition hover:border-amber-500/40 hover:bg-amber-500/10 hover:text-amber-400 disabled:opacity-30"
+                                    >
+                                      <Zap className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => healKey(k.id)}
+                                      title="Heal: reset failure counters and re-probe endpoint health"
+                                      className="rounded-lg border border-white/5 bg-white/5 p-1.5 text-white/60 transition hover:border-cyan-500/40 hover:bg-cyan-500/10 hover:text-cyan-300"
+                                    >
+                                      <Stethoscope className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => deleteKey(k.id)}
+                                      title="Revoke Key from Vault"
+                                      className="rounded-lg border border-white/5 bg-white/5 p-1.5 text-white/60 transition hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-400"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
                                   </div>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                                  {testResult && (
+                                    <div className={`mt-1 text-[10px] ${testResult.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                      {testResult.ok
+                                        ? `OK · ${testResult.latencyMs}ms · ${testResult.model}`
+                                        : `FAIL · ${typeof testResult.error === 'string' ? testResult.error : (testResult.error ? JSON.stringify(testResult.error) : 'unknown')}`}
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
               </div>
             );
           })

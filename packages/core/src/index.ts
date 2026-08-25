@@ -140,6 +140,11 @@ export { RemediationEngine, type RemediationEngineDeps } from './application/run
 export { IncidentManager, InMemoryIncidentRepository, type IncidentRepositoryPort } from './application/runtime-intelligence/incident-manager.js';
 export { SelfHealingOrchestrator, type SelfHealingOrchestratorOptions } from './application/runtime-intelligence/self-healing-orchestrator.js';
 
+// ── Live Provider Error Resolution Engine ──────────────────────────────────
+export * from './domain/error-diagnostic.js';
+export { ErrorDiagnosticRegistry, type ErrorDiagnosticFilter } from './application/error-diagnostic-registry.js';
+export { LiveErrorResolver, type RemediationReport, type ResolutionStepLog, type LiveErrorResolverDeps } from './application/live-error-resolver.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';
 

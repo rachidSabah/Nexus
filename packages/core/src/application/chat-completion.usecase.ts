@@ -1246,15 +1246,20 @@ export function classifyFailure(error: Error): FailureClassification {
         reason: `HTTP ${status}: authentication/authorization failed — key invalidated`,
       };
     }
-    // 404 Not Found — model doesn't exist on this provider. Mark the
-    // endpoint as unavailable for this model (don't retry on it).
+    // 404 Not Found — model doesn't exist on this provider. This is a
+    // *model*-level failure, NOT a provider outage: a single unsupported
+    // model must NOT poison the entire endpoint/provider (which would
+    // circuit-break every other healthy NVIDIA model). Mark the endpoint as
+    // degraded (counts toward the threshold but does not immediately trip),
+    // and surface a distinct MODEL_UNAVAILABLE code so routing can skip just
+    // this model rather than declaring the provider dead.
     if (status === 404) {
       return {
-        status, code: undefined,
+        status, code: 'MODEL_UNAVAILABLE',
         retryable: false,
         keyAction: 'none',
-        endpointAction: 'mark_unavailable',
-        reason: `HTTP ${status}: model not found on this provider — endpoint marked unavailable`,
+        endpointAction: 'record_failure',
+        reason: `HTTP ${status}: model not found on this provider — endpoint degraded, not circuit-broken (model skipped)`,
       };
     }
     // 408 Request Timeout — retryable, key is fine.
