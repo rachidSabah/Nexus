@@ -7,6 +7,18 @@ import { spawn as nodeSpawn } from 'node:child_process';
  *  so we bypass overload checking for the detached self-respawn call. Runtime behavior is identical. */
 const spawnProcess = nodeSpawn as unknown as (cmd: string, args: string[], opts: Record<string, unknown>) => { unref: () => void; pid?: number; kill: (s?: string) => void };
 
+/** Semver-aware comparison: returns >0 if a is newer than b, <0 if older, 0 if equal. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
+}
+
 import type { ExtensionMarketplace } from '@agent-nexus/marketplace';
 import type { AIServiceMesh } from '@agent-nexus/service-mesh';
 import type { A2ACoordinator, AgentRegistry as A2AAgentRegistry, TeamManager } from '@anx/a2a';
@@ -748,33 +760,56 @@ export class HttpServer {
     // ── System update (read-only check) ───────────────────────────────────
     // Reports whether a newer Nexus revision is available on the tracked
     // upstream without modifying anything. Safe to call from the dashboard
-    // "Updater" panel.
+    // "Updater" panel. Cross-platform: reads package.json via fs (NOT `cat`,
+    // which is Unix-only and broke the check on Windows).
     this.fastify.get('/v1/system/update/check', async (_request, reply) => {
       try {
         const { execSync } = await import('node:child_process');
+        const { readFileSync, existsSync } = await import('node:fs');
+        const path = await import('node:path');
         const cwd = process.cwd();
-        // Determine the current version from package.json.
+
+        // Local version — portable (works on Windows and Linux/macOS).
         let localVersion = 'unknown';
         try {
-          const pkg = JSON.parse(execSync('cat package.json', { cwd }).toString());
-          localVersion = pkg.version ?? 'unknown';
+          const pkgPath = path.join(cwd, 'package.json');
+          if (existsSync(pkgPath)) {
+            localVersion = JSON.parse(readFileSync(pkgPath, 'utf8')).version ?? 'unknown';
+          }
         } catch { /* ignore */ }
-        // Fetch remote refs (does not touch working tree).
-        let remoteAvailable = false;
+
+        // Remote version — best-effort, two sources:
+        //   1) GitHub API latest release tag (authoritative, network only)
+        //   2) git fetch + read origin/main:package.json (offline-capable)
         let remoteVersion = 'unknown';
         try {
-          execSync('git fetch --quiet origin', { cwd, timeout: 15_000 });
-          const rev = execSync('git rev-parse --quiet --verify origin/main', { cwd }).toString().trim();
-          remoteAvailable = rev.length > 0;
-          // Best-effort: read remote package.json version without checkout.
-          const remotePkg = execSync(`git show origin/main:package.json`, { cwd }).toString();
-          remoteVersion = JSON.parse(remotePkg).version ?? 'unknown';
-        } catch { /* offline / no remote */ }
+          const apiRes = await fetch('https://api.github.com/repos/rachidSabah/Nexus/releases/latest', {
+            headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'nexus-gateway' },
+            signal: AbortSignal.timeout(8000),
+          } as any);
+          if (apiRes.ok) {
+            const payload = (await apiRes.json()) as { tag_name?: string };
+            const tag = payload.tag_name;
+            if (tag) remoteVersion = tag.replace(/^v/, '');
+          }
+        } catch { /* offline / rate-limited — fall through to git */ }
+        if (remoteVersion === 'unknown') {
+          try {
+            execSync('git fetch --quiet origin', { cwd, timeout: 15_000 });
+            const remotePkg = execSync('git show origin/main:package.json', { cwd, timeout: 15_000 }).toString();
+            remoteVersion = JSON.parse(remotePkg).version ?? 'unknown';
+          } catch { /* offline / no remote */ }
+        }
+
+        const semverOk = (v: string) => /^\\d+\\.\\d+\\.\\d+/.test(v);
+        const updateAvailable =
+          semverOk(remoteVersion) && semverOk(localVersion) && compareVersions(remoteVersion, localVersion) > 0;
+
         return reply.send({
           ok: true,
           localVersion,
           remoteVersion,
-          updateAvailable: remoteAvailable && remoteVersion !== 'unknown' && remoteVersion !== localVersion,
+          updateAvailable,
           checkedAt: new Date().toISOString(),
         });
       } catch (err: any) {
@@ -784,16 +819,19 @@ export class HttpServer {
 
     // ── System update (apply) ─────────────────────────────────────────────
     // Pulls the latest revision, reinstalls, rebuilds, then re-spawns this
-    // gateway (same safe self-restart pattern as /v1/system/gateway/restart).
-    // Runs as a detached child so the request can return immediately.
+    // gateway — BUT only after the build child has ACTUALLY exited 0 (no blind
+    // timer). Reuses the proven detached self-restart from /v1/system/gateway/
+    // restart so the replacement is already binding the port when we exit,
+    // guaranteeing no downtime / no orphaned gateway.
     this.fastify.post('/v1/system/update', async (_request, reply) => {
       try {
         const cwd = process.cwd();
         const logFile = `${cwd}/.agent-nexus-update.log`;
-        const cmd = process.platform === 'win32'
-          ? `git pull --ff-only origin main && pnpm install && pnpm build >> ${logFile} 2>&1`
-          : `git pull --ff-only origin main && pnpm install && pnpm build >> ${logFile} 2>&1`;
-        // Spawn the actual update command via the shell.
+        // Quote the log path so spaces in cwd don't break redirection.
+        const quotedLog = `"${logFile}"`;
+        const cmd =
+          'git pull --ff-only origin main && pnpm install && pnpm build' +
+          ` >> ${quotedLog} 2>&1`;
         const updater = nodeSpawn(cmd, [], {
           cwd,
           env: process.env,
@@ -803,21 +841,26 @@ export class HttpServer {
           shell: true,
         });
         updater.unref();
-        // Re-spawn the gateway after the build finishes so it picks up changes.
-        setTimeout(() => {
+
+        // Restart ONLY once the build is confirmed successful.
+        updater.on('exit', (code) => {
           try {
-            const restart = spawnProcess(process.execPath, process.argv.slice(1), {
-              cwd,
-              env: process.env,
-              detached: true,
-              stdio: 'ignore',
-              windowsHide: false,
-            });
-            restart.unref();
-            setTimeout(() => process.exit(0), 1200);
+            if (code === 0) {
+              const restart = spawnProcess(process.execPath, process.argv.slice(1), {
+                cwd,
+                env: process.env,
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: false,
+              });
+              restart.unref();
+              setTimeout(() => process.exit(0), 1200);
+            }
+            // Non-zero build: leave the current gateway running (no regression).
           } catch { /* best-effort */ }
-        }, 90_000);
-        return reply.code(202).send({ ok: true, message: 'update started (pull + install + build + restart)', log: logFile });
+        });
+
+        return reply.code(202).send({ ok: true, message: 'update started (pull + install + build + restart on success)', log: logFile });
       } catch (err: any) {
         return reply.code(500).send({ ok: false, message: (err as Error).message });
       }
