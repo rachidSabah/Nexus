@@ -1,4 +1,5 @@
 import { homedir } from 'node:os';
+import { getAgentModelPolicy } from './agent-model-policy.js';
 import { access, mkdir, readFile, writeFile, constants } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -531,9 +532,10 @@ export class AgentRuntimeManager {
     if (!adapter) {
       return { ok: false, message: `Unknown agent '${agentId}'`, actions: [] };
     }
+    const policy = getAgentModelPolicy(agentId);
     const ctx: IntegrationContext = {
       gatewayUrl: opts.gatewayUrl ?? 'http://127.0.0.1:8787',
-      defaultModel: 'nexus/auto',
+      defaultModel: policy?.defaultModel ?? (policy?.freeBias ? 'nexus/auto-free' : 'nexus/auto'),
     };
     const res = await adapter.start(ctx);
     AgentRuntimeManager.verificationCache.delete(agentId);
@@ -555,9 +557,10 @@ export class AgentRuntimeManager {
     if (!adapter) {
       return { ok: false, message: `Unknown agent '${agentId}'`, actions: [] };
     }
+    const policy = getAgentModelPolicy(agentId);
     const ctx: IntegrationContext = {
       gatewayUrl: opts.gatewayUrl ?? 'http://127.0.0.1:8787',
-      defaultModel: 'nexus/auto',
+      defaultModel: policy?.defaultModel ?? (policy?.freeBias ? 'nexus/auto-free' : 'nexus/auto'),
     };
     const res = await adapter.restart(ctx);
     AgentRuntimeManager.verificationCache.delete(agentId);

@@ -55,6 +55,8 @@ export interface GatewayConfig {
     readonly pricing?: { inputPer1K: number; outputPer1K: number; cachedInputPer1K?: number; currency: 'USD' | 'EUR' };
     readonly capabilities?: Record<string, unknown>;
   }>;
+  /** Per-agent model policy: pin a default model and/or prefer free models. */
+  readonly agentModelPolicies: Record<string, { defaultModel?: string; freeBias?: boolean }>;
 }
 
 function getDefaultConfig(): GatewayConfig {
@@ -90,6 +92,7 @@ function getDefaultConfig(): GatewayConfig {
     },
     mcp: { servers: [] },
     endpoints: [],
+    agentModelPolicies: {},
   };
 }
 
@@ -135,6 +138,7 @@ function mergeConfig(base: GatewayConfig, override: Partial<GatewayConfig>): Gat
     network: { ...base.network, ...override.network },
     mcp: { ...base.mcp, ...override.mcp },
     endpoints: override.endpoints ?? base.endpoints,
+    agentModelPolicies: { ...base.agentModelPolicies, ...override.agentModelPolicies },
   };
 }
 

@@ -21,7 +21,7 @@ import {
   Server,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import useSWR from 'swr';
 
 import {
@@ -99,6 +99,42 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
     }
     return modelGroups[0]?.models[0]?.id ?? '';
   }, [selectedModel, modelGroups]);
+
+  // ── Persisted per-agent model policy (GET /v1/agent-model-policy) ──────────
+  const [freeBias, setFreeBias] = useState<boolean>(false);
+  const [policySaved, setPolicySaved] = useState<boolean | null>(null);
+  const policyKey = `/api/v1/agent-model-policy`;
+  const { data: policyData } = useSWR<{ policies: Record<string, { defaultModel?: string; freeBias?: boolean }> }>(
+    policyKey,
+    (u: string) => fetch(u).then((r) => r.json()),
+    { refreshInterval: 0, revalidateOnFocus: false },
+  );
+  const savedPolicy = policyData?.policies?.[status.id];
+  // Seed local selection from the persisted policy once it loads.
+  const [seeded, setSeeded] = useState(false);
+  useEffect(() => {
+    if (!seeded && savedPolicy) {
+      if (savedPolicy.defaultModel) setSelectedModel(savedPolicy.defaultModel);
+      if (typeof savedPolicy.freeBias === 'boolean') setFreeBias(savedPolicy.freeBias);
+      setSeeded(true);
+    }
+  }, [seeded, savedPolicy]);
+
+  const savePolicy = useCallback(async () => {
+    setPolicySaved(null);
+    try {
+      const res = await fetch('/api/v1/agent-model-policy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: status.id, defaultModel: selectedModel, freeBias }),
+      });
+      setPolicySaved(res.ok);
+    } catch {
+      setPolicySaved(false);
+    }
+  }, [status.id, selectedModel, freeBias]);
+
+
 
   const caps = runtime?.capabilities;
   const running = runtime?.running ?? false;
@@ -377,7 +413,32 @@ function IntegrationCard({ status, onMutate }: { status: IntegrationStatus; onMu
             </div>
           )}
 
+          {/* Per-agent model policy persistence */}
+          <div className="mb-2 flex items-center justify-between">
+            <label className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-white/40">
+              <input
+                type="checkbox"
+                checked={freeBias}
+                onChange={(e) => setFreeBias(e.target.checked)}
+                className="h-3.5 w-3.5 accent-violet-500"
+              />
+              Prefer free models
+            </label>
+            <button
+              type="button"
+              onClick={savePolicy}
+              className="rounded-lg border border-violet-500/40 bg-violet-500/15 px-2.5 py-1 text-[10px] font-semibold text-violet-200 transition hover:bg-violet-500/25"
+              title="Persist this agent's default model + free-bias so it applies on every launch"
+            >
+              Save policy
+            </button>
+          </div>
+          {policySaved === true && <div className="mb-2 text-[10px] text-emerald-400">✓ Policy saved</div>}
+          {policySaved === false && <div className="mb-2 text-[10px] text-rose-400">✗ Save failed</div>}
+
           {canStart && (
+
+
             <button
               type="button"
               disabled={busy !== null || running}

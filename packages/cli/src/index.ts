@@ -97,18 +97,57 @@ export class NexusCli {
     const repoPnpm = join(repoDir, 'node_modules', '.bin', 'pnpm');
     const command = existsSync(repoPnpm) ? repoPnpm : 'pnpm';
 
-    // In dev mode (default when running anx dev/launch), spawn pnpm dev which runs fast watch servers.
-    // If --no-dev or --start is set, launch standalone prebuilt start commands for fast execution.
-    const commandArgs = devMode || flags['start'] !== 'true' ? ['dev'] : ['run', 'start'];
+    // In dev mode (default for `anx launch`/`anx dev`) run a single turbo
+    // watch server. For an INSTALLED gateway, `anx start --start` launches the
+    // prebuilt (already-built) gateway + dashboard processes directly — no
+    // watch/build overhead on every boot.
+    const usePrebuilt = flags['start'] === 'true' && !devMode;
 
-    const proc = spawn(command, commandArgs, {
-      stdio: 'inherit',
-      shell: true,
-      cwd: repoDir,
-    });
+    // Resolve the installed config so the prebuilt gateway binds the same
+    // port/vault the installer created (mirrors the installer's config path).
+    const { homedir } = await import('node:os');
+    const installedConfig = join(homedir(), '.agent-nexus', 'config.json');
+    const env = { ...process.env } as Record<string, string>;
+    if (usePrebuilt && existsSync(installedConfig)) {
+      env['ANX_CONFIG'] = installedConfig;
+    }
+
+    if (usePrebuilt) {
+      // Launch gateway + dashboard as independent managed child processes.
+      const gateway = spawn(command, ['--filter', '@anx/gateway', 'run', 'start'], {
+        stdio: 'inherit',
+        shell: true,
+        cwd: repoDir,
+        env,
+      });
+      const dashboard = spawn(command, ['--filter', '@anx/dashboard', 'start'], {
+        stdio: 'inherit',
+        shell: true,
+        cwd: repoDir,
+        env,
+      });
+      const fail = (name: string, code: number | null) => {
+        process.stderr.write(`[nexus] ${name} exited (code ${code}). Use 'anx status' to diagnose.\n`);
+      };
+      gateway.on('exit', (code) => { if (code !== 0 && code !== null) fail('gateway', code); });
+      dashboard.on('exit', (code) => { if (code !== 0 && code !== null) fail('dashboard', code); });
+      const onKill = () => { gateway.kill(); dashboard.kill(); process.exit(0); };
+      process.on('SIGINT', onKill);
+      process.on('SIGTERM', onKill);
+    } else {
+      const proc = spawn(command, ['dev'], {
+        stdio: 'inherit',
+        shell: true,
+        cwd: repoDir,
+        env,
+      });
+      proc.on('error', (err) => {
+        process.stderr.write(`Failed to start services: ${err.message}\n`);
+      });
+    }
 
     if (openBrowser) {
-      process.stdout.write(`\n🌐 Opening Dashboard at ${dashboardUrl}...\n`);
+      process.stdout.write(`\n\ud83c\udf10 Opening Dashboard at ${dashboardUrl}...\n`);
       setTimeout(() => {
         const openCmd = process.platform === 'win32'
           ? `start ${dashboardUrl}`
@@ -118,10 +157,6 @@ export class NexusCli {
         spawn(openCmd, { shell: true, stdio: 'ignore' });
       }, 4000);
     }
-
-    proc.on('error', (err) => {
-      process.stderr.write(`Failed to start services: ${err.message}\n`);
-    });
   }
 
   private client(): NexusClient {

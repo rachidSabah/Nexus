@@ -177,6 +177,11 @@ export class PromptCompressor {
     };
   }
 
+  /** Returns the full runtime compression config (for the dashboard policy UI). */
+  getConfig(): CompressionConfig {
+    return { ...this.config };
+  }
+
   /** Updates config at runtime. */
   updateConfig(updates: Partial<CompressionConfig>): void {
     this.config = { ...this.config, ...updates };

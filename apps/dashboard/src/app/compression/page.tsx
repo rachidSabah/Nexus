@@ -204,6 +204,40 @@ export default function CompressionLabPage() {
     { refreshInterval: 0, revalidateOnFocus: false },
   );
 
+
+  // ── Live compression policy (GET/POST /v1/compression) ─────────────────────
+  const policyKey = '/api/v1/compression';
+  const { data: policy, mutate: mutatePolicy } = useSWR<{
+    config: {
+      enabled: boolean;
+      schemaCompression?: boolean;
+      systemPromptDedup?: boolean;
+      summarizeThreshold?: number;
+    };
+  }>(policyKey, (url: string) => fetch(url).then((r) => r.json()), {
+    refreshInterval: 0,
+    revalidateOnFocus: false,
+  });
+
+  const [policySaving, setPolicySaving] = useState(false);
+  const updatePolicy = useCallback(
+    async (patch: Record<string, unknown>) => {
+      setPolicySaving(true);
+      try {
+        await fetch('/api/v1/compression', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        await mutatePolicy();
+      } finally {
+        setPolicySaving(false);
+      }
+    },
+    [mutatePolicy],
+  );
+
+  const cfg = policy?.config;
   const maxPct = Math.max(1, ...(data?.engines.map((e) => e.pct) ?? [1]));
 
   // ── Copy / Apply ───────────────────────────────────────────────────────────
@@ -241,6 +275,84 @@ export default function CompressionLabPage() {
             <span className="text-violet-300">your actual content</span> and shows the real, measured
             savings per engine — live, not a static claim. All 6 engines, fully interactive.
           </p>
+        </div>
+      </div>
+
+      {/* Live compression policy — drives the real request-path compressor */}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 backdrop-blur-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/50">
+              Active Compression Policy
+            </p>
+            <p className="text-[11px] text-white/30 mt-1">
+              These settings apply to the live gateway request path (not just this lab).
+            </p>
+          </div>
+          {policySaving && (
+            <span className="flex items-center gap-1 text-[11px] text-violet-300/60">
+              <RefreshCw className="h-3 w-3 animate-spin" /> saving…
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          {/* Master enable */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-white/70">Compression enabled</p>
+              <p className="text-[10px] text-white/30">Master switch for the request-path compressor</p>
+            </div>
+            <button
+              onClick={() => updatePolicy({ enable: !cfg?.enabled })}
+              className={`relative h-5 w-9 rounded-full transition-colors ${cfg?.enabled ? 'bg-violet-500' : 'bg-white/10'}`}
+            >
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${cfg?.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+
+          {/* Strategy toggles */}
+          {[
+            { key: 'schemaCompression', label: 'Schema compression', desc: 'Strip redundant JSON Schema tool-definition metadata' },
+            { key: 'systemPromptDedup', label: 'System-prompt dedup', desc: 'Remove duplicate consecutive system prompts' },
+          ].map((s) => {
+            const val = (cfg as Record<string, boolean | undefined> | undefined)?.[s.key] ?? true;
+            return (
+              <div key={s.key} className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-white/70">{s.label}</p>
+                  <p className="text-[10px] text-white/30">{s.desc}</p>
+                </div>
+                <button
+                  onClick={() => updatePolicy({ strategies: { [s.key]: !val } })}
+                  className={`relative h-5 w-9 rounded-full transition-colors ${val ? 'bg-violet-500' : 'bg-white/10'}`}
+                >
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${val ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+            );
+          })}
+
+          {/* Summarize threshold */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-white/50">Summarize threshold</p>
+              <span className="font-mono text-xs text-amber-400">{cfg?.summarizeThreshold ?? 40} msgs</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              step={5}
+              value={cfg?.summarizeThreshold ?? 40}
+              onChange={(e) => updatePolicy({ strategies: { summarizeThreshold: Number(e.target.value) } })}
+              className="w-full accent-amber-500"
+            />
+            <div className="flex justify-between text-[10px] text-white/25 mt-1">
+              <span>0 — off</span>
+              <span>200 — aggressive</span>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -146,6 +146,7 @@ import { projectGenericCatalog, projectOpenAICatalog, getAgentCompatibilityMatri
 import { IntentDetector, ScoringEngine } from './scoring-engine.js';
 import { defaultBaseUrlFor, defaultCapabilitiesFor, defaultPricingFor } from './endpoints.js';
 import { GATEWAY_VERSION } from './version.js';
+import { getAgentModelPolicies, setAgentModelPolicy } from './agent-model-policy.js';
 import type { GatewayConfig } from './config.js';
 import { DetachedTaskStore } from './detached-task-store.js';
 import { FalloverConfigStore, rankSimilarModels } from './fallover-config.js';
@@ -5028,7 +5029,7 @@ export class HttpServer {
       const stats = this.deps.promptCompressor.getStats();
       return {
         stats,
-        config: { enabled: stats.enabled },
+        config: this.deps.promptCompressor.getConfig(),
       };
     });
 
@@ -6747,6 +6748,31 @@ export class HttpServer {
         return res;
       } catch (err) {
         return reply.code(400).send({ error: (err as Error).message });
+      }
+    });
+
+    // ── Per-agent model policy (pin default model + free-bias) ──────────────────
+    this.fastify.get('/v1/agent-model-policy', async () => {
+      return { policies: getAgentModelPolicies() };
+    });
+
+    this.fastify.post('/v1/agent-model-policy', async (request, reply) => {
+      const body = request.body as {
+        agentId?: string;
+        defaultModel?: string;
+        freeBias?: boolean;
+      };
+      if (!body.agentId) {
+        return reply.code(400).send({ error: 'agentId is required' });
+      }
+      try {
+        const policy = setAgentModelPolicy(body.agentId, {
+          defaultModel: body.defaultModel,
+          freeBias: body.freeBias,
+        });
+        return { ok: true, agentId: body.agentId, policy };
+      } catch (err) {
+        return reply.code(500).send({ error: (err as Error).message });
       }
     });
 
