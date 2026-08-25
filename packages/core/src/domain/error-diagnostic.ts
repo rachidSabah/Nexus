@@ -91,7 +91,7 @@ export interface ClassifyErrorInput {
 }
 
 /**
- * Safely masks an API key string (e.g. "sk-1234567890abcdef" -> "••••cdef" or "sk-••••••cdef").
+ * Safely masks an API key string (e.g. "sk-example-key-placeholder" -> "••••lder" or "sk-••••••lder").
  * Never returns plaintext.
  */
 export function maskKeyString(key?: string): string {
