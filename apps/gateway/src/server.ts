@@ -2616,7 +2616,7 @@ export class HttpServer {
     });
 
     // GET /v1/models/prefetch — dynamically aggregates and prefetches active provider models
-    this.fastify.get('/v1/models/prefetch', async (request) => {
+    this.fastify.get('/v1/models/prefetch', async (_request) => {
       const activeKeys = this.deps.keyRegistry.list().filter((k) => k.status === 'active');
       const endpoints = this.deps.routing.listEndpoints().filter((e) => e.health === 'healthy');
       const discovered = this.deps.modelCatalog ? await this.deps.modelCatalog.list() : [];
