@@ -112,6 +112,9 @@ export type FamilyId =
 
 export const FAMILY_PATTERNS: ReadonlyArray<readonly [RegExp, FamilyId]> = [
   [/^claude(?:[-._]|$)/i, 'claude'],
+  [/^sonnet(?:[-._]|$)/i, 'claude'],
+  [/^haiku(?:[-._]|$)/i, 'claude'],
+  [/^opus(?:[-._]|$)/i, 'claude'],
   [/^(gpt-[0-9]|gpt-4[.o-]|gpt-4$)/i, 'openai'],
   [/^o[1-4](?:[-._]|$)/i, 'openai'],
   [/^codex/i, 'openai'],
