@@ -2600,15 +2600,14 @@ export class HttpServer {
         const session = await this.deps.sessions.get(id);
         if (!session) return reply.code(404).send({ error: { message: `session '${id}' not found` } });
         
-        // Pin model to session metadata
-        const updated = await this.deps.sessions.update(id, {
-          modelId: body.modelId.replace(/^\/model\s*/i, '').trim(),
-        });
+        const cleanModelId = body.modelId.replace(/^\/model\s*/i, '').trim();
+        setAgentModelPolicy(session.agentId, { defaultModel: cleanModelId });
+        
         return {
           ok: true,
           sessionId: id,
-          pinnedModel: body.modelId,
-          session: updated,
+          agentId: session.agentId,
+          pinnedModel: cleanModelId,
         };
       } catch (err) {
         return reply.code(500).send({ error: { message: (err as Error).message } });
@@ -2617,9 +2616,10 @@ export class HttpServer {
 
     // GET /v1/models/prefetch — dynamically aggregates and prefetches active provider models
     this.fastify.get('/v1/models/prefetch', async (_request) => {
-      const activeKeys = this.deps.keyRegistry.list().filter((k) => k.status === 'active');
+      const allKeys = this.deps.keyRegistry.listAll();
+      const activeKeys = allKeys.filter((k) => k.status === 'active');
       const endpoints = this.deps.routing.listEndpoints().filter((e) => e.health === 'healthy');
-      const discovered = this.deps.modelCatalog ? await this.deps.modelCatalog.list() : [];
+      const discovered = this.deps.modelRegistry ? this.deps.modelRegistry.list() : [];
 
       const dynamicModels = discovered.map((m: any) => ({
         id: m.id,
