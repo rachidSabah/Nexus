@@ -681,6 +681,9 @@ export default function KeysPage() {
             const activeCount = providerKeys.filter((k) => k.status === 'active').length;
             const cooldownCount = providerKeys.filter((k) => k.status === 'cooldown').length;
             const invalidCount = providerKeys.filter((k) => k.status === 'invalid').length;
+            const totalErrors = providerKeys.reduce((acc, k) => acc + (k.errors || 0), 0);
+            const totalActiveErrors = providerKeys.reduce((acc, k) => acc + ((k.activeErrorsCount ?? 0) > 0 ? (k.activeErrorsCount ?? 0) : (k.status !== 'active' ? (k.errors || 1) : 0)), 0);
+            const hasProviderIssues = invalidCount > 0 || cooldownCount > 0 || totalErrors > 0 || totalActiveErrors > 0 || (provider && provider.health !== 'healthy');
 
             return (
               <div
@@ -708,18 +711,19 @@ export default function KeysPage() {
                       {activeCount > 0 && <span className="text-emerald-400 font-medium">· {activeCount} active</span>}
                       {cooldownCount > 0 && <span className="text-amber-400 font-medium">· {cooldownCount} cooldown</span>}
                       {invalidCount > 0 && <span className="text-rose-400 font-medium">· {invalidCount} invalid</span>}
+                      {totalErrors > 0 && <span className="text-rose-400 font-medium">· {totalErrors} error{totalErrors !== 1 ? 's' : ''}</span>}
                     </div>
                   </div>
 
-                    <div className="flex items-center gap-2">
-                      {(invalidCount > 0 || cooldownCount > 0 || provider?.health !== 'healthy') && (
-                        <ErrorResolveButton
-                          target={{ type: 'provider', id: pid, displayName: pid }}
-                          errorCount={invalidCount + cooldownCount}
-                          size="xs"
-                          variant="badge"
-                        />
-                      )}
+                  <div className="flex items-center gap-2">
+                    {hasProviderIssues && (
+                      <ErrorResolveButton
+                        target={{ type: 'provider', id: pid, displayName: pid }}
+                        errorCount={Math.max(1, totalActiveErrors || totalErrors || invalidCount + cooldownCount)}
+                        size="xs"
+                        variant="badge"
+                      />
+                    )}
                       <button
                         onClick={() => {
                           setNewKey({ ...newKey, providerId: pid });
