@@ -5,6 +5,8 @@ import {
   Stethoscope,
   X,
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface ErrorDiagnostic {
   id: string;
@@ -42,13 +44,19 @@ export interface ErrorDetailsModalProps {
 }
 
 export function ErrorDetailsModal({ isOpen, onClose, diagnostic, onResolve }: ErrorDetailsModalProps) {
-  if (!isOpen || !diagnostic) return null;
+  const [mounted, setMounted] = useState(false);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-white/15 bg-neutral-950 p-6 shadow-2xl space-y-4">
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!isOpen || !diagnostic || !mounted) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-4 animate-in fade-in duration-200">
+      <div className="relative w-full max-w-xl max-h-[90vh] flex flex-col overflow-hidden rounded-2xl border border-white/15 bg-neutral-950 p-5 sm:p-6 shadow-2xl space-y-4">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-white/10 pb-4">
+        <div className="flex items-center justify-between border-b border-white/10 pb-4 shrink-0">
           <div className="flex items-center gap-3">
             <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-rose-400">
               <ShieldAlert className="h-6 w-6" />
@@ -72,70 +80,73 @@ export function ErrorDetailsModal({ isOpen, onClose, diagnostic, onResolve }: Er
           </button>
         </div>
 
-        {/* Structured Details Grid */}
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-            <span className="text-[10px] uppercase font-bold text-white/40">Category &amp; Scope</span>
-            <div className="mt-1 font-semibold text-nexus-300">{diagnostic.category}</div>
-            <div className="text-[11px] text-white/50">{diagnostic.scope} · {diagnostic.transience}</div>
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto space-y-3 pr-1 min-h-0">
+          {/* Structured Details Grid */}
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+              <span className="text-[10px] uppercase font-bold text-white/40">Category &amp; Scope</span>
+              <div className="mt-1 font-semibold text-nexus-300">{diagnostic.category}</div>
+              <div className="text-[11px] text-white/50">{diagnostic.scope} · {diagnostic.transience}</div>
+            </div>
+
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+              <span className="text-[10px] uppercase font-bold text-white/40">HTTP Status &amp; Code</span>
+              <div className="mt-1 font-mono font-bold text-rose-300">
+                HTTP {diagnostic.httpStatus ?? '—'}
+              </div>
+              <div className="text-[11px] font-mono text-white/50 truncate">
+                {diagnostic.upstreamCode ?? 'NONE'}
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+              <span className="text-[10px] uppercase font-bold text-white/40">Target Entity</span>
+              <div className="mt-1 font-mono font-semibold text-white/80">{diagnostic.providerId}</div>
+              {diagnostic.maskedKey && (
+                <div className="text-[11px] font-mono text-emerald-400">Key: {diagnostic.maskedKey}</div>
+              )}
+              {diagnostic.modelId && (
+                <div className="text-[11px] font-mono text-cyan-400 truncate">Model: {diagnostic.modelId}</div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+              <span className="text-[10px] uppercase font-bold text-white/40">Telemetry Counters</span>
+              <div className="mt-1 text-white/80">
+                Occurrences: <span className="font-bold text-white">{diagnostic.occurrenceCount}</span>
+              </div>
+              <div className="text-[11px] text-white/50">
+                Failures streak: {diagnostic.consecutiveFailures}
+              </div>
+            </div>
           </div>
 
-          <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-            <span className="text-[10px] uppercase font-bold text-white/40">HTTP Status &amp; Code</span>
-            <div className="mt-1 font-mono font-bold text-rose-300">
-              HTTP {diagnostic.httpStatus ?? '—'}
+          {/* Upstream Message */}
+          {diagnostic.upstreamMessage && (
+            <div className="rounded-xl border border-white/10 bg-black/40 p-3 text-xs space-y-1">
+              <span className="text-[10px] uppercase font-bold text-white/40">Upstream Raw Message</span>
+              <div className="font-mono text-rose-300/90 text-[11px] break-all max-h-28 overflow-y-auto">
+                {diagnostic.upstreamMessage}
+              </div>
             </div>
-            <div className="text-[11px] font-mono text-white/50 truncate">
-              {diagnostic.upstreamCode ?? 'NONE'}
-            </div>
-          </div>
+          )}
 
-          <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-            <span className="text-[10px] uppercase font-bold text-white/40">Target Entity</span>
-            <div className="mt-1 font-mono font-semibold text-white/80">{diagnostic.providerId}</div>
-            {diagnostic.maskedKey && (
-              <div className="text-[11px] font-mono text-emerald-400">Key: {diagnostic.maskedKey}</div>
-            )}
-            {diagnostic.modelId && (
-              <div className="text-[11px] font-mono text-cyan-400 truncate">Model: {diagnostic.modelId}</div>
-            )}
-          </div>
-
-          <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-            <span className="text-[10px] uppercase font-bold text-white/40">Telemetry Counters</span>
-            <div className="mt-1 text-white/80">
-              Occurrences: <span className="font-bold text-white">{diagnostic.occurrenceCount}</span>
+          {/* Suspected Cause & Recommendation */}
+          <div className="rounded-xl border border-amber-500/20 bg-amber-950/20 p-3.5 text-xs space-y-2">
+            <div>
+              <span className="font-bold text-amber-400">Suspected Root Cause:</span>
+              <p className="mt-0.5 text-white/80">{diagnostic.likelyCause}</p>
             </div>
-            <div className="text-[11px] text-white/50">
-              Failures streak: {diagnostic.consecutiveFailures}
+            <div>
+              <span className="font-bold text-nexus-300">Recommended Remediation:</span>
+              <p className="mt-0.5 text-white/80">{diagnostic.recommendedAction}</p>
             </div>
           </div>
         </div>
 
-        {/* Upstream Message */}
-        {diagnostic.upstreamMessage && (
-          <div className="rounded-xl border border-white/10 bg-black/40 p-3 text-xs space-y-1">
-            <span className="text-[10px] uppercase font-bold text-white/40">Upstream Raw Message</span>
-            <div className="font-mono text-rose-300/90 text-[11px] break-all max-h-24 overflow-y-auto">
-              {diagnostic.upstreamMessage}
-            </div>
-          </div>
-        )}
-
-        {/* Suspected Cause & Recommendation */}
-        <div className="rounded-xl border border-amber-500/20 bg-amber-950/20 p-3.5 text-xs space-y-2">
-          <div>
-            <span className="font-bold text-amber-400">Suspected Root Cause:</span>
-            <p className="mt-0.5 text-white/80">{diagnostic.likelyCause}</p>
-          </div>
-          <div>
-            <span className="font-bold text-nexus-300">Recommended Remediation:</span>
-            <p className="mt-0.5 text-white/80">{diagnostic.recommendedAction}</p>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex items-center justify-between border-t border-white/10 pt-4">
+        {/* Action Buttons Footer */}
+        <div className="flex items-center justify-between border-t border-white/10 pt-4 shrink-0">
           <span className="text-[11px] text-white/40">
             Last seen: {new Date(diagnostic.lastSeenAt).toLocaleTimeString()}
           </span>
@@ -161,6 +172,7 @@ export function ErrorDetailsModal({ isOpen, onClose, diagnostic, onResolve }: Er
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

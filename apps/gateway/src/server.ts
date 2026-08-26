@@ -5672,6 +5672,14 @@ export class HttpServer {
       return { ok };
     });
 
+    // Heal a key: reset failure counters, restore active status, and verify health.
+    this.fastify.post('/v1/keys/:id/heal', async (request) => {
+      const { id } = request.params as { id: string };
+      this.deps.keyRegistry.reset(id);
+      const report = await this.liveErrorResolver.resolveKey(id);
+      return report;
+    });
+
     // Test a key by issuing a health check or quick test completion.
     // Returns { ok, latencyMs, model, error? }.
     this.fastify.post('/v1/keys/:id/test', async (request, reply) => {

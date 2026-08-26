@@ -746,7 +746,8 @@ export default function KeysPage() {
                           {providerKeys.map((k) => {
                             const StatusIcon = statusIcons[k.status] ?? AlertCircle;
                             const testResult = testResults[k.id];
-                            const hasKeyError = k.status !== 'active' || k.errors > 0 || (k.activeErrorsCount ?? 0) > 0;
+                            const activeErrors = (k.activeErrorsCount ?? 0) > 0 ? (k.activeErrorsCount ?? 0) : (k.status !== 'active' ? (k.errors || 1) : 0);
+                            const hasKeyError = k.status !== 'active' || activeErrors > 0;
                             return (
                               <tr key={k.id} className="group transition hover:bg-white/[0.02]">
                                 <td className="px-5 py-3.5">
@@ -778,7 +779,7 @@ export default function KeysPage() {
                                     {hasKeyError && (
                                       <ErrorResolveButton
                                         target={{ type: 'key', id: k.id, displayName: `${pid} (••••${k.lastFour})` }}
-                                        errorCount={k.errors || 1}
+                                        errorCount={activeErrors}
                                         diagnostic={k.lastErrorDiagnostic}
                                         size="xs"
                                         variant="badge"

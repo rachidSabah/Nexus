@@ -470,12 +470,15 @@ export class KeyRegistry {
     }
   }
 
-  /** Forces a key back to active status (clears cooldown / invalid). */
+  /** Forces a key back to active status (clears cooldown / invalid / failure error state). */
   reset(keyId: string): boolean {
     const k = this.keys.get(keyId);
     if (!k) return false;
     k.status = 'active';
     k.cooldownUntil = 0;
+    k.errors = 0;
+    k.rateLimitedCount = 0;
+    k.lastFailureReason = undefined;
     return true;
   }
 
