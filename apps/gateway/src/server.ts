@@ -2735,15 +2735,9 @@ export class HttpServer {
       const { id } = request.params as { id: string };
       const key = this.deps.keyRegistry.get(id);
       if (!key) return reply.code(404).send({ error: { message: `Key '${id}' not found` } });
-      const restored = this.deps.keyRegistry.reset(id);
-      // Re-probe a representative endpoint for the key's provider.
-      const endpoint = this.deps.routing.listEndpoints().find((e) => e.providerId === key.providerId);
-      let reachable: boolean | null = null;
-      if (endpoint) {
-        reachable = await probeUrl(endpoint.baseUrl);
-        if (reachable) this.deps.routing.updateEndpoint(endpoint.id, { health: 'healthy' });
-      }
-      return { ok: restored, keyId: id, status: 'active', endpointReachable: reachable };
+      this.deps.keyRegistry.reset(id);
+      const report = await this.liveErrorResolver.resolveKey(id);
+      return report;
     });
 
     // ── Phase 9 Autonomous Execution Control Plane API ─────────────────
@@ -5672,13 +5666,6 @@ export class HttpServer {
       return { ok };
     });
 
-    // Heal a key: reset failure counters, restore active status, and verify health.
-    this.fastify.post('/v1/keys/:id/heal', async (request) => {
-      const { id } = request.params as { id: string };
-      this.deps.keyRegistry.reset(id);
-      const report = await this.liveErrorResolver.resolveKey(id);
-      return report;
-    });
 
     // Test a key by issuing a health check or quick test completion.
     // Returns { ok, latencyMs, model, error? }.
