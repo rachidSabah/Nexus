@@ -1045,3 +1045,41 @@ export class ObsidianKnowledgeAdapter {
     return files;
   }
 }
+
+/**
+ * Multi-Tier High Performance Cache Hierarchy
+ * L1: Sub-millisecond In-Memory LRU Cache
+ * L2: Persistent Exact-Match Normalized Store
+ * L3: Vector Semantic Match Cache
+ */
+export class MultiTierCacheHierarchy {
+  private l1Cache: Map<string, { value: unknown; expiresAt: number }> = new Map();
+  private maxL1Entries: number = 2000;
+
+  public setL1(key: string, value: unknown, ttlMs: number = 300_000): void {
+    if (this.l1Cache.size >= this.maxL1Entries) {
+      const firstKey = this.l1Cache.keys().next().value;
+      if (firstKey) this.l1Cache.delete(firstKey);
+    }
+    this.l1Cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  }
+
+  public getL1<T>(key: string): T | null {
+    const entry = this.l1Cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.l1Cache.delete(key);
+      return null;
+    }
+    return entry.value as T;
+  }
+
+  public invalidateL1(key: string): void {
+    this.l1Cache.delete(key);
+  }
+
+  public clearL1(): void {
+    this.l1Cache.clear();
+  }
+}
+

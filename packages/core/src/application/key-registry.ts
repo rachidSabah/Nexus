@@ -86,6 +86,10 @@ export interface KeyDescriptor {
    *  activeRequests reaches the cap, spreading load across keys instead of
    *  hammering a single one. Undefined → governed by the registry default. */
   concurrencyLimit?: number;
+  /** Proactive Rate-Limit Quota Tracking: Remaining TPM/RPM estimated from upstream headers */
+  remainingTokens?: number;
+  remainingRequests?: number;
+  quotaResetAt?: number;
 }
 
 export interface KeyRegistryOptions {
@@ -336,6 +340,16 @@ export class KeyRegistry {
       const eligible = candidates.filter((k) => k.activeRequests < (k.concurrencyLimit ?? cap));
       if (eligible.length > 0) candidates = eligible;
     }
+
+    // Filter out keys nearing rate-limit quota exhaustion (proactive 429 prevention)
+    const quotaSafe = candidates.filter(
+      (k) =>
+        k.remainingRequests === undefined ||
+        k.remainingRequests > 2 ||
+        (k.quotaResetAt !== undefined && Date.now() > k.quotaResetAt)
+    );
+    if (quotaSafe.length > 0) candidates = quotaSafe;
+
     if (candidates.length === 0) return undefined;
 
     let chosen: string | undefined;

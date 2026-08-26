@@ -30,6 +30,7 @@ export {
   type RepoSelection,
 } from './repo-index.js';
 export { ExternalCompressorRegistry, externalCompressors, type ExternalCompressorHandle } from './external-compressor.js';
+export { StreamingTokenOptimizerWorker, type AsyncCompressionTask } from './worker-optimizer.js';
 export { createCavemanCompressor, type CavemanCompressorOptions, type CavemanMode } from './caveman-adapter.js';
 export { OptimizationMode } from './types.js';
 export type {

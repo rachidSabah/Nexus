@@ -2589,6 +2589,58 @@ export class HttpServer {
       }
     });
 
+    // POST /v1/sessions/:id/slash-model — Dynamic /model Command Execution per Agent
+    this.fastify.post('/v1/sessions/:id/slash-model', async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { modelId: string };
+      if (!body?.modelId) {
+        return reply.code(400).send({ error: { message: 'modelId is required (e.g. /model claude-3-5-sonnet)' } });
+      }
+      try {
+        const session = await this.deps.sessions.get(id);
+        if (!session) return reply.code(404).send({ error: { message: `session '${id}' not found` } });
+        
+        // Pin model to session metadata
+        const updated = await this.deps.sessions.update(id, {
+          modelId: body.modelId.replace(/^\/model\s*/i, '').trim(),
+        });
+        return {
+          ok: true,
+          sessionId: id,
+          pinnedModel: body.modelId,
+          session: updated,
+        };
+      } catch (err) {
+        return reply.code(500).send({ error: { message: (err as Error).message } });
+      }
+    });
+
+    // GET /v1/models/prefetch — dynamically aggregates and prefetches active provider models
+    this.fastify.get('/v1/models/prefetch', async (request) => {
+      const activeKeys = this.deps.keyRegistry.list().filter((k) => k.status === 'active');
+      const endpoints = this.deps.routing.listEndpoints().filter((e) => e.health === 'healthy');
+      const discovered = this.deps.modelCatalog ? await this.deps.modelCatalog.list() : [];
+
+      const dynamicModels = discovered.map((m: any) => ({
+        id: m.id,
+        name: m.name || m.id,
+        provider: m.providerId || m.provider,
+        contextWindow: m.contextWindow || 128000,
+        supportsStreaming: true,
+        supportsToolCalling: m.toolCalling ?? true,
+        status: 'active',
+      }));
+
+      return {
+        ok: true,
+        total: dynamicModels.length,
+        models: dynamicModels,
+        activeProviders: Array.from(new Set(activeKeys.map((k) => k.providerId))),
+        healthyEndpoints: endpoints.length,
+        timestamp: Date.now(),
+      };
+    });
+
     // POST /v1/sessions/:id/restart
     this.fastify.post('/v1/sessions/:id/restart', async (request, reply) => {
       const { id } = request.params as { id: string };

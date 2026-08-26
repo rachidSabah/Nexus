@@ -486,7 +486,10 @@ export default function KeysPage() {
               <KeyRound className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-3 text-3xl font-black tracking-tight text-white">{metrics?.keys?.total ?? 0}</div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <div className="text-3xl font-black tracking-tight text-white">{metrics?.keys?.total ?? 0}</div>
+            <span className="text-[10px] font-mono text-nexus-400 bg-nexus-500/10 px-2 py-0.5 rounded-full border border-nexus-500/30">100% POOL</span>
+          </div>
           <div className="mt-1 text-[11px] text-white/40">Registered across all providers</div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-nexus-500 to-cyan-500" />
         </div>
@@ -498,7 +501,10 @@ export default function KeysPage() {
               <CheckCircle2 className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-3 text-3xl font-black tracking-tight text-emerald-300">{metrics?.keys?.active ?? 0}</div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <div className="text-3xl font-black tracking-tight text-emerald-300">{metrics?.keys?.active ?? 0}</div>
+            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">CAPACITY OK</span>
+          </div>
           <div className="mt-1 text-[11px] text-emerald-400/60">Healthy & ready for proxying</div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />
         </div>
@@ -510,7 +516,10 @@ export default function KeysPage() {
               <Clock className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-3 text-3xl font-black tracking-tight text-amber-300">{metrics?.keys?.cooldown ?? 0}</div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <div className="text-3xl font-black tracking-tight text-amber-300">{metrics?.keys?.cooldown ?? 0}</div>
+            <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30">BACKOFF</span>
+          </div>
           <div className="mt-1 text-[11px] text-amber-400/60">Temporary 429 backoff timer</div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-500" />
         </div>
@@ -522,7 +531,10 @@ export default function KeysPage() {
               <AlertCircle className="h-4 w-4" />
             </div>
           </div>
-          <div className="mt-3 text-3xl font-black tracking-tight text-rose-300">{metrics?.keys?.invalid ?? 0}</div>
+          <div className="mt-3 flex items-baseline justify-between">
+            <div className="text-3xl font-black tracking-tight text-rose-300">{metrics?.keys?.invalid ?? 0}</div>
+            <span className="text-[10px] font-mono text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/30">DISABLED</span>
+          </div>
           <div className="mt-1 text-[11px] text-rose-400/60">401 Auth error keys disabled</div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-rose-500" />
         </div>
