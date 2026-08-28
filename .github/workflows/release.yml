@@ -68,7 +68,7 @@ jobs:
       # configured for this account, the Docker publish is skipped but the
       # GitHub Release (next step) is still created.
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         continue-on-error: true
         with:
           context: .
