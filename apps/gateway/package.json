@@ -40,10 +40,10 @@
     "@agent-nexus/service-mesh": "workspace:*",
     "fastify": "^5.2.1",
     "@fastify/websocket": "^11.0.1",
-    "@fastify/cors": "^10.0.1"
+    "@fastify/cors": "^11.3.0"
   },
   "devDependencies": {
     "tsx": "^4.19.2",
-    "@types/node": "^22.10.2"
+    "@types/node": "^26.3.0"
   }
 }

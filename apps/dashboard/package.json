@@ -11,22 +11,22 @@
     "clean": "rimraf .next .turbo"
   },
   "dependencies": {
-    "next": "^15.5.21",
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
-    "tailwindcss": "^3.4.17",
+    "next": "^16.3.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwindcss": "^4.3.3",
     "clsx": "^2.1.1",
-    "recharts": "^2.15.0",
-    "lucide-react": "^0.469.0",
+    "recharts": "^3.10.1",
+    "lucide-react": "^1.34.0",
     "swr": "^2.2.5"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
+    "@types/node": "^26.3.0",
     "@types/react": "^19.0.2",
-    "@types/react-dom": "^19.0.2",
+    "@types/react-dom": "^19.2.5",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "rimraf": "^6.0.1",
-    "typescript": "^5.7.2"
+    "typescript": "^7.0.2"
   }
 }
