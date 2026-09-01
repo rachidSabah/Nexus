@@ -112,12 +112,15 @@ export function ErrorDetailsModal({ isOpen, onClose, diagnostic, onResolve }: Er
             </div>
 
             <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-              <span className="text-[10px] uppercase font-bold text-white/40">Telemetry Counters</span>
+              <span className="text-[10px] uppercase font-bold text-white/40">Telemetry &amp; Circuit</span>
               <div className="mt-1 text-white/80">
-                Occurrences: <span className="font-bold text-white">{diagnostic.occurrenceCount}</span>
+                Occurrences: <span className="font-bold text-white">{diagnostic.occurrenceCount}</span> · Streak: <span className="font-bold text-rose-300">{diagnostic.consecutiveFailures}</span>
               </div>
-              <div className="text-[11px] text-white/50">
-                Failures streak: {diagnostic.consecutiveFailures}
+              <div className="text-[11px] text-white/60 mt-0.5">
+                Circuit: <span className="font-mono uppercase font-semibold text-amber-300">{diagnostic.circuitBreakerState ?? 'closed'}</span> · Cooldown: <span className="font-mono text-cyan-300">{diagnostic.cooldownUntil && diagnostic.cooldownUntil > Date.now() ? `${Math.round((diagnostic.cooldownUntil - Date.now()) / 1000)}s` : '0s'}</span>
+              </div>
+              <div className="text-[10px] text-white/40 mt-1">
+                First: {new Date(diagnostic.firstSeenAt).toLocaleTimeString()} · Last: {new Date(diagnostic.lastSeenAt).toLocaleTimeString()}
               </div>
             </div>
           </div>

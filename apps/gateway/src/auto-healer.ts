@@ -59,6 +59,24 @@ export class AutoHealer {
     }
   }
 
+  /** Probes a key with an authenticated request; returns true only if auth succeeds (2xx/3xx). */
+  async probeKey(baseUrl: string, plaintext: string): Promise<boolean> {
+    if (!baseUrl || !plaintext) return false;
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${plaintext}`,
+      };
+      const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, {
+        headers,
+        signal: AbortSignal.timeout(this.probeTimeoutMs),
+      });
+      return r.status >= 200 && r.status < 400;
+    } catch {
+      return false;
+    }
+  }
+
   /** Runs a single heal pass over all endpoints and invalid keys. */
   async healOnce(): Promise<{ endpointsHealed: number; keysHealed: number }> {
     let endpointsHealed = 0;
@@ -84,16 +102,19 @@ export class AutoHealer {
 
     for (const key of this.keyRegistry.listAll()) {
       if (key.status !== 'invalid') continue;
-      // Only attempt recovery if a representative endpoint for the provider is up.
+      // Only attempt recovery if a representative endpoint for the provider is registered.
       const endpoint = (this.routing.listEndpoints() as readonly ProviderEndpoint[]).find(
         (e) => e.providerId === key.providerId,
       );
       if (!endpoint) continue;
-      const reachable = await this.probe(endpoint.baseUrl);
-      // If the endpoint is reachable and the key still resolves from the vault,
-      // assume the credential is valid again and restore it to rotation.
+
       const plaintext = await this.keyRegistry.getPlaintext(key.id);
-      if (reachable && plaintext) {
+      if (!plaintext) continue;
+
+      // Verification-gated key recovery: NEVER reactivate an invalid key without
+      // verifying that upstream authentication actually succeeds.
+      const verified = await this.probeKey(endpoint.baseUrl, plaintext);
+      if (verified) {
         this.keyRegistry.reset(key.id);
         keysHealed++;
       }

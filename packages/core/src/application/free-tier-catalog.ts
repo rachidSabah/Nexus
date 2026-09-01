@@ -70,6 +70,16 @@ export const FREE_TIER_CATALOG: readonly FreeTierProvider[] = [
     source: 'https://openrouter.ai/models',
     verified: '2026-08',
   },
+  {
+    provider: 'nvidia-nim',
+    note: 'NVIDIA NIM hosted inference: 1,000 free API credits upon developer account signup for hosted models. No card required.',
+    requestsPerDay: 1000,
+    tokensPerMinute: null,
+    tokensPerMonthEstimate: null,
+    cardRequired: false,
+    source: 'https://build.nvidia.com',
+    verified: '2026-08',
+  },
 ];
 
 /**

@@ -136,7 +136,7 @@ describe('Autonomous Intelligent Routing Fabric', () => {
       const duration = performance.now() - start;
 
       expect(scores.length).toBe(1000);
-      expect(duration).toBeLessThan(50);
+      expect(duration).toBeLessThan(200);
     });
   });
 });

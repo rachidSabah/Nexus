@@ -4,19 +4,19 @@ import { classifyFailure } from '../src/index.js';
 import { ProviderResponseError } from '../src/index.js';
 
 describe('classifyFailure', () => {
-  it('classifies 401 as invalidate-key + not-retryable', () => {
+  it('classifies 401 as invalidate-key + retryable failover', () => {
     const err = new ProviderResponseError('ep1', 401, 'Unauthorized');
     const c = classifyFailure(err);
     expect(c.status).toBe(401);
-    expect(c.retryable).toBe(false);
+    expect(c.retryable).toBe(true);
     expect(c.keyAction).toBe('invalidate');
   });
 
-  it('classifies 403 as invalidate-key + not-retryable', () => {
+  it('classifies 403 as invalidate-key + retryable failover', () => {
     const err = new ProviderResponseError('ep1', 403, 'Forbidden');
     const c = classifyFailure(err);
     expect(c.status).toBe(403);
-    expect(c.retryable).toBe(false);
+    expect(c.retryable).toBe(true);
     expect(c.keyAction).toBe('invalidate');
   });
 
@@ -49,11 +49,11 @@ describe('classifyFailure', () => {
     expect(c.endpointAction).toBe('mark_unavailable');
   });
 
-  it('classifies 404 model-not-found as record-failure + not-retryable', () => {
+  it('classifies 404 model-not-found as record-failure + retryable failover', () => {
     const err = new ProviderResponseError('ep1', 404, 'model not found');
     const c = classifyFailure(err);
     expect(c.status).toBe(404);
-    expect(c.retryable).toBe(false);
+    expect(c.retryable).toBe(true);
     expect(c.endpointAction).toBe('record_failure');
   });
 

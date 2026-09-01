@@ -31,13 +31,6 @@ export class DefaultFailover implements FailoverPort {
       );
 
     const pool = viable();
-    if (pool.length === 0) {
-      return (
-        decision.alternatives.find(
-          (e) => e.id !== failedEndpointId && e.health !== 'circuit_open',
-        ) ?? null
-      );
-    }
 
     // Scope-aware diversity.
     if (context?.scope && context.failedProviderId) {
@@ -48,8 +41,27 @@ export class DefaultFailover implements FailoverPort {
 
       if (preferProvider && sameProv.length > 0) return sameProv[0] ?? null;
       if (avoidProvider && diffProv.length > 0) return diffProv[0] ?? null;
-      // Fall back to whatever viable candidate remains.
-      return pool[0] ?? null;
+      if (pool.length > 0) return pool[0] ?? null;
+
+      // If credential failure and no alternative endpoints exist, allow retrying
+      // the same endpoint (KeyRegistry will rotate to the next key downstream).
+      if (preferProvider) {
+        const targetEp =
+          decision.endpoint.id === failedEndpointId
+            ? decision.endpoint
+            : decision.alternatives.find((e) => e.id === failedEndpointId);
+        if (targetEp && targetEp.health !== 'circuit_open') {
+          return targetEp;
+        }
+      }
+    }
+
+    if (pool.length === 0) {
+      return (
+        decision.alternatives.find(
+          (e) => e.id !== failedEndpointId && e.health !== 'circuit_open',
+        ) ?? null
+      );
     }
 
     // Default: first viable alternative (original behavior).

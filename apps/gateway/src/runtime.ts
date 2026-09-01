@@ -37,6 +37,8 @@ import {
   LocalAgentBridge,
   AgentOrchestrator,
   MissionOrchestrator,
+  ErrorDiagnosticRegistry,
+  LiveErrorResolver,
 } from '@anx/core';
 import { AutoHealer } from './auto-healer.js';
 import { McpClient } from '@anx/mcp-client';
@@ -561,6 +563,20 @@ export class GatewayRuntime {
     const costPredictor = new CostPredictor();
     const autoHealer = new AutoHealer(routing, keyRegistry, { intervalMs: 30_000 });
 
+    const errorRegistry = new ErrorDiagnosticRegistry();
+    const liveErrorResolver = new LiveErrorResolver({
+      routing,
+      keyRegistry,
+      modelRegistry,
+      errorRegistry,
+      adapters,
+      events,
+      modelRediscoverCallback: async (p) => {
+        if (p) await modelRegistry.discoverProvider(p);
+        else await modelRegistry.refresh();
+      },
+    });
+
     // The chat use case is now wired to consult the BudgetManager (when
     // enabled) to prefer free/cheap endpoints and to record spend, and to
     // honor the prompt compressor + rate-limit tracker. They're attached as
@@ -580,6 +596,7 @@ export class GatewayRuntime {
       budgetManager,
       promptCompressor,
       rateLimitTracker,
+      errorRegistry,
     };
     const chatUseCase = new ChatCompletionUseCase(
       routing,
@@ -1149,6 +1166,8 @@ export class GatewayRuntime {
       agentOrchestrator,
       missionOrchestrator,
       falloverConfig,
+      errorRegistry,
+      liveErrorResolver,
     });
 
     return new GatewayRuntime({

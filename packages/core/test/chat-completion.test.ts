@@ -442,4 +442,124 @@ describe('ChatCompletionUseCase streaming (TEST 9/10)', () => {
     expect(response.choices[0]?.message.content).toBe('Recovered via auto!');
     expect(response.endpoint).toBe('ep-anthropic');
   });
+
+  it('multi-key rotation: invalidates failed key on 401 and succeeds on reserve key', async () => {
+    let callCount = 0;
+    const multiKeyAdapter: ProviderAdapter = {
+      providerId: 'openai',
+      displayName: 'OpenAI',
+      async chatCompletion(endpoint) {
+        callCount++;
+        const ep = endpoint as ProviderEndpoint & { apiKey?: string };
+        if (ep.apiKey === 'sk-bad-key') {
+          throw new ProviderResponseError('ep-openai', 401, 'Invalid API Key');
+        }
+        return {
+          id: 'resp-mk',
+          object: 'chat.completion',
+          created: 1,
+          model: 'gpt-4',
+          choices: [{ index: 0, message: { role: 'assistant', content: 'Success on reserve key!' }, finish_reason: 'stop' }],
+          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+          provider: 'openai',
+          endpoint: 'ep-openai',
+          latencyMs: 10,
+        };
+      },
+      async *streamChatCompletion() {},
+      async healthCheck() { return true; },
+    };
+
+    const bus = new InMemoryEventBus();
+    const engine = new RoutingEngine(bus);
+    engine.registerEndpoint(makeEndpoint('ep-openai', 'openai'));
+
+    const fakeVault = {
+      keys: new Map<string, string>([
+        ['k1', 'sk-bad-key'],
+        ['k2', 'sk-good-key'],
+      ]),
+      async get(id: string) { return this.keys.get(id) ?? null; },
+      async set(id: string, val: string) { this.keys.set(id, val); },
+      async delete(id: string) { this.keys.delete(id); },
+      async list() { return Array.from(this.keys.keys()); },
+    };
+
+    const { KeyRegistry } = await import('../src/application/key-registry.js');
+    const keyRegistry = new KeyRegistry(fakeVault as any);
+    await keyRegistry.register({ id: 'k1', providerId: 'openai', plaintext: 'sk-bad-key' });
+    await keyRegistry.register({ id: 'k2', providerId: 'openai', plaintext: 'sk-good-key' });
+
+    const usecase = new ChatCompletionUseCase(
+      engine,
+      new DefaultFailover(),
+      new Map([['openai', multiKeyAdapter]]),
+      bus,
+      new DefaultCostCalculator(),
+      3,
+      { keyRegistry },
+    );
+
+    const res = await usecase.execute({
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+
+    expect(res.choices[0]?.message.content).toBe('Success on reserve key!');
+    expect(callCount).toBe(2);
+    expect(keyRegistry.get('k1')?.status).toBe('invalid');
+    expect(keyRegistry.get('k2')?.status).toBe('active');
+  });
+
+  it('multi-key rotation: truthfully fails with error when all keys are invalid', async () => {
+    const allBadAdapter: ProviderAdapter = {
+      providerId: 'openai',
+      displayName: 'OpenAI',
+      async chatCompletion() {
+        throw new ProviderResponseError('ep-openai', 401, 'Invalid API Key');
+      },
+      async *streamChatCompletion() {},
+      async healthCheck() { return true; },
+    };
+
+    const bus = new InMemoryEventBus();
+    const engine = new RoutingEngine(bus);
+    engine.registerEndpoint(makeEndpoint('ep-openai', 'openai'));
+
+    const fakeVault = {
+      keys: new Map<string, string>([
+        ['k1', 'sk-bad-1'],
+        ['k2', 'sk-bad-2'],
+      ]),
+      async get(id: string) { return this.keys.get(id) ?? null; },
+      async set(id: string, val: string) { this.keys.set(id, val); },
+      async delete(id: string) { this.keys.delete(id); },
+      async list() { return Array.from(this.keys.keys()); },
+    };
+
+    const { KeyRegistry } = await import('../src/application/key-registry.js');
+    const keyRegistry = new KeyRegistry(fakeVault as any);
+    await keyRegistry.register({ id: 'k1', providerId: 'openai', plaintext: 'sk-bad-1' });
+    await keyRegistry.register({ id: 'k2', providerId: 'openai', plaintext: 'sk-bad-2' });
+
+    const usecase = new ChatCompletionUseCase(
+      engine,
+      new DefaultFailover(),
+      new Map([['openai', allBadAdapter]]),
+      bus,
+      new DefaultCostCalculator(),
+      3,
+      { keyRegistry },
+    );
+
+    await expect(
+      usecase.execute({
+        model: 'gpt-4',
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    ).rejects.toThrow();
+
+    expect(keyRegistry.get('k1')?.status).toBe('invalid');
+    expect(keyRegistry.get('k2')?.status).toBe('invalid');
+  });
 });

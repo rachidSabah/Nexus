@@ -7795,22 +7795,31 @@ export class HttpServer {
     for (let i = 0; i < chain.length; i++) {
       const requestedModel = chain[i]!;
       const effectiveBody = buildEffective(requestedModel);
-      const targetProvider = this.preferredProviderFor(effectiveBody.model, undefined) || 'auto';
+      const targetProvider = this.preferredProviderFor(effectiveBody.model, undefined);
       try {
         if (sink) {
           await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), sink, new AbortController().signal);
-          this.errorRegistry.recordSuccess(targetProvider, undefined, effectiveBody.model);
+          if (targetProvider) this.errorRegistry.recordSuccess(targetProvider, undefined, effectiveBody.model);
           return;
         }
         const res = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), undefined, new AbortController().signal);
-        this.errorRegistry.recordSuccess(targetProvider, undefined, effectiveBody.model);
+        const actualProvider = (res as { provider?: string })?.provider ?? targetProvider;
+        if (actualProvider) this.errorRegistry.recordSuccess(actualProvider, undefined, effectiveBody.model);
         return res;
       } catch (err) {
         lastErr = err;
         const errMsg = (err as Error).message ?? '';
         const { status } = this.httpErrorFor(err as Error);
+        const resolvedProvider =
+          (err as { providerId?: string })?.providerId ||
+          (err as { endpointId?: string })?.endpointId?.replace(/^ep-/, '').split('-')[0] ||
+          targetProvider ||
+          (effectiveBody.routing as { preferredProviders?: string[] })?.preferredProviders?.[0] ||
+          this.deps.modelRegistry.list().find((m) => m.id === effectiveBody.model)?.providerId ||
+          'unknown';
+
         this.errorRegistry.recordError({
-          providerId: targetProvider,
+          providerId: resolvedProvider,
           modelId: effectiveBody.model,
           error: err,
           status,

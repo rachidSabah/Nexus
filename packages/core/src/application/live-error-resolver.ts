@@ -9,6 +9,7 @@
  * Never fakes health, never simply clears counters without verification.
  */
 
+import { maskKeyString } from '../domain/error-diagnostic.js';
 import { buildEvent } from '../domain/events.js';
 import type { ProviderEndpoint } from '../domain/types.js';
 
@@ -111,9 +112,27 @@ export class LiveErrorResolver {
         message: `Found ${activeErrors.length} active error diagnostic(s) recorded for '${providerId}'.`,
       });
 
-      // 3. Inspect Keys & Credential Vault
-      let keyToTest: { id?: string; plaintext?: string } | undefined;
+      // Check if provider is already healthy with no active errors or degraded keys
       const keyRegistry = this.deps.keyRegistry;
+      const allKeys = keyRegistry?.listByProvider(providerId) ?? [];
+      const hasUnhealthyKeys = allKeys.some((k) => k.status !== 'active');
+      if (endpoint.health === 'healthy' && activeErrors.length === 0 && !hasUnhealthyKeys) {
+        steps.push({ step: 'Health Status', status: 'ok', message: `Provider '${providerId}' is already healthy with all keys active.` });
+        const report: RemediationReport = {
+          resolved: true,
+          providerId,
+          actionTaken: 'already_healthy',
+          steps,
+          verification: 'passed',
+          healthy: true,
+          message: 'Provider is already healthy.',
+          timestamp: Date.now(),
+        };
+        this.logRecovery(report, 200, undefined, 0);
+        return report;
+      }
+
+      let keyToTest: { id?: string; plaintext?: string } | undefined;
 
       if (keyRegistry) {
         const keys = keyRegistry.listByProvider(providerId);
@@ -211,6 +230,14 @@ export class LiveErrorResolver {
         if (keyToTest?.id && keyRegistry && verifyResult.status === 401) {
           keyRegistry.recordFailure(keyToTest.id, 401, false);
           steps.push({ step: 'Key Quarantine', status: 'fail', message: `Key ${keyToTest.id} confirmed invalid (HTTP 401). Quarantined in registry.` });
+        } else if (keyToTest?.id && keyRegistry && verifyResult.status === 429) {
+          const cooldownDuration = verifyResult.retryAfterMs ?? 60_000;
+          keyRegistry.recordFailure(keyToTest.id, 429, true, cooldownDuration);
+          steps.push({
+            step: 'Key Cooldown',
+            status: 'info',
+            message: `Key ${keyToTest.id} hit upstream rate limit (HTTP 429). Retry-After cooldown applied (${Math.ceil(cooldownDuration / 1000)}s).`,
+          });
         }
 
         // Record diagnostic update
@@ -222,7 +249,7 @@ export class LiveErrorResolver {
           });
         }
 
-        return {
+        const report: RemediationReport = {
           resolved: false,
           providerId,
           actionTaken: 'live_verification_failed',
@@ -234,11 +261,13 @@ export class LiveErrorResolver {
             verifyResult.status === 401
               ? 'Update invalid or expired API credentials in the Key Vault.'
               : verifyResult.status === 429
-                ? 'Provider is currently rate-limited upstream. Please wait for cooldown.'
+                ? `Provider is currently rate-limited upstream. Retry-After cooldown active (${Math.ceil((verifyResult.retryAfterMs ?? 60_000) / 1000)}s).`
                 : 'Check provider endpoint reachability and network connection.',
           latencyMs: verifyResult.latencyMs,
           timestamp: Date.now(),
         };
+        this.logRecovery(report, verifyResult.status, keyToTest?.plaintext ? maskKeyString(keyToTest.plaintext) : undefined, verifyResult.latencyMs);
+        return report;
       }
 
       // 6. LIVE VERIFICATION SUCCEEDED -> RECOVER
@@ -287,7 +316,7 @@ export class LiveErrorResolver {
 
       steps.push({ step: 'Complete', status: 'ok', message: `Provider '${providerId}' is fully recovered, healthy, and ready for live routing.` });
 
-      return {
+      const report: RemediationReport = {
         resolved: true,
         providerId,
         targetModel: verifyResult.model,
@@ -300,9 +329,11 @@ export class LiveErrorResolver {
         latencyMs: verifyResult.latencyMs,
         timestamp: Date.now(),
       };
+      this.logRecovery(report, 200, keyToTest?.plaintext ? maskKeyString(keyToTest.plaintext) : undefined, verifyResult.latencyMs);
+      return report;
     } catch (err) {
       steps.push({ step: 'Error', status: 'fail', message: `Unexpected failure during remediation: ${(err as Error).message}` });
-      return {
+      const report: RemediationReport = {
         resolved: false,
         providerId,
         actionTaken: 'unhandled_exception',
@@ -312,6 +343,8 @@ export class LiveErrorResolver {
         message: `Remediation failed: ${(err as Error).message}`,
         timestamp: Date.now(),
       };
+      this.logRecovery(report, 500, undefined, 0);
+      return report;
     } finally {
       this.activeResolutions.delete(lockKey);
     }
@@ -399,7 +432,7 @@ export class LiveErrorResolver {
       });
       keyRegistry.recordFailure(keyId, verifyResult.status ?? 401, false);
 
-      return {
+      const failReport: RemediationReport = {
         resolved: false,
         providerId: key.providerId,
         targetKeyId: keyId,
@@ -412,6 +445,8 @@ export class LiveErrorResolver {
         latencyMs: verifyResult.latencyMs,
         timestamp: Date.now(),
       };
+      this.logRecovery(failReport, verifyResult.status, `••••${key.lastFour}`, verifyResult.latencyMs);
+      return failReport;
     }
 
     // Success -> Recover Key
@@ -425,7 +460,7 @@ export class LiveErrorResolver {
       message: `Key ••••${key.lastFour} verified successfully in ${verifyResult.latencyMs}ms. Status set to ACTIVE.`,
     });
 
-    return {
+    const successReport: RemediationReport = {
       resolved: true,
       providerId: key.providerId,
       targetKeyId: keyId,
@@ -437,6 +472,8 @@ export class LiveErrorResolver {
       latencyMs: verifyResult.latencyMs,
       timestamp: Date.now(),
     };
+    this.logRecovery(successReport, 200, `••••${key.lastFour}`, verifyResult.latencyMs);
+    return successReport;
   }
 
   /**
@@ -493,7 +530,7 @@ export class LiveErrorResolver {
         steps.push({ step: 'Model Status', status: 'info', message: `Model '${modelId}' confirmed absent upstream. Excluded from active routing.` });
       }
 
-      return {
+      const failReport: RemediationReport = {
         resolved: false,
         providerId,
         targetModel: modelId,
@@ -506,6 +543,8 @@ export class LiveErrorResolver {
         latencyMs: verifyResult.latencyMs,
         timestamp: Date.now(),
       };
+      this.logRecovery(failReport, verifyResult.status, apiKey ? maskKeyString(apiKey) : undefined, verifyResult.latencyMs);
+      return failReport;
     }
 
     // Model verified live!
@@ -518,7 +557,7 @@ export class LiveErrorResolver {
       message: `Model '${modelId}' verified live in ${verifyResult.latencyMs}ms. Status set to HEALTHY.`,
     });
 
-    return {
+    const successReport: RemediationReport = {
       resolved: true,
       providerId,
       targetModel: modelId,
@@ -530,6 +569,8 @@ export class LiveErrorResolver {
       latencyMs: verifyResult.latencyMs,
       timestamp: Date.now(),
     };
+    this.logRecovery(successReport, 200, apiKey ? maskKeyString(apiKey) : undefined, verifyResult.latencyMs);
+    return successReport;
   }
 
   /**
@@ -565,7 +606,7 @@ export class LiveErrorResolver {
     endpoint: ProviderEndpoint,
     apiKey?: string,
     targetModel?: string,
-  ): Promise<{ ok: boolean; status?: number; latencyMs: number; model?: string; error?: string }> {
+  ): Promise<{ ok: boolean; status?: number; retryAfterMs?: number; latencyMs: number; model?: string; error?: string }> {
     const adapter = this.deps.adapters?.get(endpoint.providerId);
     const start = Date.now();
     const testEndpoint = { ...endpoint, apiKey: apiKey ?? '' } as never;
@@ -587,7 +628,7 @@ export class LiveErrorResolver {
         // Step B: Minimal 1-token test chat completion
         const testModel =
           targetModel ??
-          endpoint.tags[0] ??
+          this.deps.modelRegistry?.list().find((m) => !m.stale && m.providerId === endpoint.providerId)?.id ??
           (endpoint.providerId === 'anthropic' ? 'claude-3-haiku-20240307' : 'gpt-3.5-turbo');
 
         const response = await adapter.chatCompletion(
@@ -628,6 +669,30 @@ export class LiveErrorResolver {
         return { ok: true, status: res.status, latencyMs, model: 'http:ok' };
       }
 
+      if (res.status === 429) {
+        const rawRetry = res.headers.get('retry-after');
+        let retryAfterMs: number | undefined;
+        if (rawRetry) {
+          const deltaSecs = Number(rawRetry);
+          if (Number.isFinite(deltaSecs) && deltaSecs > 0) {
+            retryAfterMs = deltaSecs * 1000;
+          } else {
+            const parsed = Date.parse(rawRetry);
+            if (Number.isFinite(parsed) && parsed > Date.now()) {
+              retryAfterMs = parsed - Date.now();
+            }
+          }
+        }
+        const errText = await res.text().catch(() => '');
+        return {
+          ok: false,
+          status: 429,
+          retryAfterMs,
+          latencyMs,
+          error: `HTTP 429: Too Many Requests${retryAfterMs ? ` (Retry-After: ${Math.ceil(retryAfterMs / 1000)}s)` : ''} — ${errText.slice(0, 150)}`,
+        };
+      }
+
       const errText = await res.text().catch(() => '');
       return {
         ok: false,
@@ -638,12 +703,40 @@ export class LiveErrorResolver {
     } catch (err) {
       clearTimeout(timeout);
       const status = (err as { status?: number }).status ?? (err as { statusCode?: number }).statusCode;
+      const retryAfterMs =
+        (err as { retryAfterMs?: number })?.retryAfterMs ??
+        (typeof (err as { retryAfter?: unknown })?.retryAfter === 'number'
+          ? (err as { retryAfter: number }).retryAfter * 1000
+          : undefined);
       return {
         ok: false,
         status,
+        retryAfterMs,
         latencyMs: Date.now() - start,
         error: (err as Error).message || 'Upstream connection failed',
       };
     }
+  }
+
+  private logRecovery(
+    report: RemediationReport,
+    status?: number,
+    maskedKey?: string,
+    durationMs?: number,
+    correlationId?: string,
+  ): void {
+    const lines = [
+      `[ERROR-RECOVERY]`,
+      `provider=${report.providerId}`,
+      report.targetModel ? `model=${report.targetModel}` : null,
+      status != null ? `error=${status}` : null,
+      `action=${report.actionTaken}`,
+      maskedKey ? `key=${maskedKey}` : null,
+      `verification=${report.verification}`,
+      `duration=${durationMs ?? report.latencyMs ?? 0}ms`,
+      correlationId ? `correlationId=${correlationId}` : null,
+    ].filter(Boolean);
+    // eslint-disable-next-line no-console
+    console.log(lines.join(' '));
   }
 }

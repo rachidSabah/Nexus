@@ -30,6 +30,7 @@ import type {
 } from '../domain/types.js';
 
 import type { BudgetManager, BudgetMode } from './budget-manager.js';
+import type { ErrorDiagnosticRegistry } from './error-diagnostic-registry.js';
 import { repairJson, repairToolCallArguments } from './json-repair.js';
 import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
 import type {
@@ -81,6 +82,8 @@ export interface ChatCompletionUseCaseOptions {
   /** Optional live prompt compressor (runtime-selected profile). When provided, the
    *  request is compressed exactly once on the live path, fail-open, before routing. */
   promptCompressor?: PromptCompressor;
+  /** Optional live error diagnostic registry for recording verified failures and recoveries. */
+  errorRegistry?: ErrorDiagnosticRegistry;
 }
 
 /**
@@ -88,15 +91,15 @@ export interface ChatCompletionUseCaseOptions {
  * ChatCompletionUseCase
  *
  * The flagship use case. Orchestrates:
- *   1. Plugin `onRequest` hook (can mutate the request)
- *   2. Cache lookup (exact + semantic)
- *   3. Route resolution
- *   4. Plugin `onRouteResolved` hook
- *   5. Provider call (with failover)
- *   6. Plugin hooks at each lifecycle point (onProviderStart/Chunk/End)
- *   7. Plugin `onResponse` hook (can mutate the response)
- *   8. Event emission (for observability + dashboard)
- *   9. Cost & token accounting
+ *   1. Token counting & budget check
+ *   2. Plugin hook: onRequest
+ *   3. Semantic cache lookup (exact-match, then cosine similarity)
+ *   4. Routing resolution (least-latency, weighted, priority, or free-only)
+ *   5. Multi-key selection (health, cooldown, least-used)
+ *   6. Provider invocation via adapter
+ *   7. Dynamic cost calculation based on actual token usage
+ *   8. Automatic failover on retryable errors (with Retry-After compliance)
+ *   9. Event publication (request started, succeeded, failed, cache hit/miss)
  *   10. Cache store (on success)
  *
  * Both streaming and non-streaming paths share the same orchestration code;
@@ -117,6 +120,7 @@ export class ChatCompletionUseCase {
   private readonly budgetManager?: BudgetManager;
   private readonly rateLimitTracker?: import('./rate-limit-tracker.js').ProactiveRateLimitTracker;
   private readonly promptCompressor?: PromptCompressor;
+  private readonly errorRegistry?: ErrorDiagnosticRegistry;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -140,6 +144,7 @@ export class ChatCompletionUseCase {
     this.budgetManager = options.budgetManager;
     this.rateLimitTracker = options.rateLimitTracker;
     this.promptCompressor = options.promptCompressor;
+    this.errorRegistry = options.errorRegistry;
   }
 
   async execute(
@@ -700,6 +705,8 @@ export class ChatCompletionUseCase {
           }, cost.totalCostUsd);
         }
 
+        this.errorRegistry?.recordSuccess(endpoint.providerId, selectedKeyId, request.model);
+
         return finalResult;
       } catch (err) {
         const error = err as Error;
@@ -718,6 +725,20 @@ export class ChatCompletionUseCase {
             latencyMs: Date.now() - startedAt,
             error: error.message,
             failureReason: classification.reason,
+          });
+        }
+
+        // Record error diagnostic into registry
+        if (this.errorRegistry) {
+          this.errorRegistry.recordError({
+            providerId: endpoint.providerId,
+            keyId: selectedKeyId,
+            modelId: request.model,
+            error,
+            status: classification.status,
+            latencyMs: Date.now() - startedAt,
+            circuitBreakerState: endpoint.health === 'circuit_open' ? 'open' : undefined,
+            cooldownUntil: classification.retryAfterMs ? Date.now() + classification.retryAfterMs : undefined,
           });
         }
 
@@ -1235,31 +1256,31 @@ export function classifyFailure(error: Error): FailureClassification {
       };
     }
     // 401 Unauthorized / 403 Forbidden (without a billing signal) — key is
-    // bad. Invalidate (don't retry on the same key). The endpoint itself is
-    // probably fine.
+    // bad. Invalidate (don't retry on the same key). If alternative keys or
+    // providers exist, failover can proceed.
     if (status === 401 || status === 403) {
       return {
         status, code: undefined,
-        retryable: false,
+        retryable: true,
         keyAction: 'invalidate',
         endpointAction: 'none',
-        reason: `HTTP ${status}: authentication/authorization failed — key invalidated`,
+        reason: `HTTP ${status}: authentication/authorization failed — key invalidated, attempting failover`,
       };
     }
     // 404 Not Found — model doesn't exist on this provider. This is a
     // *model*-level failure, NOT a provider outage: a single unsupported
     // model must NOT poison the entire endpoint/provider (which would
-    // circuit-break every other healthy NVIDIA model). Mark the endpoint as
+    // circuit-break every other healthy model). Mark the endpoint as
     // degraded (counts toward the threshold but does not immediately trip),
-    // and surface a distinct MODEL_UNAVAILABLE code so routing can skip just
-    // this model rather than declaring the provider dead.
+    // and surface a distinct MODEL_UNAVAILABLE code so routing can failover to
+    // an alternative provider offering this model or fallback chain.
     if (status === 404) {
       return {
         status, code: 'MODEL_UNAVAILABLE',
-        retryable: false,
+        retryable: true,
         keyAction: 'none',
         endpointAction: 'record_failure',
-        reason: `HTTP ${status}: model not found on this provider — endpoint degraded, not circuit-broken (model skipped)`,
+        reason: `HTTP ${status}: model not found on this provider — endpoint degraded, failing over to alternative provider`,
       };
     }
     // 408 Request Timeout — retryable, key is fine.

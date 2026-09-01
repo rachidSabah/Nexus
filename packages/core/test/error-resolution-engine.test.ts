@@ -314,5 +314,113 @@ describe('Live Provider Error Resolution Engine', () => {
       expect(oneResolved).toBe(true);
       expect(oneLocked).toBe(true);
     });
+
+    it('handles 429 rate limits by un-cooldowning or rotating to healthy key and restoring provider', async () => {
+      await keyRegistry.register({ id: 'key-rl', providerId: 'openai', plaintext: 'sk-rl' });
+      // Put in cooldown
+      keyRegistry.recordFailure('key-rl', 429, true, 60_000);
+      expect(keyRegistry.get('key-rl')?.status).toBe('cooldown');
+
+      // Add a healthy backup key
+      await keyRegistry.register({ id: 'key-backup', providerId: 'openai', plaintext: 'sk-backup' });
+
+      adapters.set('openai', {
+        async healthCheck(ep) {
+          return ep.apiKey === 'sk-backup' || ep.apiKey === 'sk-rl';
+        },
+        async chatCompletion() {
+          return { id: 'c1', model: 'gpt-4o-mini', choices: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+        },
+        streamChatCompletion: null as never,
+        embeddings: null as never,
+      });
+
+      const report = await resolver.resolveProvider('openai');
+      expect(report.resolved).toBe(true);
+      expect(report.healthy).toBe(true);
+      expect(routing.listEndpoints().find((e) => e.providerId === 'openai')?.health).toBe('healthy');
+    });
+
+    it('returns safe already-healthy report when provider has no errors and all keys are active', async () => {
+      await keyRegistry.register({ id: 'key-good-1', providerId: 'openai', plaintext: 'sk-ok' });
+      routing.updateEndpoint('openai-ep', { health: 'healthy' });
+
+      const report = await resolver.resolveProvider('openai');
+      expect(report.resolved).toBe(true);
+      expect(report.actionTaken).toBe('already_healthy');
+      expect(report.message).toBe('Provider is already healthy.');
+      expect(report.verification).toBe('passed');
+    });
+
+    it('does NOT poison the whole provider when a single model returns 404', async () => {
+      await keyRegistry.register({ id: 'key-main', providerId: 'openai', plaintext: 'sk-valid' });
+      routing.updateEndpoint('openai-ep', { health: 'healthy' });
+
+      // Model specific resolution for non-existent model
+      adapters.set('openai', {
+        async healthCheck() { return true; },
+        async chatCompletion(ep, req) {
+          if (req.model === 'retired-model') {
+            const err = new Error('Model not found: retired-model');
+            (err as any).status = 404;
+            throw err;
+          }
+          return { id: 'c1', model: req.model, choices: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+        },
+        streamChatCompletion: null as never,
+        embeddings: null as never,
+      });
+
+      const report = await resolver.resolveModel('openai', 'retired-model');
+      expect(report.resolved).toBe(false);
+      expect(report.verification).toBe('failed');
+      expect(report.actionTaken).toBe('model_unavailable_confirmed');
+
+      // Provider itself MUST remain healthy in routing engine
+      const ep = routing.listEndpoints().find((e) => e.providerId === 'openai');
+      expect(ep?.health).toBe('healthy');
+    });
+
+    it('resolves model successfully when live verification probe succeeds', async () => {
+      await keyRegistry.register({ id: 'key-main', providerId: 'openai', plaintext: 'sk-valid' });
+
+      adapters.set('openai', {
+        async healthCheck() { return true; },
+        async chatCompletion(ep, req) {
+          return { id: 'c1', model: req.model, choices: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+        },
+        streamChatCompletion: null as never,
+        embeddings: null as never,
+      });
+
+      const report = await resolver.resolveModel('openai', 'gpt-4o-mini');
+      expect(report.resolved).toBe(true);
+      expect(report.verification).toBe('passed');
+      expect(report.actionTaken).toBe('model_verified_and_recovered');
+    });
+
+    it('resolves specific diagnostic records through resolveDiagnostic', async () => {
+      await keyRegistry.register({ id: 'key-diag', providerId: 'openai', plaintext: 'sk-valid' });
+      const diag = errorRegistry.recordError({
+        providerId: 'openai',
+        keyId: 'key-diag',
+        error: new Error('Rate limit'),
+        status: 429,
+      });
+
+      adapters.set('openai', {
+        async healthCheck() { return true; },
+        async chatCompletion() {
+          return { id: 'c1', model: 'gpt-4o-mini', choices: [], usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
+        },
+        streamChatCompletion: null as never,
+        embeddings: null as never,
+      });
+
+      const report = await resolver.resolveDiagnostic(diag.id);
+      expect(report.resolved).toBe(true);
+      expect(report.healthy).toBe(true);
+      expect(report.verification).toBe('passed');
+    });
   });
 });

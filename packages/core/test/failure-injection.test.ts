@@ -28,10 +28,10 @@ function endpoint(id: string, providerId: string, health: 'healthy' | 'degraded'
 }
 
 describe('failure injection: error classification (TEST 2-6, 8)', () => {
-  it('TEST 3: 401 → invalidate key, not retryable', () => {
+  it('TEST 3: 401 → invalidate key, retryable for failover/rotation', () => {
     const c = classifyFailure(new ProviderResponseError('e', 401, 'bad key'));
     expect(c.keyAction).toBe('invalidate');
-    expect(c.retryable).toBe(false);
+    expect(c.retryable).toBe(true);
   });
 
   it('TEST 2: 429 → cooldown key, retryable', () => {
@@ -40,11 +40,11 @@ describe('failure injection: error classification (TEST 2-6, 8)', () => {
     expect(c.retryable).toBe(true);
   });
 
-  it('TEST 5: 404 → NO key action, endpoint degraded (not circuit broken), not retryable', () => {
+  it('TEST 5: 404 → NO key action, endpoint degraded (not circuit broken), retryable failover', () => {
     const c = classifyFailure(new ProviderResponseError('e', 404, 'model not found'));
     expect(c.keyAction).toBe('none');
     expect(c.endpointAction).toBe('record_failure');
-    expect(c.retryable).toBe(false);
+    expect(c.retryable).toBe(true);
   });
 
   it('TEST 4: 500 → key is NOT revoked, endpoint marked degraded, retryable', () => {

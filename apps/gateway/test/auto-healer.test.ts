@@ -69,4 +69,36 @@ describe('AutoHealer', () => {
     await healer.healOnce(); // pass 2: reachable + wasUnreachable -> healthy
     expect(fakeRouting.endpoints[0]!.health).toBe('healthy');
   });
+
+  it('does NOT restore an invalid key if authenticated probe fails with 401', async () => {
+    fakeRouting.endpoints = [makeEndpoint('healthy')];
+    const resetFn = vi.fn();
+    const testKeys: any = {
+      listAll: () => [{ id: 'k1', providerId: 'p1', status: 'invalid' }],
+      getPlaintext: async () => 'bad-key-secret',
+      reset: resetFn,
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 401 }))); // 401 Unauthorized
+    const healer = new AutoHealer(fakeRouting as any, testKeys as any, { probeTimeoutMs: 200 });
+
+    const res = await healer.healOnce();
+    expect(res.keysHealed).toBe(0);
+    expect(resetFn).not.toHaveBeenCalled();
+  });
+
+  it('restores an invalid key only when authenticated probe succeeds (200)', async () => {
+    fakeRouting.endpoints = [makeEndpoint('healthy')];
+    const resetFn = vi.fn();
+    const testKeys: any = {
+      listAll: () => [{ id: 'k1', providerId: 'p1', status: 'invalid' }],
+      getPlaintext: async () => 'renewed-key-secret',
+      reset: resetFn,
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200 }))); // 200 OK
+    const healer = new AutoHealer(fakeRouting as any, testKeys as any, { probeTimeoutMs: 200 });
+
+    const res = await healer.healOnce();
+    expect(res.keysHealed).toBe(1);
+    expect(resetFn).toHaveBeenCalledWith('k1');
+  });
 });

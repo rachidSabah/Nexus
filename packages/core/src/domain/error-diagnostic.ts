@@ -88,6 +88,7 @@ export interface ClassifyErrorInput {
   routeUsed?: string;
   circuitBreakerState?: 'closed' | 'open' | 'half_open';
   cooldownUntil?: number;
+  retryAfterMs?: number;
 }
 
 /**
@@ -118,6 +119,13 @@ export function classifyErrorDiagnostic(input: ClassifyErrorInput): ProviderErro
   const code =
     input.code ??
     (err as { code?: string })?.code;
+
+  const retryMs =
+    input.retryAfterMs ??
+    (err as { retryAfterMs?: number })?.retryAfterMs ??
+    (typeof (err as { retryAfter?: unknown })?.retryAfter === 'number'
+      ? (err as { retryAfter: number }).retryAfter * 1000
+      : undefined);
 
   let category: ErrorCategory = 'UNKNOWN_PROVIDER_ERROR';
   let scope: ErrorScope = 'PROVIDER_FAILURE';
@@ -190,8 +198,12 @@ export function classifyErrorDiagnostic(input: ClassifyErrorInput): ProviderErro
     transience = 'TRANSIENT_FAILURE';
     rateLimitFailure = true;
     temporary = true;
-    likelyCause = 'Upstream provider rate limit (requests per minute or tokens per minute) exceeded.';
-    recommendedAction = 'Rotate to an alternate active key or backoff until cooldown expires.';
+    likelyCause = retryMs && retryMs > 0
+      ? `Upstream provider rate limit exceeded. Retry-After cooldown active (${Math.ceil(retryMs / 1000)}s).`
+      : 'Upstream provider rate limit (requests per minute or tokens per minute) exceeded.';
+    recommendedAction = retryMs && retryMs > 0
+      ? `Wait ${Math.ceil(retryMs / 1000)}s for Retry-After window to expire, or rotate to an alternate active key.`
+      : 'Rotate to an alternate active key or backoff until cooldown expires.';
     automaticRecoveryPossible = true;
   }
   // 5. Billing / Quota Exhaustion (402)
@@ -279,6 +291,8 @@ export function classifyErrorDiagnostic(input: ClassifyErrorInput): ProviderErro
   const now = Date.now();
   const id = `diag-${input.providerId}${input.keyId ? `-${input.keyId}` : ''}${input.modelId ? `-${input.modelId.replace(/[^a-zA-Z0-9_-]/g, '_')}` : ''}-${category.toLowerCase()}`;
 
+  const computedCooldownUntil = input.cooldownUntil ?? (retryMs && retryMs > 0 ? now + retryMs : 0);
+
   return {
     id,
     providerId: input.providerId,
@@ -297,7 +311,7 @@ export function classifyErrorDiagnostic(input: ClassifyErrorInput): ProviderErro
     lastSeenAt: now,
     occurrenceCount: 1,
     consecutiveFailures: 1,
-    cooldownUntil: input.cooldownUntil ?? 0,
+    cooldownUntil: computedCooldownUntil,
     circuitBreakerState: input.circuitBreakerState ?? 'closed',
     latencyMs: input.latencyMs,
     requestId: input.requestId,
