@@ -32,6 +32,7 @@ import type {
 
 import type { BudgetManager, BudgetMode } from './budget-manager.js';
 import type { ErrorDiagnosticRegistry } from './error-diagnostic-registry.js';
+import { clampAndSanitizeContext } from './context-sanitizer.js';
 import { repairJson, repairToolCallArguments } from './json-repair.js';
 import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
 import type { ModelRegistry } from './model-registry.js';
@@ -540,6 +541,11 @@ export class ChatCompletionUseCase {
             }
           }
         }
+
+        // Context-Length Clamping & Sanitization: clamp max_tokens and context window
+        const matchedModelDescriptor = this.modelRegistry?.get(endpoint.providerId, requestForProvider.model)
+          ?? this.modelRegistry?.get(endpoint.providerId, effectiveRequest.model);
+        requestForProvider = clampAndSanitizeContext(requestForProvider, endpointWithKey, matchedModelDescriptor);
 
         const useSpeculativeHedge =
           requestForProvider.stream &&
