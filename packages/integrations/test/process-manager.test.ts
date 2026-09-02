@@ -101,9 +101,12 @@ describe('IntegrationProcessManager', () => {
   });
 
   it('reports failure state for a spec that boots and exits immediately', async () => {
-    const r = await mgr.start('agent-fail', failSpec);
-    // Give the child a tick to exit.
-    await wait(500);
+    await mgr.start('agent-fail', failSpec);
+    // Poll for the child process to exit cleanly under CPU load
+    for (let i = 0; i < 20; i++) {
+      if (!mgr.runtime('agent-fail').running) break;
+      await wait(100);
+    }
     const state = mgr.runtime('agent-fail');
     expect(state.running).toBe(false);
     expect(state.health).toBe('exited');

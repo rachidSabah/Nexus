@@ -23,7 +23,6 @@ import type {
 import { AgyAdapter } from './agent-adapters/agy-adapter.js';
 import { ClaudeCodeAdapter } from './agent-adapters/claude-code-adapter.js';
 import { CodexAdapter } from './agent-adapters/codex-adapter.js';
-import { GeminiAdapter } from './agent-adapters/gemini-adapter.js';
 import { HermesAdapter } from './agent-adapters/hermes-adapter.js';
 import { OpenCodeAdapter } from './agent-adapters/opencode-adapter.js';
 import type { LocalAgentAdapter, LocalAgentRegistryPort } from './local-agent-port.js';
@@ -77,13 +76,12 @@ export class LocalAgentBridge implements LocalAgentRegistryPort {
     this.modelRegistry = options.modelRegistry;
     this.events = options.events;
 
-    // Register 6 core default adapters
+    // Register 5 core default adapters
     this.registerAdapter(new ClaudeCodeAdapter());
     this.registerAdapter(new CodexAdapter());
     this.registerAdapter(new HermesAdapter());
     this.registerAdapter(new OpenCodeAdapter());
     this.registerAdapter(new AgyAdapter());
-    this.registerAdapter(new GeminiAdapter());
   }
 
   registerAdapter(adapter: LocalAgentAdapter): void {

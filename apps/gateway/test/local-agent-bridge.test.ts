@@ -10,7 +10,6 @@ import {
   HermesAdapter,
   OpenCodeAdapter,
   AgyAdapter,
-  GeminiAdapter,
 } from '@anx/core';
 
 describe('Phase 27: Local Agent Bridge & Universal Runtime Connector', () => {
@@ -37,13 +36,12 @@ describe('Phase 27: Local Agent Bridge & Universal Runtime Connector', () => {
   });
 
   describe('1. Adapter Capabilities & Extensibility', () => {
-    it('defines capability contracts for all 6 supported agents', () => {
+    it('defines capability contracts for all 5 supported agents', () => {
       const claude = new ClaudeCodeAdapter();
       const codex = new CodexAdapter();
       const hermes = new HermesAdapter();
       const opencode = new OpenCodeAdapter();
       const agy = new AgyAdapter();
-      const gemini = new GeminiAdapter();
 
       expect(claude.id).toBe('claude-code');
       expect(claude.getCapabilities().workspace).toBe(true);
@@ -60,9 +58,6 @@ describe('Phase 27: Local Agent Bridge & Universal Runtime Connector', () => {
 
       expect(agy.id).toBe('agy');
       expect(agy.getCapabilities().buildRuntime).toBe(true);
-
-      expect(gemini.id).toBe('gemini-cli');
-      expect(gemini.getCapabilities().environmentConfig).toBe(true);
     });
   });
 
@@ -121,7 +116,7 @@ describe('Phase 27: Local Agent Bridge & Universal Runtime Connector', () => {
       expect(res.status).toBe(200);
       const data = (await res.json()) as { agents: Array<{ id: string; name: string; status: string; health: { level: string } }> };
       expect(Array.isArray(data.agents)).toBe(true);
-      expect(data.agents.length).toBeGreaterThanOrEqual(6);
+      expect(data.agents.length).toBeGreaterThanOrEqual(5);
 
       const claude = data.agents.find((a) => a.id === 'claude-code');
       expect(claude).toBeDefined();

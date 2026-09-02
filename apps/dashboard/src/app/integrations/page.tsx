@@ -728,7 +728,7 @@ export default function IntegrationsPage() {
             Agent Integrations &amp; Lifecycle
           </h1>
           <p className="mt-1 text-xs sm:text-sm text-white/60 max-w-2xl">
-            Buckle Claude Code, Codex, Gemini, OpenCode, Aider &amp; more to your Nexus Gateway, then start / stop / restart them directly. Each agent runs as its own tracked process — restarting one never touches another.
+            Buckle Claude Code, Codex, Hermes, OpenCode, DeepSeek Harness, Aider &amp; more to your Nexus Gateway, then start / stop / restart them directly. Each agent runs as its own tracked process — restarting one never touches another.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">

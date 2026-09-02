@@ -270,7 +270,7 @@ export class MissionPlanner {
       'LOW',
       [taskTestExec.taskId],
       ws,
-      'gemini',
+      'hermes',
       policy,
     );
     tasks.push(taskVerify);
@@ -516,7 +516,7 @@ export class MissionPlanner {
       'LOW',
       [tExec.taskId],
       ws,
-      'gemini',
+      'hermes',
       policy,
     );
     tasks.push(tVerify);

@@ -58,8 +58,8 @@ export interface ConfigureAllResponse {
 }
 
 /**
- * Lists coding agents detected on the machine (Claude Code, Codex, Gemini,
- * OpenCode, Cline, Roo, Aider, Hermes, etc.) via the gateway's detector.
+ * Lists coding agents detected on the machine (Claude Code, Codex, Hermes,
+ * OpenCode, DeepSeek Harness, etc.) via the gateway's detector.
  */
 export function useAgents(refreshIntervalMs = 10000) {
   return useSWR<{ agents: RuntimeAgent[] }>('/api/v1/runtime-agents', fetcher, {

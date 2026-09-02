@@ -55,7 +55,6 @@ export {
   OpenCodeGoIntegration,
 } from './adapters/opencode.js';
 export { OpenCodeZenIntegration } from './adapters/opencode-zen.js';
-export { GeminiCliIntegration } from './adapters/gemini-cli.js';
 export { OpenHandsIntegration } from './adapters/openhands.js';
 export { QwenCodeIntegration } from './adapters/qwen-code.js';
 export { CursorIntegration } from './adapters/cursor.js';

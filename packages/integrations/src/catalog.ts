@@ -121,21 +121,6 @@ export const TRUSTED_AGENT_CATALOG: readonly AgentCatalogEntry[] = [
     supportedProtocols: ['OpenAI-compatible'],
   },
   {
-    id: 'gemini-cli',
-    displayName: 'Gemini CLI',
-    description: "Google's official Gemini CLI",
-    category: 'cli',
-    homepage: 'https://github.com/google-gemini/gemini-cli',
-    binaryNames: ['gemini', 'gemini-cli'],
-    npmPackage: '@google/gemini-cli',
-    installRecipe: {
-      type: 'npm',
-      packageName: '@google/gemini-cli',
-      guideUrl: 'https://github.com/google-gemini/gemini-cli',
-    },
-    supportedProtocols: ['OpenAI-compatible'],
-  },
-  {
     id: 'opencode-zen',
     displayName: 'OpenCode Zen',
     description: 'Cloud-optimized AI coding agent (opencode-zen)',

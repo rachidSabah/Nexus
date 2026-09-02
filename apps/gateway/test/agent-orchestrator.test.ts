@@ -166,7 +166,7 @@ describe('Phase 28: Intelligent Multi-Agent Orchestration Fabric', () => {
       expect(selection.selectedAgentId).toBeDefined();
       expect(selection.intent.category).toBe('debugging');
       expect(Array.isArray(selection.candidateScores)).toBe(true);
-      expect(selection.candidateScores.length).toBeGreaterThanOrEqual(6);
+      expect(selection.candidateScores.length).toBeGreaterThanOrEqual(5);
       expect(selection.reason).toBeDefined();
     });
 

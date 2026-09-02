@@ -90,7 +90,7 @@ describe('Nexus Full System Certification & Diagnostics', () => {
       const supported = [
         'claude-code', 'codex-cli', 'qwen-code', 'hermes-cli',
         'opencode', 'opencode-go', 'opencode-zen', 'aider',
-        'gemini-cli', 'openhands', 'deepseek-harness', 'goose', 'crush',
+        'openhands', 'deepseek-harness', 'goose', 'crush',
         'cursor', 'continue', 'cline', 'roo-code', 'zed', 'neovim', 'emacs',
         'vscode', 'jetbrains',
       ];

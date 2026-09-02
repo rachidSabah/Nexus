@@ -8,7 +8,6 @@ import { CrushIntegration } from './adapters/crush.js';
 import { CursorIntegration } from './adapters/cursor.js';
 import { DeepSeekHarnessIntegration } from './adapters/deepseek-harness.js';
 import { EmacsIntegration } from './adapters/emacs.js';
-import { GeminiCliIntegration } from './adapters/gemini-cli.js';
 import { GooseIntegration } from './adapters/goose.js';
 import { HermesCliIntegration } from './adapters/hermes-cli.js';
 import { JetBrainsIntegration } from './adapters/jetbrains.js';
@@ -33,7 +32,6 @@ export const BUILTIN_INTEGRATIONS: IntegrationAdapter[] = [
   // ─── CLI tools ───────────────────────────────────────────────────────────
   new ClaudeCodeIntegration(),
   new CodexCliIntegration(),
-  new GeminiCliIntegration(),
   new QwenCodeIntegration(),
   new HermesCliIntegration(),
   new OpenCodeIntegration(),

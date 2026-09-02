@@ -104,7 +104,6 @@ export { CodexAdapter } from './application/agent-adapters/codex-adapter.js';
 export { HermesAdapter } from './application/agent-adapters/hermes-adapter.js';
 export { OpenCodeAdapter } from './application/agent-adapters/opencode-adapter.js';
 export { AgyAdapter } from './application/agent-adapters/agy-adapter.js';
-export { GeminiAdapter } from './application/agent-adapters/gemini-adapter.js';
 export { LocalAgentBridge, type LocalAgentBridgeMetrics, type LocalAgentBridgeOptions } from './application/local-agent-bridge.js';
 
 // ── Phase 28: Intelligent Multi-Agent Orchestration Fabric ──────────────────

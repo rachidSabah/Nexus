@@ -664,10 +664,6 @@ export default function ModelsPage() {
                     snippet: `export OPENAI_BASE_URL="http://127.0.0.1:8787/v1"\nexport OPENAI_API_KEY="nexus"\ncodex --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
                   },
                   {
-                    name: 'Gemini CLI',
-                    snippet: `export GEMINI_API_BASE="http://127.0.0.1:8787"\ngemini --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
-                  },
-                  {
                     name: 'Qwen Code CLI',
                     snippet: `export OPENAI_BASE_URL="http://127.0.0.1:8787/v1"\nexport OPENAI_API_KEY="nexus"\nqwen --model nexus/${selectedModel.providerId}/${selectedModel.id}`,
                   },

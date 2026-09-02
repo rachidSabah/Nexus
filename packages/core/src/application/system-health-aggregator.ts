@@ -347,7 +347,7 @@ export class SystemHealthAggregator {
         })),
       },
       lastCheckedAt: Date.now(),
-      remediation: installed === 0 ? 'Install local coding agents (e.g. claude, codex, hermes, opencode, agy, gemini) on PATH.' : undefined,
+      remediation: installed === 0 ? 'Install local coding agents (e.g. claude, codex, hermes, opencode, agy) on PATH.' : undefined,
     };
   }
 

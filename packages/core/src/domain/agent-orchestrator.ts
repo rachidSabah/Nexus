@@ -18,8 +18,7 @@ export type OrchestrationPolicy =
   | 'nexus/prefer-codex'
   | 'nexus/prefer-hermes'
   | 'nexus/prefer-opencode'
-  | 'nexus/prefer-agy'
-  | 'nexus/prefer-gemini';
+  | 'nexus/prefer-agy';
 
 export type TaskIntentCategory =
   | 'application-building'

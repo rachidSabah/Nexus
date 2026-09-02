@@ -25,11 +25,23 @@ export class DeepSeekHarnessIntegration extends BaseIntegration {
   }
 
   protected detectPaths(): string[] {
-    return ['.deepseek/harness'];
+    return ['.dsh', '.deepseek/harness'];
   }
 
   protected configFiles() {
     return [
+      {
+        path: '.dsh/.credentials.yaml',
+        merge: 'overwrite' as const,
+        content: (ctx: IntegrationContext) =>
+          `version: 1\nrefs:\n  DEEPSEEK_API_KEY: "${ctx.apiKey ?? 'nexus'}"\n`,
+      },
+      {
+        path: '.dsh/settings.yaml',
+        merge: 'overwrite' as const,
+        content: (ctx: IntegrationContext) =>
+          `llm-deepseek:\n  baseURL: "${ctx.gatewayUrl}/v1"\n  apiKeyEnv: DEEPSEEK_API_KEY\nui-onboarding:\n  welcomeNoticeVersion: 2026-08-13.1\n`,
+      },
       {
         path: '.deepseek/harness/config.json',
         merge: 'skip' as const,
@@ -40,6 +52,8 @@ export class DeepSeekHarnessIntegration extends BaseIntegration {
               gatewayUrl: `${ctx.gatewayUrl}/v1`,
               openaiApiBase: `${ctx.gatewayUrl}/v1`,
               openaiApiKey: ctx.apiKey ?? 'nexus',
+              deepseekBaseUrl: `${ctx.gatewayUrl}/v1`,
+              deepseekApiKey: ctx.apiKey ?? 'nexus',
             },
             null,
             2,
@@ -56,6 +70,11 @@ export class DeepSeekHarnessIntegration extends BaseIntegration {
       args: ['web', '--port', '3080', '--no-open'],
       interactive: false,
       env: {
+        DEEPSEEK_BASE_URL: `${ctx.gatewayUrl}/v1`,
+        DEEPSEEK_API_KEY: ctx.apiKey ?? 'nexus',
+        DEEPSEEK_SEARCH_BASE_URL: `${ctx.gatewayUrl}/v1`,
+        DEEPSEEK_PUBLIC_BASE_URL: `${ctx.gatewayUrl}/v1`,
+        OPENAI_BASE_URL: `${ctx.gatewayUrl}/v1`,
         OPENAI_API_BASE: `${ctx.gatewayUrl}/v1`,
         OPENAI_API_KEY: ctx.apiKey ?? 'nexus',
         DSH_WEB_PORT: '3080',
