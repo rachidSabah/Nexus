@@ -58,19 +58,24 @@ export class GoogleAdapter implements ProviderAdapter {
   protected apiBase = 'https://generativelanguage.googleapis.com/v1beta';
 
   resolveModel(alias: string): string | undefined {
-    // The gateway stores models under a `google/<model>` id; Google's API
-    // expects the bare model name (e.g. `gemini-2.5-flash`). Strip a leading
-    // `google/` prefix before translation so requests emitted by agents/coders
-    // that name `google/gemini-2.5-flash` actually reach the upstream model
-    // instead of 400-ing with "Invalid model".
     const bare = alias.startsWith('google/') ? alias.slice('google/'.length) : alias;
+    const norm = bare.toLowerCase().trim();
     const map: Record<string, string> = {
-      'gemini-pro': 'gemini-1.5-pro',
+      'gemini-pro': 'gemini-1.5-pro-latest',
       'gemini-1.5-pro': 'gemini-1.5-pro-latest',
       'gemini-1.5-flash': 'gemini-1.5-flash-latest',
-      'gemini-2.0-flash': 'gemini-2.0-flash-exp',
+      'gemini-2.0-flash-exp': 'gemini-2.0-flash',
+      'gemini-2.0-flash': 'gemini-2.0-flash',
+      'gemini-2.5-flash': 'gemini-2.5-flash',
+      'gemini-2.5-pro': 'gemini-2.5-pro',
     };
-    return map[bare] ?? bare;
+    if (map[norm]) return map[norm];
+    if (norm.startsWith('gemini-')) return bare;
+    // Cross-provider agent mapping (Claude Code, DeepSeek, generic coding routed to Google)
+    if (norm.includes('pro') || norm.includes('reason') || norm.includes('best')) {
+      return 'gemini-1.5-pro-latest';
+    }
+    return 'gemini-2.0-flash';
   }
 
   async chatCompletion(

@@ -89,6 +89,23 @@ export class MistralAdapter extends OpenAIAdapter {
     const MISTRAL_NATIVE = /^(mistral|ministral|codestral|pixtral|magistral|voxtral|mixtral|open-mistral|open-codestral|mistral-)/i;
     return all.filter((m) => MISTRAL_NATIVE.test(m.id));
   }
+
+  override resolveModel(alias: string): string | undefined {
+    const norm = alias.toLowerCase().trim();
+    if (norm.includes('codestral') || norm.includes('coding') || norm.includes('coder')) {
+      return 'codestral-latest';
+    }
+    if (norm.includes('large') || norm.includes('pro') || norm.includes('best') || norm.includes('claude') || norm.includes('gpt')) {
+      return 'mistral-large-latest';
+    }
+    if (norm.includes('small') || norm.includes('fast') || norm.includes('flash')) {
+      return 'mistral-small-latest';
+    }
+    if (/^(mistral|ministral|codestral|pixtral|magistral|voxtral|mixtral|open-mistral|open-codestral)/i.test(norm)) {
+      return alias;
+    }
+    return 'codestral-latest';
+  }
 }
 
 /**
@@ -259,11 +276,20 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
       norm === 'deepseek-v4' ||
       norm === 'deepseek-v4-pro' ||
       norm === 'deepseek-chat' ||
-      norm === 'deepseek-reasoner'
+      norm === 'deepseek-reasoner' ||
+      norm.includes('claude') ||
+      norm.includes('gpt') ||
+      norm.includes('auto') ||
+      norm.includes('coding') ||
+      norm.includes('reason') ||
+      norm.includes('deepseek')
     ) {
       return 'deepseek-v4-flash-free';
     }
-    return alias;
+    if (norm.includes('qwen')) {
+      return 'qwen-2.5-coder-32b-instruct';
+    }
+    return 'deepseek-v4-flash-free';
   }
 
   /**
@@ -310,6 +336,21 @@ export class NvidiaNimAdapter extends OpenAIAdapter {
   readonly displayName = 'NVIDIA NIM';
   protected apiBase = 'https://integrate.api.nvidia.com/v1';
   protected apiKeyEnv = 'NVIDIA_API_KEY';
+
+  override resolveModel(alias: string): string | undefined {
+    const norm = alias.toLowerCase().trim();
+    if (norm.includes('/') && !norm.startsWith('nexus/')) return alias;
+    if (norm.includes('deepseek') || norm.includes('reason') || norm.includes('r1')) {
+      return 'deepseek-ai/deepseek-r1';
+    }
+    if (norm.includes('qwen') || norm.includes('coder') || norm.includes('coding')) {
+      return 'qwen/qwen2.5-coder-32b-instruct';
+    }
+    if (norm.includes('claude') || norm.includes('gpt') || norm.includes('auto')) {
+      return 'meta/llama-3.3-70b-instruct';
+    }
+    return alias;
+  }
 
   /**
    * NVIDIA's `/v1/models` catalog is public — model discovery must work
