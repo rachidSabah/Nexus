@@ -6732,28 +6732,61 @@ export class HttpServer {
       };
     };
 
-    this.fastify.post('/v1/integrations/:id/start', async (request) => {
+    this.fastify.post('/v1/integrations/:id/start', async (request, reply) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
       const res = await adapter.start(integrationCtx(request));
-      await this.deps.events.publish(agentEvent('agent.started', { agentId: id, ...res }) as any);
-      return res;
+      if (res.ok) {
+        await this.deps.events.publish(agentEvent('agent.started', { agentId: id, ...res }) as any);
+      }
+      await this.getAuditLogger().record({
+        event: 'agent.execution.started',
+        principal: 'system',
+        action: 'agent.start',
+        resource: id,
+        agentId: id,
+        success: res.ok,
+        metadata: { agentId: id, message: res.message },
+      });
+      return reply.code(res.ok ? 200 : 400).send(res);
     });
 
-    this.fastify.post('/v1/integrations/:id/stop', async (request) => {
+    this.fastify.post('/v1/integrations/:id/stop', async (request, reply) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
       const res = await adapter.stop(integrationCtx(request));
-      await this.deps.events.publish(agentEvent('agent.stopped', { agentId: id, ...res }) as any);
-      return res;
+      if (res.ok) {
+        await this.deps.events.publish(agentEvent('agent.stopped', { agentId: id, ...res }) as any);
+      }
+      await this.getAuditLogger().record({
+        event: 'cancellation',
+        principal: 'system',
+        action: 'agent.stop',
+        resource: id,
+        agentId: id,
+        success: res.ok,
+        metadata: { agentId: id, message: res.message },
+      });
+      return reply.code(res.ok ? 200 : 400).send(res);
     });
 
-    this.fastify.post('/v1/integrations/:id/restart', async (request) => {
+    this.fastify.post('/v1/integrations/:id/restart', async (request, reply) => {
       const { id } = request.params as { id: string };
       const adapter = resolveIntegration(id);
       const res = await adapter.restart(integrationCtx(request));
-      await this.deps.events.publish(agentEvent('agent.restarted', { agentId: id, ...res }) as any);
-      return res;
+      if (res.ok) {
+        await this.deps.events.publish(agentEvent('agent.restarted', { agentId: id, ...res }) as any);
+      }
+      await this.getAuditLogger().record({
+        event: 'agent.execution.started',
+        principal: 'system',
+        action: 'agent.restart',
+        resource: id,
+        agentId: id,
+        success: res.ok,
+        metadata: { agentId: id, message: res.message },
+      });
+      return reply.code(res.ok ? 200 : 400).send(res);
     });
 
     this.fastify.get('/v1/integrations/:id/runtime', async (request) => {

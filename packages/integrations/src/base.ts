@@ -458,6 +458,18 @@ export abstract class BaseIntegration implements IntegrationAdapter {
     for (const p of candidates) {
       if (p && existsSync(p)) return p;
     }
+    if (process.platform === 'win32') {
+      const { exec } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execAsync = promisify(exec);
+      try {
+        const { stdout } = await execAsync(`where.exe ${cmd}`, { timeout: 2000 });
+        const first = stdout.trim().split(/\r?\n/)[0]?.trim();
+        if (first && existsSync(first)) return first;
+      } catch {
+        // continue
+      }
+    }
     return cmd; // rely on PATH resolution at spawn
   }
 
@@ -469,14 +481,29 @@ export abstract class BaseIntegration implements IntegrationAdapter {
     if (process.platform === 'win32') {
       const userHome = process.env.USERPROFILE || process.env.HOME || '';
       const localAppData = process.env.LOCALAPPDATA || (userHome ? join(userHome, 'AppData', 'Local') : '');
+      const appData = process.env.APPDATA || (userHome ? join(userHome, 'AppData', 'Roaming') : '');
       return [
         join(userHome, '.local', 'bin', `${cmd}.exe`),
         join(userHome, '.local', 'bin', `${cmd}.cmd`),
         join(userHome, '.local', 'bin', cmd),
+        join(appData, 'npm', `${cmd}.cmd`),
+        join(appData, 'npm', `${cmd}.exe`),
+        join(appData, 'npm', `${cmd}.bat`),
+        join(appData, 'npm', cmd),
+        join(localAppData, 'npm', `${cmd}.cmd`),
+        join(localAppData, 'npm', `${cmd}.exe`),
+        join(userHome, 'AppData', 'Roaming', 'npm', `${cmd}.cmd`),
+        join(userHome, 'AppData', 'Roaming', 'npm', `${cmd}.exe`),
+        join(userHome, 'AppData', 'Local', 'npm', `${cmd}.cmd`),
+        join(userHome, 'AppData', 'Local', 'npm', `${cmd}.exe`),
+        join(userHome, 'AppData', 'Local', 'Programs', 'nodejs', `${cmd}.cmd`),
+        join(userHome, 'AppData', 'Local', 'Programs', 'nodejs', `${cmd}.exe`),
         join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin', `${cmd}.exe`),
         join(localAppData, 'Programs', cmd, 'bin', `${cmd}.exe`),
+        join(localAppData, 'Programs', cmd, `${cmd}.exe`),
         join(localAppData, cmd, `${cmd}-agent`, 'venv', 'Scripts', `${cmd}.exe`),
         join(localAppData, cmd, 'bin', `${cmd}.exe`),
+        join(localAppData, cmd, `${cmd}.exe`),
       ].filter(Boolean);
     }
     const userHome = process.env.HOME || '';
@@ -613,17 +640,7 @@ export abstract class BaseIntegration implements IntegrationAdapter {
   private async commandExists(cmd: string): Promise<boolean> {
     const { spawn } = await import('node:child_process');
     if (process.platform === 'win32') {
-      const userHome = process.env.USERPROFILE || process.env.HOME || '';
-      const localAppData = process.env.LOCALAPPDATA || (userHome ? join(userHome, 'AppData', 'Local') : '');
-      const directCandidates = [
-        join(userHome, '.local', 'bin', `${cmd}.exe`),
-        join(userHome, '.local', 'bin', `${cmd}.cmd`),
-        join(userHome, '.local', 'bin', cmd),
-        join(localAppData, 'Programs', 'OpenAI', 'Codex', 'bin', `${cmd}.exe`),
-        join(localAppData, 'Programs', cmd, 'bin', `${cmd}.exe`),
-        join(localAppData, cmd, `${cmd}-agent`, 'venv', 'Scripts', `${cmd}.exe`),
-        join(localAppData, cmd, 'bin', `${cmd}.exe`),
-      ];
+      const directCandidates = this.executableCandidates(cmd);
       for (const p of directCandidates) {
         if (p && existsSync(p)) return true;
       }

@@ -53,7 +53,7 @@ export class DeepSeekHarnessIntegration extends BaseIntegration {
     if (!exe) return null;
     return {
       executable: exe,
-      args: ['web'],
+      args: ['web', '--port', '3080', '--no-open'],
       interactive: false,
       env: {
         OPENAI_API_BASE: `${ctx.gatewayUrl}/v1`,

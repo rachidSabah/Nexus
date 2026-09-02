@@ -108,6 +108,7 @@ export class IntegrationProcessManager {
         gatewayTarget,
         executable: spec.executable,
         args: spec.args,
+        lastError: bootErr,
       };
     }
 
@@ -349,15 +350,14 @@ export class IntegrationProcessManager {
     }
 
     // Headless / background spawn.
-    // Windows cannot spawn a `.cmd` / `.bat` shim directly with `spawn()` —
-    // it throws `EINVAL` synchronously (the same class of bug as in
-    // `BaseIntegration.detectVersion`). Route those through `cmd /c` so the
+    // Windows cannot spawn a `.cmd` / `.bat` shim or bare command directly with `spawn()` —
+    // it throws `EINVAL`/`ENOENT` synchronously. Route those through `cmd /c` so the
     // OS shell launches them, mirroring the interactive branch above.
-    const isBatch =
-      process.platform === 'win32' &&
-      /\.(cmd|bat)$/i.test(spec.executable.split(/[\\/]/).pop() ?? '');
-    if (isBatch) {
-      const child = spawn(process.env.ComSpec || 'cmd.exe', ['/c', spec.executable, ...spec.args], {
+    if (process.platform === 'win32') {
+      const isExe = /\.exe$/i.test(spec.executable.split(/[\\/]/).pop() ?? '');
+      const cmd = isExe ? spec.executable : (process.env.ComSpec || 'cmd.exe');
+      const args = isExe ? [...spec.args] : ['/c', spec.executable, ...spec.args];
+      const child = spawn(cmd, args, {
         env,
         cwd: spec.cwd,
         detached: true,
@@ -372,7 +372,6 @@ export class IntegrationProcessManager {
       cwd: spec.cwd,
       detached: true,
       stdio: 'ignore',
-      ...(process.platform === 'win32' ? { windowsHide: true } : {}),
     });
     child.unref();
     return child;

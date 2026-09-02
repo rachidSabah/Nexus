@@ -56,4 +56,40 @@ describe('ClaudeCodeIntegration lifecycle', () => {
     expect(DEFAULT_CAPABILITIES.supportsStop).toBe(false);
     expect(DEFAULT_CAPABILITIES.supportsRestart).toBe(false);
   });
+
+  it('DeepSeek Harness provides web launch spec and supports full start/runtime/stop lifecycle', async () => {
+    const { DeepSeekHarnessIntegration } = await import('../src/adapters/deepseek-harness.js');
+    const { integrationProcessManager } = await import('../src/process-manager.js');
+
+    const adapter = new DeepSeekHarnessIntegration();
+    const caps = await adapter.capabilities(ctx);
+    expect(caps.supportsStart).toBe(true);
+    expect(caps.supportsStop).toBe(true);
+    expect(caps.supportsRestart).toBe(true);
+    expect(caps.interactive).toBe(false);
+
+    const spec = await adapter.getLaunchSpec(ctx);
+    expect(spec).not.toBeNull();
+    expect(spec!.args).toContain('web');
+    expect(spec!.args).toContain('--port');
+    expect(spec!.args).toContain('3080');
+    expect(spec!.args).toContain('--no-open');
+    expect(spec!.webUrl).toBe('http://127.0.0.1:3080');
+
+    // Live process test
+    const startRes = await adapter.start(ctx);
+    expect(startRes.ok).toBe(true);
+    expect(startRes.message).toContain('started DeepSeek Harness');
+
+    const state = await adapter.runtime(ctx);
+    expect(state.running).toBe(true);
+    expect(typeof state.pid).toBe('number');
+    expect(state.pid).toBeGreaterThan(0);
+
+    const stopRes = await adapter.stop(ctx);
+    expect(stopRes.ok).toBe(true);
+
+    const stateAfterStop = await adapter.runtime(ctx);
+    expect(stateAfterStop.running).toBe(false);
+  }, 20000);
 });

@@ -115,9 +115,9 @@ async function action(url: string, body?: unknown): Promise<{ ok?: boolean; mess
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((data as { message?: string; error?: { message?: string } }).message || (data as { error?: { message?: string } }).error?.message || `HTTP ${res.status}`);
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; error?: { message?: string } };
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.message || data.error?.message || `HTTP ${res.status}`);
   }
   return data as { ok?: boolean; message?: string };
 }

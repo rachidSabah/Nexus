@@ -217,6 +217,7 @@ export interface ProcessState {
   readonly gatewayTarget?: string;
   readonly health: 'unknown' | 'healthy' | 'unhealthy' | 'exited';
   readonly exitCode?: number;
+  readonly lastError?: string;
 }
 
 /**
