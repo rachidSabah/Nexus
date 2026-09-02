@@ -9,13 +9,15 @@ rem Release stale dev servers on port 3000 and 8787 if present
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000 " ^| findstr "LISTENING"') do taskkill /f /pid %%a >nul 2>nul
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8787 " ^| findstr "LISTENING"') do taskkill /f /pid %%a >nul 2>nul
 
-rem Clean the dashboard build cache so `next dev` never reuses a stale
-rem production `.next` (which causes `middleware-manifest.json missing`
-rem and `__webpack_modules__ is not a function` -> every page 500).
-if exist apps\dashboard\.next rmdir /s /q apps\dashboard\.next >nul 2>nul
+rem Ensure Dashboard build exists so chunks are statically served with zero 404s
+if not exist apps\dashboard\.next (
+  echo Building Nexus Dashboard assets...
+  call pnpm --filter @anx/dashboard build
+)
 
 rem Start Gateway & Dashboard cleanly
-start "ANX Gateway & Dashboard" cmd /k "pnpm dev"
+start "Nexus Gateway" cmd /k "pnpm --filter @anx/gateway dev"
+start "Nexus Dashboard" cmd /k "pnpm --filter @anx/dashboard start"
 
 rem Wait for Gateway (8787) and Dashboard (3000) to be fully ready
 echo Waiting for Nexus Gateway on port 8787 and Dashboard on port 3000...
