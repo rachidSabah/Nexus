@@ -597,6 +597,7 @@ export class GatewayRuntime {
       promptCompressor,
       rateLimitTracker,
       errorRegistry,
+      modelRegistry,
     };
     const chatUseCase = new ChatCompletionUseCase(
       routing,

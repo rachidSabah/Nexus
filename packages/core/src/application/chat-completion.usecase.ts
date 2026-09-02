@@ -24,6 +24,7 @@ import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
   CostBreakdown,
+  ModelDescriptor,
   ProviderEndpoint,
   RoutingDecision,
   TokenUsage,
@@ -33,6 +34,7 @@ import type { BudgetManager, BudgetMode } from './budget-manager.js';
 import type { ErrorDiagnosticRegistry } from './error-diagnostic-registry.js';
 import { repairJson, repairToolCallArguments } from './json-repair.js';
 import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
+import type { ModelRegistry } from './model-registry.js';
 import type {
   CachePort,
   ChunkSink,
@@ -84,6 +86,8 @@ export interface ChatCompletionUseCaseOptions {
   promptCompressor?: PromptCompressor;
   /** Optional live error diagnostic registry for recording verified failures and recoveries. */
   errorRegistry?: ErrorDiagnosticRegistry;
+  /** Optional live model registry for provider-model compatibility verification. */
+  modelRegistry?: ModelRegistry;
 }
 
 /**
@@ -121,6 +125,7 @@ export class ChatCompletionUseCase {
   private readonly rateLimitTracker?: import('./rate-limit-tracker.js').ProactiveRateLimitTracker;
   private readonly promptCompressor?: PromptCompressor;
   private readonly errorRegistry?: ErrorDiagnosticRegistry;
+  private readonly modelRegistry?: ModelRegistry;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -145,6 +150,7 @@ export class ChatCompletionUseCase {
     this.rateLimitTracker = options.rateLimitTracker;
     this.promptCompressor = options.promptCompressor;
     this.errorRegistry = options.errorRegistry;
+    this.modelRegistry = options.modelRegistry;
   }
 
   async execute(
@@ -511,11 +517,35 @@ export class ChatCompletionUseCase {
           }
         }
 
+        // Ensure the model sent to the provider adapter is supported by this provider
+        let requestForProvider = effectiveRequest;
+        if (this.modelRegistry) {
+          const providerModels: readonly ModelDescriptor[] = this.modelRegistry
+            .list()
+            .filter((m: ModelDescriptor) => !m.stale && m.providerId === endpoint.providerId);
+          if (providerModels.length > 0) {
+            const hasExact = providerModels.some(
+              (m: ModelDescriptor) => m.id === effectiveRequest.model || m.id.toLowerCase() === effectiveRequest.model.toLowerCase(),
+            );
+            if (!hasExact) {
+              const resolved = adapter.resolveModel?.(effectiveRequest.model);
+              if (resolved && providerModels.some((m: ModelDescriptor) => m.id === resolved || m.id.toLowerCase() === resolved.toLowerCase())) {
+                requestForProvider = { ...effectiveRequest, model: resolved };
+              } else {
+                const preferred = providerModels.find((m: ModelDescriptor) => m.capabilities?.toolCalling) ?? providerModels[0];
+                if (preferred) {
+                  requestForProvider = { ...effectiveRequest, model: preferred.id };
+                }
+              }
+            }
+          }
+        }
+
         const useSpeculativeHedge =
-          effectiveRequest.stream &&
+          requestForProvider.stream &&
           attempt === 0 &&
           decision.alternatives.length > 0 &&
-          (effectiveRequest.routing?.speculativeFallback || effectiveRequest.routing?.hedgedDelayMs);
+          (requestForProvider.routing?.speculativeFallback || requestForProvider.routing?.hedgedDelayMs);
 
         let response: ChatCompletionResponse;
         try {
@@ -524,15 +554,15 @@ export class ChatCompletionUseCase {
                 decision,
                 adapter,
                 endpointWithKey,
-                effectiveRequest,
+                requestForProvider,
                 guardedSink,
                 effectiveSignal,
                 requestId,
                 correlationId,
               )
-            : effectiveRequest.stream
-              ? await this.streamAndCollect(adapter, endpointWithKey, effectiveRequest, guardedSink, effectiveSignal)
-              : await adapter.chatCompletion(endpointWithKey, effectiveRequest, effectiveSignal);
+            : requestForProvider.stream
+              ? await this.streamAndCollect(adapter, endpointWithKey, requestForProvider, guardedSink, effectiveSignal)
+              : await adapter.chatCompletion(endpointWithKey, requestForProvider, effectiveSignal);
         } finally {
           // P5: release the concurrency reservation made by keyRegistry.select().
           if (this.keyRegistry && selectedKeyId) {

@@ -36,6 +36,13 @@ export interface IntegrationContext {
   readonly force?: boolean;
   /** Optional custom home dir (for testing) */
   readonly homeDir?: string;
+  readonly models?: ReadonlyArray<{
+    id: string;
+    name?: string;
+    description?: string;
+    contextWindow?: number;
+    inputModalities?: Array<'text' | 'image'> | ReadonlyArray<'text' | 'image'>;
+  }>;
 }
 
 export interface IntegrationStatus {

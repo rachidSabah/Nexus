@@ -67,7 +67,12 @@ export { VsCodeIntegration } from './adapters/vscode.js';
 export { JetBrainsIntegration } from './adapters/jetbrains.js';
 export { NeovimIntegration } from './adapters/neovim.js';
 export { EmacsIntegration } from './adapters/emacs.js';
-export { DeepSeekHarnessIntegration } from './adapters/deepseek-harness.js';
+export {
+  DeepSeekHarnessIntegration,
+  generateHarnessSettingsYaml,
+  resolveHarnessModels,
+  NEXUS_CORE_MODELS,
+} from './adapters/deepseek-harness.js';
 export { GooseIntegration } from './adapters/goose.js';
 export { CrushIntegration } from './adapters/crush.js';
 

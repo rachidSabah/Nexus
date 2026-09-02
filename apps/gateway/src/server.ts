@@ -1260,6 +1260,7 @@ export class HttpServer {
           codexCli?: string;
           hermesCli?: string;
           agy?: string;
+          deepseekHarness?: string;
           curl?: string;
         };
       }>();
@@ -1325,6 +1326,7 @@ export class HttpServer {
             codexCli: `codex --model ${m.id}`,
             hermesCli: `hermes -m ${m.id}`,
             agy: `agy -m ${m.id}`,
+            deepseekHarness: `dsh web (configured model: ${m.id})`,
             curl: `curl -X POST http://127.0.0.1:8787/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${m.id}", "messages": [{"role": "user", "content": "Hello"}]}'`,
           },
         });
@@ -4241,22 +4243,37 @@ export class HttpServer {
       });
 
       if (body.stream) {
-        reply.raw.setHeader('Content-Type', 'text/event-stream');
-        reply.raw.setHeader('Cache-Control', 'no-cache');
-        reply.raw.setHeader('Connection', 'keep-alive');
-        reply.raw.flushHeaders?.();
+        let headersFlushed = false;
+        const ensureHeaders = () => {
+          if (!headersFlushed && !reply.raw.headersSent) {
+            headersFlushed = true;
+            reply.raw.setHeader('Content-Type', 'text/event-stream');
+            reply.raw.setHeader('Cache-Control', 'no-cache');
+            reply.raw.setHeader('Connection', 'keep-alive');
+            reply.raw.setHeader('X-Accel-Buffering', 'no');
+            reply.raw.flushHeaders?.();
+          }
+        };
 
         const sink = {
           write: async (chunk: ChatCompletionChunk) => {
-            reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            ensureHeaders();
+            if (!reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            }
           },
           error: async (error: Error) => {
-            reply.raw.write(`data: ${JSON.stringify({ error: { message: this.httpErrorFor(error).message } })}\n\n`);
-            reply.raw.end();
+            if (reply.raw.headersSent && !reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write(`data: ${JSON.stringify({ error: { message: this.httpErrorFor(error).message } })}\n\n`);
+              reply.raw.end();
+            }
           },
           end: async () => {
-            reply.raw.write('data: [DONE]\n\n');
-            reply.raw.end();
+            ensureHeaders();
+            if (!reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write('data: [DONE]\n\n');
+              reply.raw.end();
+            }
           },
         };
 
@@ -4273,17 +4290,19 @@ export class HttpServer {
         try {
           await runWithFallbacks(sink);
         } catch (err) {
+          const errMsg = (err as Error).message ?? '';
+          if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
+            this.deps.aliasRegistry.recordRateLimitCooldown(aliasResolution.model, 60_000);
+          }
+          this.reportUpstreamModelError(aliasResolution.model, err as Error);
+          const http = this.httpErrorFor(err as Error);
           if (!reply.raw.headersSent) {
-            const errMsg = (err as Error).message ?? '';
-            if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
-              this.deps.aliasRegistry.recordRateLimitCooldown(aliasResolution.model, 60_000);
-            }
-            const http = this.httpErrorFor(err as Error);
-            reply.code(http.status).send({ error: { message: http.message } });
+            return reply.code(http.status).send({ error: { message: http.message, code: (err as { code?: string }).code } });
           } else {
-            const http = this.httpErrorFor(err as Error);
-            reply.raw.write(`data: ${JSON.stringify({ error: { message: http.message } })}\n\n`);
-            reply.raw.end();
+            if (!reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write(`data: ${JSON.stringify({ error: { message: http.message, code: (err as { code?: string }).code } })}\n\n`);
+              reply.raw.end();
+            }
           }
         }
         return reply;
@@ -4340,17 +4359,24 @@ export class HttpServer {
       const effectiveBody = { ...chatReq, maxTokens, model: aliasResolution.model, routing };
       const wantsStream = Boolean(body.stream || request.headers.accept?.includes('text/event-stream'));
       if (wantsStream) {
-        reply.raw.writeHead(200, {
-          'content-type': 'text/event-stream',
-          'cache-control': 'no-cache',
-          connection: 'keep-alive',
-          'x-accel-buffering': 'no',
-        });
+        let headersFlushed = false;
+        const ensureHeaders = () => {
+          if (!headersFlushed && !reply.raw.headersSent) {
+            headersFlushed = true;
+            reply.raw.writeHead(200, {
+              'content-type': 'text/event-stream',
+              'cache-control': 'no-cache',
+              connection: 'keep-alive',
+              'x-accel-buffering': 'no',
+            });
+          }
+        };
         const safeWrite = (data: string) => {
-          if (!reply.raw.writableEnded) reply.raw.write(data);
+          ensureHeaders();
+          if (!reply.raw.writableEnded && !reply.raw.destroyed) reply.raw.write(data);
         };
         const safeEnd = () => {
-          if (!reply.raw.writableEnded) reply.raw.end();
+          if (!reply.raw.writableEnded && !reply.raw.destroyed) reply.raw.end();
         };
         const state = newResponsesStreamState(effectiveBody.model);
         const sink = {
@@ -4365,11 +4391,13 @@ export class HttpServer {
               this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
             }
             this.reportUpstreamModelError(effectiveBody.model, error as Error);
-            for (const event of failResponsesEvents(state, this.httpErrorFor(error).message)) {
-              safeWrite(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+            if (reply.raw.headersSent) {
+              for (const event of failResponsesEvents(state, this.httpErrorFor(error).message)) {
+                safeWrite(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+              }
+              safeWrite(`event: error\ndata: ${JSON.stringify({ type: 'error', code: 'api_error', message: this.httpErrorFor(error).message })}\n\n`);
+              safeEnd();
             }
-            safeWrite(`event: error\ndata: ${JSON.stringify({ type: 'error', code: 'api_error', message: this.httpErrorFor(error).message })}\n\n`);
-            safeEnd();
           },
           end: async () => {
             for (const event of finalizeResponsesEvents(state)) {
@@ -4465,10 +4493,17 @@ export class HttpServer {
 
       // Streaming path: emit Anthropic-format SSE events.
       if (anthropicReq.stream) {
-        reply.raw.setHeader('Content-Type', 'text/event-stream');
-        reply.raw.setHeader('Cache-Control', 'no-cache');
-        reply.raw.setHeader('Connection', 'keep-alive');
-        reply.raw.flushHeaders?.();
+        let headersFlushed = false;
+        const ensureHeaders = () => {
+          if (!headersFlushed && !reply.raw.headersSent) {
+            headersFlushed = true;
+            reply.raw.setHeader('Content-Type', 'text/event-stream');
+            reply.raw.setHeader('Cache-Control', 'no-cache');
+            reply.raw.setHeader('Connection', 'keep-alive');
+            reply.raw.setHeader('X-Accel-Buffering', 'no');
+            reply.raw.flushHeaders?.();
+          }
+        };
 
         // Guarded writes: once the response has ended (writableEnded), any
         // further write throws ERR_STREAM_WRITE_AFTER_END and — being an
@@ -4476,6 +4511,7 @@ export class HttpServer {
         // whole gateway. The upstream may error, abort, or end the stream
         // at any point; these helpers make every late write/end a no-op.
         const safeWrite = (data: string): void => {
+          ensureHeaders();
           if (reply.raw.writableEnded || reply.raw.destroyed) return;
           try {
             reply.raw.write(data);
@@ -6725,10 +6761,20 @@ export class HttpServer {
       // is persisted as the agent's concrete model — otherwise every agent
       // launches with the stale hardcode fallback and the picker is a no-op.
       const defaultModel = q.defaultModel ?? b.defaultModel ?? 'gpt-4';
+      const liveModels = this.deps.modelRegistry
+        ? this.deps.modelRegistry.list().filter((m) => !m.stale).map((m) => ({
+            id: m.id,
+            name: m.displayName ?? `${m.id} (${m.providerId})`,
+            description: m.description,
+            contextWindow: m.contextWindow,
+            inputModalities: m.capabilities?.vision ? (['text', 'image'] as const) : (['text'] as const),
+          }))
+        : undefined;
       return {
         gatewayUrl: q.gatewayUrl ?? `http://${request.headers['host'] ?? 'localhost:8787'}`,
         apiKey: process.env.NEXUS_API_KEY ?? 'nexus',
         defaultModel,
+        models: liveModels,
       };
     };
 

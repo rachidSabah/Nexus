@@ -22,6 +22,27 @@ export class DeepSeekAdapter extends OpenAIAdapter {
   readonly displayName = 'DeepSeek';
   protected apiBase = 'https://api.deepseek.com/v1';
   protected apiKeyEnv = 'DEEPSEEK_API_KEY';
+
+  override resolveModel(alias: string): string | undefined {
+    const norm = alias.toLowerCase().trim();
+    if (norm === 'deepseek-v4-pro' || norm === 'deepseek-r1' || norm.includes('reasoner') || norm.includes('thinking')) {
+      return 'deepseek-reasoner';
+    }
+    if (norm === 'deepseek-v4-flash' || norm === 'deepseek-v4' || norm.includes('chat') || norm.includes('v3')) {
+      return 'deepseek-chat';
+    }
+    return alias;
+  }
+
+  protected override translateRequest(req: ChatCompletionRequest, streaming: boolean): Record<string, unknown> {
+    let model = req.model
+      .replace(/^anthropic\//, '')
+      .replace(/^deepseek\//, '')
+      .replace(new RegExp('^' + this.providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/'), '');
+    const resolved = this.resolveModel(model);
+    if (resolved) model = resolved;
+    return super.translateRequest({ ...req, model }, streaming);
+  }
 }
 
 /**
@@ -231,15 +252,31 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
     return h;
   }
 
+  override resolveModel(alias: string): string | undefined {
+    const norm = alias.toLowerCase().trim();
+    if (
+      norm === 'deepseek-v4-flash' ||
+      norm === 'deepseek-v4' ||
+      norm === 'deepseek-v4-pro' ||
+      norm === 'deepseek-chat' ||
+      norm === 'deepseek-reasoner'
+    ) {
+      return 'deepseek-v4-flash-free';
+    }
+    return alias;
+  }
+
   /**
    * Upstream accepts bare model names only (e.g. `deepseek-v4-flash-free`).
    * Strip routing prefixes like `anthropic/opencode/` or `opencode/`.
    */
   protected translateRequest(req: ChatCompletionRequest, streaming: boolean): Record<string, unknown> {
-    const model = req.model
+    let model = req.model
       .replace(/^anthropic\//, '')
       .replace(/^opencode(?:-zen|-go)?\//, '')
       .replace(new RegExp('^' + this.providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/'), '');
+    const resolved = this.resolveModel(model);
+    if (resolved) model = resolved;
     return super.translateRequest({ ...req, model }, streaming);
   }
 }
