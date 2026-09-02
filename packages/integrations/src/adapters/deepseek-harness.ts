@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+
 import { BaseIntegration } from '../base.js';
 import type { IntegrationContext, LaunchSpec } from '../contract.js';
 import { home } from '../contract.js';

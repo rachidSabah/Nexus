@@ -104,7 +104,7 @@ export function getDefaultValueForProperty(
 export function healToolCallArguments(
   toolName: string,
   rawArgs: string,
-  tools: ToolDefinition[],
+  tools?: readonly unknown[],
 ): HealResult {
   const schema = resolveSchema(toolName, tools);
 
@@ -172,8 +172,8 @@ export function sanitizeToolSchemasForUpstream<T extends ToolDefinition>(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveSchema(toolName: string, tools: ToolDefinition[]): JsonSchema | undefined {
-  for (const tool of tools) {
+function resolveSchema(toolName: string, tools?: readonly unknown[]): JsonSchema | undefined {
+  for (const tool of tools ?? []) {
     const oai = tool as OpenAIToolDefinition;
     if (oai.function?.name === toolName && oai.function.parameters) {
       return oai.function.parameters;

@@ -31,11 +31,9 @@ import type {
 } from '../domain/types.js';
 
 import type { BudgetManager, BudgetMode } from './budget-manager.js';
-import type { ErrorDiagnosticRegistry } from './error-diagnostic-registry.js';
 import { clampAndSanitizeContext } from './context-sanitizer.js';
+import type { ErrorDiagnosticRegistry } from './error-diagnostic-registry.js';
 import { repairJson } from './json-repair.js';
-import { healToolCallArguments } from './tool-auto-healer.js';
-import { filterSpecialTokens, filterStreamChunk, newStreamClampingState } from './special-tokens.js';
 import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
 import type { ModelRegistry } from './model-registry.js';
 import type {
@@ -52,6 +50,8 @@ import type { PrivacyConfig } from './privacy.js';
 import { DEFAULT_PRIVACY } from './privacy.js';
 import type { PromptCompressor } from './prompt-compressor.js';
 import type { RequestTracer } from './request-tracer.js';
+import { filterSpecialTokens, filterStreamChunk, newStreamClampingState } from './special-tokens.js';
+import { healToolCallArguments } from './tool-auto-healer.js';
 
 export interface ChatCompletionUseCaseOptions {
   /** Optional cache. When provided, exact-match cache is consulted before routing. */
@@ -649,7 +649,7 @@ export class ChatCompletionUseCase {
             const healed = healToolCallArguments(
               tc.function?.name ?? '',
               tc.function?.arguments ?? '{}',
-              effectiveRequest.tools as never,
+              effectiveRequest.tools,
             );
             return {
               ...tc,

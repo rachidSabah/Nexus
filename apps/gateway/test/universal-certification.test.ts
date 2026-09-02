@@ -6,6 +6,7 @@ import {
 } from '@anx/core';
 import { ModelAliasRegistry, FAMILY_PATTERNS } from '../src/model-aliases.js';
 import {
+  newStreamState,
   translateAnthropicRequest,
   translateToAnthropicResponse,
   translateChunkToAnthropicEvents,
@@ -153,14 +154,10 @@ describe('Phase 22.6: Universal Coding-Agent Gateway Certification Suite', () =>
 
   describe('4. Anthropic SSE Streaming Protocol Translation (§10)', () => {
     it('converts OpenAI streaming chunk into Anthropic SSE stream events', () => {
-      const state = {
-        messageId: 'msg_test123',
-        model: 'claude-3-5-sonnet-20241022',
-        started: false,
-        currentBlockType: null as 'text' | 'tool_use' | 'thinking' | null,
-        currentBlockIndex: 0,
-        toolCallIds: new Map<number, string>(),
-      };
+      // Production builds the stream state via newStreamState() (server.ts),
+      // which includes the stream-clamping state added by the resilience pass.
+      const state = newStreamState('claude-3-5-sonnet-20241022');
+      state.messageId = 'msg_test123';
 
       const chunk1 = {
         id: 'chatcmpl-123',
