@@ -17,17 +17,20 @@ if exist apps\dashboard\.next rmdir /s /q apps\dashboard\.next >nul 2>nul
 rem Start Gateway & Dashboard cleanly
 start "ANX Gateway & Dashboard" cmd /k "pnpm dev"
 
-rem Wait for Gateway to be ready on port 8787 before launching browser
-echo Waiting for Nexus Gateway on port 8787...
-for /l %%i in (1, 1, 15) do (
+rem Wait for Gateway (8787) and Dashboard (3000) to be fully ready
+echo Waiting for Nexus Gateway on port 8787 and Dashboard on port 3000...
+for /l %%i in (1, 1, 30) do (
   curl -s -f http://127.0.0.1:8787/health >nul 2>nul
   if not errorlevel 1 (
-    echo Nexus Gateway is healthy and active on http://127.0.0.1:8787
-    goto :gateway_ready
+    curl -s -f http://localhost:3000 >nul 2>nul
+    if not errorlevel 1 (
+      echo Nexus Gateway & Dashboard are healthy and active!
+      goto :services_ready
+    )
   )
   timeout /t 1 /nobreak >nul
 )
-:gateway_ready
+:services_ready
 
 rem Open Dashboard in default browser
 start http://localhost:3000
