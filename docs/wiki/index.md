@@ -20,7 +20,7 @@ Welcome to the official **Nexus (Agent Nexus v0.5.0)** Documentation and Knowled
 - [09 — Encrypted Credential Vault](09-encrypted-credential-vault.md): AES-256-GCM encrypted key storage with zero plaintext leak guarantees.
 
 ### 🤖 Local Agents & Mission Orchestration
-- [10 — Universal Local Agent Bridge](10-universal-local-agent-bridge.md): Adapters for Claude Code, Codex, Hermes, OpenCode, AGY, and Gemini CLI.
+- [10 — Universal Local Agent Bridge](10-universal-local-agent-bridge.md): Adapters for Claude Code, Codex, Hermes, OpenCode, and AGY. (Gemini CLI agent is retired; Gemini API/provider support remains.)
 - [11 — Agent Orchestrator & Pool](11-agent-orchestrator-and-pool.md): Capability-based scoring, dynamic leasing, and subprocess management.
 - [12 — Unified Mission Orchestration](12-unified-mission-orchestration.md): Declarative software missions, planning, and approval gates.
 - [13 — Mission DAG & Parallel Execution](13-mission-dag-and-parallel-execution.md): Dependency-directed DAG execution and real-time SSE progress streaming.

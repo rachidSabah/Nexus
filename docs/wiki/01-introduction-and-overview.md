@@ -8,7 +8,7 @@
 
 **Nexus** (Agent Nexus v0.5.0) is the universal, durable, and crash-recoverable AI control plane and local gateway for autonomous engineering systems, multi-model routing, and multi-agent coordination.
 
-Nexus bridges the gap between disparate LLM providers, local inference runtimes, and frontier coding agents (Claude Code, OpenAI Codex, Hermes, OpenCode, AGY Builder, Gemini CLI). It transforms unpredictable AI calls into an enterprise-grade, observable, deterministic, and resilient execution fabric.
+Nexus bridges the gap between disparate LLM providers, local inference runtimes, and frontier coding agents (Claude Code, OpenAI Codex, Hermes, OpenCode, AGY Builder). It transforms unpredictable AI calls into an enterprise-grade, observable, deterministic, and resilient execution fabric.
 
 ```mermaid
 graph TD
@@ -29,7 +29,6 @@ graph TD
     Orchestrator --> A3["Hermes"]
     Orchestrator --> A4["AGY Builder"]
     Orchestrator --> A5["Codex"]
-    Orchestrator --> A6["Gemini CLI"]
 ```
 
 ---
@@ -42,7 +41,7 @@ graph TD
 | **2. Dynamic Discovery** | Zero-Config Provider Onboarding | Automatically discovers models via upstream APIs and updates registry without restarts. |
 | **3. Key Rotation** | Health-Aware Multi-Key Pools | Distributes load, tracks per-key rate limits, and automatically cools down exhausted credentials. |
 | **4. Credential Vault** | AES-256-GCM Encrypted Storage | Secrets never touch SQLite, logs, or API responses in plaintext. |
-| **5. Local Agent Bridge** | Universal Coding Agent Protocol | Standardized execution adapter for Claude Code, Codex, Hermes, OpenCode, AGY, and Gemini. |
+| **5. Local Agent Bridge** | Universal Coding Agent Protocol | Standardized execution adapter for Claude Code, Codex, Hermes, OpenCode, and AGY. |
 | **6. Mission Orchestrator** | Autonomous Multi-Agent DAGs | Decomposes high-level objectives into parallel dependency graphs executed by specialized agents. |
 | **7. Verification & Repair** | Closed-Loop Autonomous Repair | Validates mission outputs using linter/test runners and reassigns repair tasks on failure. |
 | **8. Durable Persistence** | ACID SQLite & Atomic JSON | Persists endpoints, models, missions, checkpoints, and idempotency records with migration safety. |

@@ -7,7 +7,7 @@ import { join } from 'node:path';
  *
  * Every supported AI tool (Claude Code, Cursor, OpenCode, OpenCode Go,
  * OpenCode Zen, Cline, Roo Code, Continue, OpenHands, Aider, Zed, VS Code,
- * JetBrains, Neovim, Emacs, Codex CLI, Gemini CLI, Hermes CLI) implements
+ * JetBrains, Neovim, Emacs, Codex CLI, Hermes CLI) implements
  * this interface.
  *
  * The contract is deliberately small:

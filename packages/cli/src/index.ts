@@ -699,7 +699,7 @@ export class NexusCli {
   /** Detects coding agents installed on this machine by checking PATH. */
   private async detectInstalledAgents(): Promise<Array<{ name: string; found: boolean; detail: string }>> {
     const agents = [
-      'claude', 'codex', 'gemini', 'kimi', 'qwen', 'opencode',
+      'claude', 'codex', 'kimi', 'qwen', 'opencode',
       'aider', 'cline', 'roo-code', 'goose', 'crush', 'hermes',
     ];
     const results: Array<{ name: string; found: boolean; detail: string }> = [];

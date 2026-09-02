@@ -3,7 +3,7 @@
  *
  * Each integration auto-configures an AI tool (Claude Code, Cursor, OpenCode,
  * OpenCode Go, OpenCode Zen, Cline, Roo Code, Continue, OpenHands, Aider,
- * Zed, VS Code, JetBrains, Neovim, Emacs, Codex CLI, Gemini CLI, Hermes CLI)
+ * Zed, VS Code, JetBrains, Neovim, Emacs, Codex CLI, Hermes CLI)
  * to route its requests through the gateway.
  *
  * The CLI surfaces these via:

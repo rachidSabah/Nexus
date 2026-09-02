@@ -19,11 +19,11 @@ export function isProcessRunning(pid?: number): boolean {
  * Generic, agent-agnostic process manager for coding-agent integrations.
  *
  * DESIGN (per the Universal Coding Agent Integration spec):
- *  - Knows NOTHING about claude.exe / codex / gemini / etc. It only spawns the
+ *  - Knows NOTHING about claude.exe / codex / dsh / etc. It only spawns the
  *    `LaunchSpec` an adapter returns.
  *  - Tracks processes in a `Map<integrationId, TrackedProcess>`. There is NO
  *    "currentAgentPid" global — every agent is tracked independently, so
- *    Claude, Codex, Gemini, Qwen, OpenCode can all run simultaneously and
+ *    Claude, Codex, Qwen, OpenCode can all run simultaneously and
  *    restarting one never touches another.
  *  - Only ever terminates a PID *it itself launched*. It never does
  *    `taskkill /IM claude.exe` or similar blanket kills. If a user started a

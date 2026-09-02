@@ -9,7 +9,7 @@
  *
  * This service runs at startup and on-demand via POST /v1/agents/detect.
  * It reports:
- *   - Agent name (claude, codex, gemini, etc.)
+ *   - Agent name (claude, codex, qwen, etc.)
  *   - Found (true/false)
  *   - Version (if extractable)
  *   - Executable path
@@ -33,7 +33,7 @@ import { TRUSTED_AGENT_CATALOG } from '@anx/integrations';
 const execAsync = promisify(exec);
 
 export interface DetectedAgent {
-  /** Agent id (e.g. 'claude-code', 'codex', 'gemini-cli'). */
+  /** Agent id (e.g. 'claude-code', 'codex', 'qwen-code'). */
   readonly id: string;
   /** Human-readable name. */
   readonly name: string;

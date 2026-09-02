@@ -88,6 +88,14 @@ export interface AliasFilter {
   freeOnly?: boolean;
   /** Minimum context window in tokens. */
   minContextWindow?: number;
+  /**
+   * Dynamic, per-request context requirement. When set (and a context
+   * eligibility service is wired), candidates whose EFFECTIVE context window
+   * cannot hold this many input tokens are hard-excluded. Context is a hard
+   * eligibility requirement, not a preference — but a model with UNKNOWN
+   * context stays eligible (labeled, never guessed).
+   */
+  requiredInputTokens?: number;
   /** Restrict to these provider ids. */
   providers?: readonly string[];
 }
@@ -99,7 +107,7 @@ export interface AliasFilter {
  *   - Claude Code / Cline / Continue: claude-sonnet-4-5, claude-fable-5, ...
  *   - OpenAI Codex:                   gpt-5-codex, gpt-5-mini, o4-mini, ...
  *   - DeepSeek Code:                  deepseek-chat, deepseek-reasoner, ...
- *   - Gemini CLI / OpenCode / other:  gemini-3.6-flash, grok-4, qwen-3, ...
+ *   - OpenCode / other agents:        gemini-3.6-flash, grok-4, qwen-3, ...
  * The gateway rewrites any family-matched model name to the family's
  * configured target model (env: GATEWAY_MODEL_<FAMILY> / GATEWAY_MODEL_DEFAULT),
  * or -- when unset -- to the best currently-available free tool-calling model
@@ -192,26 +200,65 @@ export interface AliasResolution {
   readonly candidateCount: number;
 }
 
+/**
+ * Minimal port for the Dynamic Model Context Intelligence layer. When wired,
+ * alias resolution becomes context-aware: a model whose EFFECTIVE context
+ * window cannot hold the request's input tokens is hard-excluded from
+ * virtual-model candidate pools. `null` (context UNKNOWN) never excludes —
+ * unknown is labeled, never guessed.
+ */
+export interface ContextEligibilityPort {
+  isContextEligible(providerId: string, modelId: string, requiredInputTokens: number): boolean | null;
+}
+
 export class ModelAliasRegistry {
   private readonly aliases = new Map<string, ModelAlias>();
   private readonly modelRegistry: ModelRegistry;
   private readonly routing?: RoutingEnginePort;
   private readonly familyDefaults: FamilyDefaults;
   private readonly keyRegistry?: KeyRegistry;
+  private readonly capabilityService?: ContextEligibilityPort;
 
   private readonly modelCooldowns = new Map<string, number>();
 
-  constructor(modelRegistry: ModelRegistry, routing?: RoutingEnginePort, familyDefaults: FamilyDefaults = {}, keyRegistry?: KeyRegistry) {
+  constructor(
+    modelRegistry: ModelRegistry,
+    routing?: RoutingEnginePort,
+    familyDefaults: FamilyDefaults = {},
+    keyRegistry?: KeyRegistry,
+    capabilityService?: ContextEligibilityPort,
+  ) {
     this.modelRegistry = modelRegistry;
     this.routing = routing;
     this.familyDefaults = familyDefaults;
     this.keyRegistry = keyRegistry;
+    this.capabilityService = capabilityService;
     this.registerBuiltins();
   }
 
   /** Marks a model as temporarily rate-limited for cooldownMs. */
   recordRateLimitCooldown(modelId: string, cooldownMs = 60_000): void {
     this.modelCooldowns.set(modelId, Date.now() + cooldownMs);
+  }
+
+  /**
+   * Hard context-eligibility filter (Dynamic Model Context Intelligence).
+   * Excludes models whose effective context is KNOWN and smaller than the
+   * required input tokens. Models with UNKNOWN context remain eligible —
+   * unknown is never treated as a fabricated limit. No-op when no request
+   * token estimate is supplied or no capability service is wired, so legacy
+   * behavior is bit-for-bit unchanged.
+   */
+  private applyContextEligibility(
+    candidates: ModelDescriptor[],
+    requiredInputTokens?: number,
+  ): ModelDescriptor[] {
+    if (requiredInputTokens === undefined || requiredInputTokens <= 0) return candidates;
+    if (!this.capabilityService) return candidates;
+    return candidates.filter((m) => {
+      const eligible = this.capabilityService!.isContextEligible(m.providerId, m.id, requiredInputTokens);
+      return eligible !== false;
+    });
   }
 
   private registerBuiltins(): void {
@@ -465,7 +512,7 @@ export class ModelAliasRegistry {
    *   3. Rank the candidates per the alias's ranking strategy
    *   4. Return the top candidate
    */
-  resolve(aliasName: string): AliasResolution | undefined {
+  resolve(aliasName: string, requiredInputTokens?: number): AliasResolution | undefined {
     const alias = this.aliases.get(aliasName);
     if (!alias) return undefined;
 
@@ -542,6 +589,8 @@ export class ModelAliasRegistry {
     if (alias.filter.providers && alias.filter.providers.length > 0) {
       candidates = candidates.filter((m) => alias.filter.providers!.includes(m.providerId));
     }
+    // Dynamic context eligibility (hard requirement when context is known).
+    candidates = this.applyContextEligibility(candidates, requiredInputTokens);
 
     if (candidates.length === 0) return undefined;
 
@@ -565,7 +614,7 @@ export class ModelAliasRegistry {
    * unchanged. This is the convenience method the ChatCompletionUseCase
    * calls before routing.
    */
-  resolveIfAlias(model: string): { model: string; resolution?: AliasResolution } {
+  resolveIfAlias(model: string, requiredInputTokens?: number): { model: string; resolution?: AliasResolution } {
     if (model.startsWith('claude-gw-')) {
       const projected = resolveClaudeGwAlias(model, this.modelRegistry.list());
       if (projected) {
@@ -579,7 +628,7 @@ export class ModelAliasRegistry {
           },
         };
       }
-      const fallback = this.resolve('nexus/best-coding') ?? this.resolve('local/coding') ?? this.resolve('local/free');
+      const fallback = this.resolve('nexus/best-coding', requiredInputTokens) ?? this.resolve('local/coding', requiredInputTokens) ?? this.resolve('local/free', requiredInputTokens);
       if (fallback) {
         return {
           model: fallback.modelId,
@@ -643,7 +692,7 @@ export class ModelAliasRegistry {
     // exact override for e.g. `claude-sonnet-4-5` via POST /v1/aliases.
     const registered = this.aliases.get(model);
     if (registered) {
-      const resolution = this.resolve(model);
+      const resolution = this.resolve(model, requiredInputTokens);
       return resolution
         ? { model: resolution.modelId, resolution }
         : { model };
@@ -702,9 +751,9 @@ export class ModelAliasRegistry {
     }
 
     const family = matchFamily(model);
-    if (family) return this.resolveClaudeFamily(model, family);
+    if (family) return this.resolveClaudeFamily(model, family, requiredInputTokens);
 
-    const fallback = this.resolve('nexus/best-coding') ?? this.resolve('nexus/best') ?? this.resolve('nexus/auto') ?? this.resolve('local/coding') ?? this.resolve('local/best');
+    const fallback = this.resolve('nexus/best-coding', requiredInputTokens) ?? this.resolve('nexus/best', requiredInputTokens) ?? this.resolve('nexus/auto', requiredInputTokens) ?? this.resolve('local/coding', requiredInputTokens) ?? this.resolve('local/best', requiredInputTokens);
     if (fallback) {
       return {
         model: fallback.modelId,
@@ -725,7 +774,7 @@ export class ModelAliasRegistry {
    * family's configured target model, or to the best available tool-calling
    * model when no explicit target is set.
    */
-  private resolveClaudeFamily(model: string, family: FamilyId): { model: string; resolution?: AliasResolution } {
+  private resolveClaudeFamily(model: string, family: FamilyId, requiredInputTokens?: number): { model: string; resolution?: AliasResolution } {
     // Claude sub-family overrides (GATEWAY_MODEL_SONNET etc.) take precedence
     // over the family-wide target, which itself beats the default fallback.
     const sub = family === 'claude'
@@ -747,7 +796,7 @@ export class ModelAliasRegistry {
       }
     }
     // If an alias like nexus/best-coding, nexus/best, or local/coding resolves to a healthy model, use it
-    const bestCoding = this.resolve('nexus/best-coding') ?? this.resolve('nexus/best') ?? this.resolve('nexus/auto') ?? this.resolve('local/coding') ?? this.resolve('local/best');
+    const bestCoding = this.resolve('nexus/best-coding', requiredInputTokens) ?? this.resolve('nexus/best', requiredInputTokens) ?? this.resolve('nexus/auto', requiredInputTokens) ?? this.resolve('local/coding', requiredInputTokens) ?? this.resolve('local/best', requiredInputTokens);
     if (bestCoding) {
       return {
         model: bestCoding.modelId,
@@ -847,6 +896,8 @@ export class ModelAliasRegistry {
     if (filter.freeOnly) {
       candidates = candidates.filter((m) => m.pricing?.isFree === true);
     }
+    // Dynamic context eligibility (hard requirement when context is known).
+    candidates = this.applyContextEligibility(candidates, filter.requiredInputTokens);
     return candidates;
   }
 

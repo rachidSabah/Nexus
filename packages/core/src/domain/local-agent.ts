@@ -4,7 +4,7 @@
  *
  * Defines the contract for discovering, health-checking, launching, monitoring,
  * and communicating with local coding agents (Claude Code, Codex, Hermes,
- * OpenCode, AGY, Gemini CLI, etc.).
+ * OpenCode, AGY, etc.).
  * ─────────────────────────────────────────────────────────────────────────────
  */
 

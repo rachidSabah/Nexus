@@ -17,7 +17,6 @@ The **Universal Local Agent Bridge** (`packages/core/src/application/local-agent
 | **Hermes** | Autonomous CLI Agent | Scaffold generation, multi-file code editing | Working directory boundary |
 | **OpenCode** | OpenCode AI Protocol | Multi-model open agent execution | Workspace boundary enforcement |
 | **AGY Builder** | Full-Stack Scaffolding Engine | Project initialization, frontend/backend generation | Dedicated workspace subfolder |
-| **Gemini CLI** | Google Gemini Protocol | Long-context repo analysis, documentation | Read/write workspace boundary |
 
 ```mermaid
 graph TD
@@ -27,7 +26,6 @@ graph TD
     Bridge --> A3["Hermes Subprocess"]
     Bridge --> A4["OpenCode Subprocess"]
     Bridge --> A5["AGY Builder"]
-    Bridge --> A6["Gemini CLI"]
     
     A1 --> Env["Isolated Workspace Directory + Redacted Env"]
     A2 --> Env

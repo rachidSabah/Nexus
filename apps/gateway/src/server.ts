@@ -102,7 +102,7 @@ import type {
   OrchestratedExecutionRequest,
   OrchestrationPolicy,
 } from '@anx/core';
-import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe, aggregateFreeTier, FREE_TIER_CATALOG } from '@anx/core';
+import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe, aggregateFreeTier, FREE_TIER_CATALOG, estimateMessageTokens, ModelCapabilityService } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, createIntegrationRegistry, TRUSTED_AGENT_CATALOG, type IntegrationContext } from '@anx/integrations';
 import {
@@ -220,6 +220,8 @@ export interface HttpServerDeps {
   readonly falloverConfig?: FalloverConfigStore;
   readonly errorRegistry?: ErrorDiagnosticRegistry;
   readonly liveErrorResolver?: LiveErrorResolver;
+  /** Dynamic Model Context Intelligence layer (optional — additive). */
+  readonly capabilityService?: ModelCapabilityService;
 }
 
 // ── Token-economics accumulator (§30) — real measurements only, capped ring. ──
@@ -1460,6 +1462,72 @@ export class HttpServer {
     this.fastify.get('/v1/models', handleModels);
     this.fastify.get('/models', handleModels);
     this.fastify.get('/v1/v1/models', handleModels);
+
+    // ── Dynamic Model Context Intelligence (read-only, never exposes credentials) ──
+    // GET /v1/model-capabilities — every model's capability profile with
+    // truthful provenance: context source + confidence, UNKNOWN context
+    // representation, cache state, and raw provider metadata. No invented numbers.
+    this.fastify.get('/v1/model-capabilities', async () => {
+      const service = this.deps.capabilityService;
+      if (!service) {
+        return { object: 'list', data: [], note: 'capability layer not wired' };
+      }
+      return {
+        object: 'list',
+        data: service.list().map((p) => ({
+          model: p.providerModelId,
+          provider: p.providerId,
+          endpoint: p.endpointId,
+          context_window: p.contextUnknown ? null : p.contextWindow,
+          context_unknown: p.contextUnknown,
+          effective_context: service.effectiveContext(p.providerId, p.providerModelId, p.endpointId),
+          max_output_tokens: p.maxOutputTokens ?? null,
+          capabilities: p.capabilities,
+          context_source: p.contextSource,
+          context_source_detail: p.contextSourceDetail ?? null,
+          capability_source: p.capabilitySource,
+          confidence: p.confidence,
+          tokenizer: p.tokenizer,
+          state: p.state,
+          discovered_at: p.discoveredAt,
+          last_verified_at: p.lastVerifiedAt ?? null,
+          expires_at: p.expiresAt,
+          raw_provider_metadata: p.rawProviderMetadata ?? null,
+        })),
+      };
+    });
+
+    // GET /v1/models/:provider/:model/capabilities — single profile (truthful 404).
+    this.fastify.get('/v1/models/:provider/:model/capabilities', async (request, reply) => {
+      const { provider, model } = request.params as { provider: string; model: string };
+      const service = this.deps.capabilityService;
+      const profile = service?.get(provider, decodeURIComponent(model));
+      if (!profile) {
+        return reply.code(404).send({
+          error: { message: `no capability profile for '${provider}/${model}'`, code: 'PROFILE_NOT_FOUND' },
+        });
+      }
+      return {
+        model: profile.providerModelId,
+        provider: profile.providerId,
+        endpoint: profile.endpointId,
+        context_window: profile.contextUnknown ? null : profile.contextWindow,
+        context_unknown: profile.contextUnknown,
+        effective_context: service!.effectiveContext(profile.providerId, profile.providerModelId, profile.endpointId),
+        max_output_tokens: profile.maxOutputTokens ?? null,
+        capabilities: profile.capabilities,
+        context_source: profile.contextSource,
+        context_source_detail: profile.contextSourceDetail ?? null,
+        capability_source: profile.capabilitySource,
+        confidence: profile.confidence,
+        tokenizer: profile.tokenizer,
+        state: profile.state,
+        discovered_at: profile.discoveredAt,
+        last_verified_at: profile.lastVerifiedAt ?? null,
+        expires_at: profile.expiresAt,
+        raw_provider_metadata: profile.rawProviderMetadata ?? null,
+      };
+    });
 
     // ── Dynamic model discovery (master prompt #5, #6) ──────────────────
     // GET /v1/models/discover  — list all discovered models with metadata
@@ -4160,7 +4228,16 @@ export class HttpServer {
       // available concrete model based on the ModelRegistry's data.
       // The resolution happens BEFORE routing, so the routing engine sees
       // a real model id.
-      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(body.model);
+      // Context-aware resolution: estimate the request's input tokens and
+      // let the capability layer hard-exclude models whose effective context
+      // window is KNOWN to be too small (UNKNOWN context never excludes).
+      const requiredInputTokens = this.deps.capabilityService
+        ? (body.messages as never as ChatCompletionRequest['messages']).reduce(
+            (sum: number, m) => sum + estimateMessageTokens(m as never),
+            0,
+          )
+        : undefined;
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(body.model, requiredInputTokens);
       // Free-tier exhaustion: a free-only alias that cannot resolve must be a
       // clean 503 NO_ELIGIBLE_PROVIDER, not a 500 unknown-model failure.
       if (this.deps.aliasRegistry.isExhaustedFreeOnlyAlias(body.model)) {
@@ -5118,7 +5195,7 @@ export class HttpServer {
 
     // ── Coding-agent auto-detection (master prompt #9) ─────────────────
     // Scans PATH, npm globals, and config files to detect installed coding
-    // agents (Claude Code, Codex, Gemini CLI, etc.).
+    // agents (Claude Code, Codex, etc.).
     const handleAgentsDetect = async () => {
       const detected = await this.deps.agentDetector.detectAll();
       return {

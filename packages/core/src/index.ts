@@ -34,6 +34,20 @@ export { InMemoryCache, cosineSimilarity, type InMemoryCacheOptions } from './ap
 export { KeyRegistry, type KeyDescriptor, type KeyRotationStrategy, type KeyRegistryOptions, type SelectKeyOptions } from './application/key-registry.js';
 export { ModelRegistry, type ModelRegistryOptions } from './application/model-registry.js';
 export {
+  ModelCapabilityService,
+  type ModelCapabilityServiceOptions,
+  type ModelCapabilityProfile,
+  type ModelCapabilityFlags,
+  type CapabilitySource,
+  type CapabilityConfidence,
+  type CapabilityCacheState,
+  type TokenizerFidelity,
+  type ProfileChange,
+  type CatalogEntryInput,
+  type ContextFitReport,
+  type CapabilityMetadataFetcher,
+} from './application/model-capability-profile.js';
+export {
   redactForLog,
   fingerprint,
   sanitizeForLog,

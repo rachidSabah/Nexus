@@ -19,6 +19,7 @@ import {
   InMemoryCache,
   InMemoryEventBus,
   KeyRegistry,
+  ModelCapabilityService,
   ModelRegistry,
   ProactiveRateLimitTracker,
   PromptCompressor,
@@ -450,6 +451,30 @@ export class GatewayRuntime {
       }
     }
 
+    // Dynamic Model Context Intelligence — per-(provider, endpoint, model)
+    // capability profiles with truthful provenance (live_api / provider_metadata /
+    // nexus_registry / runtime_probe / fallback), UNKNOWN context representation,
+    // stale-while-revalidate refresh and change detection. Purely additive:
+    // profiles are ASSIGNED around the existing registry; nothing is rewritten.
+    const capabilityService = new ModelCapabilityService({
+      fetcher: {
+        fetch: async (providerId) => {
+          try {
+            const res = await modelRegistry.discoverProvider(providerId);
+            if (res.status !== 'completed') {
+              return { ok: false, errorKind: 'unreachable' as const };
+            }
+            return {
+              ok: true,
+              entries: modelRegistry.listByProvider(providerId).map((m) => ({ model: m })),
+            };
+          } catch {
+            return { ok: false, errorKind: 'unknown' as const };
+          }
+        },
+      },
+    });
+
     // Smart model aliasing — `local/free`, `local/coding`, `local/best`,
     // `local/auto`, etc. resolve dynamically to the best currently-available
     // model based on the ModelRegistry's discovered data. Master prompt #19 + #20.
@@ -463,7 +488,7 @@ export class GatewayRuntime {
       sonnet: process.env.GATEWAY_MODEL_SONNET ?? process.env.ANTHROPIC_MODEL_SONNET,
       haiku: process.env.GATEWAY_MODEL_HAIKU ?? process.env.ANTHROPIC_MODEL_HAIKU,
       // Family-wide targets for every coding agent's native model names
-      // (Codex: gpt-*/codex-*/o*; DeepSeek: deepseek-*; Gemini CLI: gemini-*;
+      // (Codex: gpt-*/codex-*/o*; DeepSeek: deepseek-*; Gemini: gemini-*;
       //  Grok/LLaMA/Qwen/Mistral/MiniMax/GLM/Kimi ...). Unset => dynamic
       // free-tier pick from discovery.
       claude: process.env.GATEWAY_MODEL_CLAUDE,
@@ -477,7 +502,7 @@ export class GatewayRuntime {
       minimax: process.env.GATEWAY_MODEL_MINIMAX,
       zhipu: process.env.GATEWAY_MODEL_ZHIPU,
       moonshot: process.env.GATEWAY_MODEL_MOONSHOT,
-    }, keyRegistry);
+    }, keyRegistry, capabilityService);
 
     // Manual failover / fallback-model configuration (persisted to disk under
     // ~/.agent-nexus/fallover-config.json by default).
@@ -493,6 +518,13 @@ export class GatewayRuntime {
         providers: Object.keys(stats.byProvider).length,
         models: stats.totalModels,
       });
+      // Assign capability profiles for every discovered model (additive layer).
+      for (const providerId of Object.keys(stats.byProvider)) {
+        capabilityService.ingestCatalog(
+          providerId,
+          modelRegistry.listByProvider(providerId).map((m) => ({ model: m })),
+        );
+      }
     });
 
     // Request tracer — records full request traces for inspection via
@@ -572,8 +604,22 @@ export class GatewayRuntime {
       adapters,
       events,
       modelRediscoverCallback: async (p) => {
-        if (p) await modelRegistry.discoverProvider(p);
-        else await modelRegistry.refresh();
+        if (p) {
+          await modelRegistry.discoverProvider(p);
+          capabilityService.ingestCatalog(
+            p,
+            modelRegistry.listByProvider(p).map((m) => ({ model: m })),
+          );
+        } else {
+          await modelRegistry.refresh();
+          const stats = modelRegistry.stats();
+          for (const providerId of Object.keys(stats.byProvider)) {
+            capabilityService.ingestCatalog(
+              providerId,
+              modelRegistry.listByProvider(providerId).map((m) => ({ model: m })),
+            );
+          }
+        }
       },
     });
 
@@ -598,6 +644,7 @@ export class GatewayRuntime {
       rateLimitTracker,
       errorRegistry,
       modelRegistry,
+      capabilityService,
     };
     const chatUseCase = new ChatCompletionUseCase(
       routing,

@@ -46,7 +46,6 @@ export class CompatibilityCertifier {
     { name: 'OpenCode Go', version: 'latest', requiredFeatures: ['api', 'cli'] },
     { name: 'OpenCode Zen', version: 'latest', requiredFeatures: ['api', 'gui'] },
     { name: 'Codex CLI', version: 'latest', requiredFeatures: ['api', 'streaming'] },
-    { name: 'Gemini CLI', version: 'latest', requiredFeatures: ['api', 'providers'] },
     { name: 'Hermes CLI', version: 'latest', requiredFeatures: ['api', 'routing'] },
     { name: 'Cursor', version: 'latest', requiredFeatures: ['api', 'completion'] },
     { name: 'Continue', version: 'latest', requiredFeatures: ['api', 'context'] },
