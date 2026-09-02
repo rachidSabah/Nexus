@@ -1297,20 +1297,24 @@ export function classifyFailure(error: Error): FailureClassification {
         reason: `HTTP ${status}: authentication/authorization failed — key invalidated, attempting failover`,
       };
     }
-    // 404 Not Found — model doesn't exist on this provider. This is a
-    // *model*-level failure, NOT a provider outage: a single unsupported
-    // model must NOT poison the entire endpoint/provider (which would
-    // circuit-break every other healthy model). Mark the endpoint as
-    // degraded (counts toward the threshold but does not immediately trip),
-    // and surface a distinct MODEL_UNAVAILABLE code so routing can failover to
-    // an alternative provider offering this model or fallback chain.
-    if (status === 404) {
+    // 404 Not Found or 400/422 invalid_model / model unavailable — model
+    // doesn't exist or is unsupported on this specific provider. This is a
+    // *model*-level failure, NOT an unrecoverable client bug: surface a
+    // distinct MODEL_UNAVAILABLE code with retryable=true so routing can
+    // failover cleanly to an alternative provider offering this model/capability.
+    const isModelUnavailable =
+      status === 404 ||
+      ((status === 400 || status === 422) &&
+        /invalid[ -]?model|model[ -]?(not[ -]?found|unavailable|does not exist)|unsupported model/i.test(
+          error.message ?? '',
+        ));
+    if (isModelUnavailable) {
       return {
         status, code: 'MODEL_UNAVAILABLE',
         retryable: true,
         keyAction: 'none',
         endpointAction: 'record_failure',
-        reason: `HTTP ${status}: model not found on this provider — endpoint degraded, failing over to alternative provider`,
+        reason: `HTTP ${status}: model not found or unsupported on this provider — failing over to alternative provider`,
       };
     }
     // 408 Request Timeout — retryable, key is fine.
