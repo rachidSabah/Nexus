@@ -10,7 +10,7 @@ import type {
   ProviderEndpoint,
 } from '@anx/core';
 import { ProviderResponseError, type ProviderAdapter } from '@anx/core';
-import { classifyPricing, hasFreeSuffix } from '@anx/core';
+import { classifyPricing, hasFreeSuffix, sanitizeToolSchemasForUpstream, filterSpecialTokens } from '@anx/core';
 
 import { buildHeaders, fetchJson, parseSseStream } from '../shared/http.js';
 
@@ -377,7 +377,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     if (this.supportsUserField && typeof req.user === 'string' && !req.user.trim().startsWith('{')) {
       body.user = req.user;
     }
-    if (req.tools !== undefined) body.tools = req.tools;
+    if (req.tools !== undefined) body.tools = sanitizeToolSchemasForUpstream(req.tools as never);
     if (req.toolChoice !== undefined) body.tool_choice = req.toolChoice;
     if (req.responseFormat !== undefined) body.response_format = req.responseFormat;
     if (req.seed !== undefined) body.seed = req.seed;
@@ -399,9 +399,9 @@ export class OpenAIAdapter implements ProviderAdapter {
         index: c.index,
         message: {
           role: c.message.role,
-          content: c.message.content,
+          content: c.message.content ? filterSpecialTokens(c.message.content).cleaned : c.message.content,
           tool_calls: c.message.tool_calls,
-          ...(c.message.reasoning_content ? { reasoningContent: c.message.reasoning_content } : {}),
+          ...(c.message.reasoning_content ? { reasoningContent: filterSpecialTokens(c.message.reasoning_content).cleaned } : {}),
         },
         finish_reason: c.finish_reason,
         logprobs: c.logprobs,
@@ -417,18 +417,27 @@ export class OpenAIAdapter implements ProviderAdapter {
 
   protected translateChunk(raw: Record<string, unknown>): ChatCompletionChunk | null {
     if (!raw['id'] || !raw['choices']) return null;
-    const choices = (raw['choices'] as Array<Record<string, unknown>>).map((c) => ({
-      index: c['index'] as number,
-      delta: {
-        ...((c['delta'] ?? {}) as {
-          role?: string;
-          content?: string;
-          tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
-        }),
-        reasoning: ((c['delta'] ?? {}) as Record<string, unknown>)['reasoning_content'] as string | undefined,
-      },
-      finish_reason: (c['finish_reason'] as string | null) ?? null,
-    }));
+    const choices = (raw['choices'] as Array<Record<string, unknown>>).map((c) => {
+      const rawDelta = (c['delta'] ?? {}) as {
+        role?: string;
+        content?: string;
+        tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+      };
+      const rawReasoning = ((c['delta'] ?? {}) as Record<string, unknown>)['reasoning_content'] as string | undefined;
+
+      const content = rawDelta.content ? filterSpecialTokens(rawDelta.content).cleaned : rawDelta.content;
+      const reasoning = rawReasoning ? filterSpecialTokens(rawReasoning).cleaned : undefined;
+
+      return {
+        index: c['index'] as number,
+        delta: {
+          ...rawDelta,
+          content,
+          reasoning,
+        },
+        finish_reason: (c['finish_reason'] as string | null) ?? null,
+      };
+    });
     return {
       id: raw['id'] as string,
       object: 'chat.completion.chunk',

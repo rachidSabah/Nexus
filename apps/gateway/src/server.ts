@@ -4604,7 +4604,7 @@ export class HttpServer {
       ];
       try {
         const response = (await this.executeChatFallbackChain(effectiveReq, request, fallbackChain, undefined)) as ChatCompletionResponse;
-        return translateToAnthropicResponse(response, anthropicReq.model);
+        return translateToAnthropicResponse(response, anthropicReq.model, anthropicReq.tools as never);
       } catch (err) {
         const http = this.httpErrorFor(err as Error);
         this.reportUpstreamModelError(anthropicReq.model, err as Error);

@@ -1,7 +1,9 @@
 @echo off
 title ANX - Agent Nexus Gateway ^& Dashboard
 echo ========================================================
-echo   Starting ANX Gateway, Dashboard ^& Claude CLI...
+echo   ANX - Agent Nexus v0.5 Starting...
+echo   Features: Tool Auto-Healer, Schema Sanitizer,
+echo             Stream Clamping, Context Sanitizer
 echo ========================================================
 cd /d "%~dp0"
 
@@ -15,7 +17,7 @@ if not exist apps\dashboard\.next (
   call pnpm --filter @anx/dashboard build
 )
 
-rem Start Gateway & Dashboard cleanly
+rem Start Gateway ^& Dashboard cleanly
 start "Nexus Gateway" cmd /k "pnpm --filter @anx/gateway dev"
 start "Nexus Dashboard" cmd /k "pnpm --filter @anx/dashboard start"
 
@@ -26,7 +28,7 @@ for /l %%i in (1, 1, 30) do (
   if not errorlevel 1 (
     curl -s -f http://localhost:3000 >nul 2>nul
     if not errorlevel 1 (
-      echo Nexus Gateway & Dashboard are healthy and active!
+      echo Nexus Gateway ^& Dashboard are healthy and active!
       goto :services_ready
     )
   )

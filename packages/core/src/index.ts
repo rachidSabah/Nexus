@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @anx/core — the heart of Agent Nexus Gateway.
  *
  * Hexagonal architecture layers:
@@ -51,6 +51,21 @@ export { CostPredictor, type CostPredictorConfig, type CostEstimate, type CostPr
 export { NaiveTokenCounter, CodeAwareTokenCounter, defaultTokenCounter, type TokenCounter } from './application/token-counter.js';
 export { repairJson, repairToolCallArguments, type JsonRepairResult } from './application/json-repair.js';
 export { clampAndSanitizeContext, estimateMessageTokens } from './application/context-sanitizer.js';
+export {
+  healToolCallArguments,
+  sanitizeToolSchemasForUpstream,
+  getDefaultValueForProperty,
+  type ToolDefinition,
+  type JsonSchema,
+  type HealResult,
+} from './application/tool-auto-healer.js';
+export {
+  filterSpecialTokens,
+  filterStreamChunk,
+  newStreamClampingState,
+  SPECIAL_TOKENS_REGEX,
+  type StreamClampingState,
+} from './application/special-tokens.js';
 
 // ── Phase 5/6/7 Orchestration & Workflow Fabric ──────────────────────────────
 export * from './domain/orchestration.js';

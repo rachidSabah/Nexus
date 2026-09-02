@@ -23,6 +23,14 @@ import type {
   ChatMessage,
   ToolCall,
 } from '@anx/core';
+import {
+  healToolCallArguments,
+  filterSpecialTokens,
+  filterStreamChunk,
+  newStreamClampingState,
+  type StreamClampingState,
+  type ToolDefinition,
+} from '@anx/core';
 
 // ─── Anthropic request shape (inbound from Claude Code) ────────────────────
 
@@ -234,6 +242,7 @@ export function translateAnthropicRequest(
 export function translateToAnthropicResponse(
   response: ChatCompletionResponse,
   requestModel: string,
+  rawTools?: readonly ToolDefinition[],
 ): AnthropicResponse {
   const choice = response.choices[0];
   const message = choice?.message;
@@ -245,18 +254,22 @@ export function translateToAnthropicResponse(
   // bridge maps it back to `reasoning_content` so reasoning-mode upstreams
   // never reject the conversation history.
   if (message?.reasoningContent) {
-    content.push({ type: 'thinking', thinking: message.reasoningContent });
+    const thinking = filterSpecialTokens(message.reasoningContent).cleaned;
+    if (thinking) {
+      content.push({ type: 'thinking', thinking });
+    }
   }
 
   // Add text content if present. The message content can be a string OR an
   // array of content parts; we extract just the text parts for Anthropic's
   // `text` content block.
   if (message?.content) {
-    const text = typeof message.content === 'string'
+    let text = typeof message.content === 'string'
       ? message.content
       : (Array.isArray(message.content)
           ? message.content.filter((p) => p.type === 'text').map((p) => (p as { type: 'text'; text: string }).text).join('\n')
           : '');
+    text = filterSpecialTokens(text).cleaned;
     if (text) {
       content.push({ type: 'text', text });
     }
@@ -264,20 +277,20 @@ export function translateToAnthropicResponse(
 
   // Add tool_use blocks if the assistant made tool calls.
   // Note: the internal ChatMessage uses `toolCalls` (camelCase).
-  const toolCalls = (message as { toolCalls?: readonly ToolCall[] }).toolCalls;
+  const toolCalls = (message as { toolCalls?: readonly ToolCall[] }).toolCalls
+    ?? (message as { tool_calls?: readonly ToolCall[] }).tool_calls;
   if (toolCalls) {
     for (const tc of toolCalls) {
-      let input: Record<string, unknown> = {};
-      try {
-        input = JSON.parse(tc.function.arguments);
-      } catch {
-        input = { raw: tc.function.arguments };
-      }
+      const healed = healToolCallArguments(
+        tc.function.name,
+        tc.function.arguments,
+        rawTools,
+      );
       content.push({
         type: 'tool_use',
         id: tc.id,
         name: tc.function.name,
-        input,
+        input: healed.parsed,
       });
     }
   }
@@ -327,8 +340,20 @@ export function translateToAnthropicResponse(
  */
 export function* translateChunkToAnthropicEvents(
   chunk: ChatCompletionChunk,
-  state: { messageId: string; model: string; started: boolean; currentBlockType: 'text' | 'tool_use' | 'thinking' | null; currentBlockIndex: number; toolCallIds: Map<number, string> },
+  state: {
+    messageId: string;
+    model: string;
+    started: boolean;
+    currentBlockType: 'text' | 'tool_use' | 'thinking' | null;
+    currentBlockIndex: number;
+    toolCallIds: Map<number, string>;
+    clampingState: StreamClampingState;
+  },
 ): Generator<AnthropicStreamEvent> {
+  if (state.clampingState.terminated) {
+    return;
+  }
+
   if (!state.started) {
     state.started = true;
     yield {
@@ -347,60 +372,67 @@ export function* translateChunkToAnthropicEvents(
   }
 
   const delta = chunk.choices[0]?.delta;
-  const finishReason = chunk.choices[0]?.finish_reason;
+  let finishReason = chunk.choices[0]?.finish_reason;
+  let shouldTerminate = false;
 
   // Reasoning delta → thinking content block (DeepSeek-style upstreams
   // stream `reasoning_content` before the visible content).
   if (delta?.reasoning) {
-    if (state.currentBlockType !== 'thinking') {
-      if (state.currentBlockType === 'tool_use') {
-        yield { type: 'content_block_stop', index: state.currentBlockIndex };
-        state.currentBlockIndex++;
+    const filterRes = filterStreamChunk(delta.reasoning, state.clampingState);
+    if (filterRes.shouldTerminate) shouldTerminate = true;
+    if (filterRes.cleaned) {
+      if (state.currentBlockType !== 'thinking') {
+        if (state.currentBlockType === 'tool_use') {
+          yield { type: 'content_block_stop', index: state.currentBlockIndex };
+          state.currentBlockIndex++;
+        }
+        state.currentBlockType = 'thinking';
+        yield {
+          type: 'content_block_start',
+          index: state.currentBlockIndex,
+          content_block: { type: 'thinking', thinking: '' },
+        };
       }
-      state.currentBlockType = 'thinking';
       yield {
-        type: 'content_block_start',
+        type: 'content_block_delta',
         index: state.currentBlockIndex,
-        content_block: { type: 'thinking', thinking: '' },
+        delta: { type: 'thinking_delta', thinking: filterRes.cleaned },
       };
     }
-    yield {
-      type: 'content_block_delta',
-      index: state.currentBlockIndex,
-      delta: { type: 'thinking_delta', thinking: delta.reasoning },
-    };
   }
 
   // Text delta.
   if (delta?.content) {
-    if (state.currentBlockType !== 'text') {
-      // Close any open tool_use or thinking block.
-      if (state.currentBlockType === 'tool_use' || state.currentBlockType === 'thinking') {
-        yield { type: 'content_block_stop', index: state.currentBlockIndex };
-        state.currentBlockIndex++;
+    const filterRes = filterStreamChunk(delta.content, state.clampingState);
+    if (filterRes.shouldTerminate) shouldTerminate = true;
+    if (filterRes.cleaned) {
+      if (state.currentBlockType !== 'text') {
+        // Close any open tool_use or thinking block.
+        if (state.currentBlockType === 'tool_use' || state.currentBlockType === 'thinking') {
+          yield { type: 'content_block_stop', index: state.currentBlockIndex };
+          state.currentBlockIndex++;
+        }
+        // Start a new text block.
+        state.currentBlockType = 'text';
+        yield {
+          type: 'content_block_start',
+          index: state.currentBlockIndex,
+          content_block: { type: 'text', text: '' },
+        };
       }
-      // Start a new text block.
-      state.currentBlockType = 'text';
       yield {
-        type: 'content_block_start',
+        type: 'content_block_delta',
         index: state.currentBlockIndex,
-        content_block: { type: 'text', text: '' },
+        delta: { type: 'text_delta', text: filterRes.cleaned },
       };
     }
-    yield {
-      type: 'content_block_delta',
-      index: state.currentBlockIndex,
-      delta: { type: 'text_delta', text: delta.content },
-    };
   }
 
   // Tool call delta.
   if (delta?.tool_calls) {
     for (const tc of delta.tool_calls) {
       // OpenAI's SSE format includes an `index` field on tool_call deltas
-      // to identify which tool_call this is a delta for. Our internal
-      // ToolCall type doesn't include it (it's only present in streaming
-      // deltas, not in the final response), so we cast.
+      // to identify which tool_call this is a delta for.
       const tcWithIndex = tc as ToolCall & { index?: number };
       const idx = tcWithIndex.index ?? 0;
       // If this is a new tool_call (has an id), start a new tool_use block.
@@ -425,13 +457,20 @@ export function* translateChunkToAnthropicEvents(
       }
       // Arguments delta.
       if (tc.function?.arguments) {
-        yield {
-          type: 'content_block_delta',
-          index: state.currentBlockIndex,
-          delta: { type: 'input_json_delta', partial_json: tc.function.arguments },
-        };
+        const cleanedArgs = filterSpecialTokens(tc.function.arguments).cleaned;
+        if (cleanedArgs) {
+          yield {
+            type: 'content_block_delta',
+            index: state.currentBlockIndex,
+            delta: { type: 'input_json_delta', partial_json: cleanedArgs },
+          };
+        }
       }
     }
+  }
+
+  if (shouldTerminate && !finishReason) {
+    finishReason = 'length';
   }
 
   // Finish reason → message_delta + message_stop.
@@ -467,6 +506,7 @@ export function newStreamState(model: string): {
   currentBlockType: 'text' | 'tool_use' | 'thinking' | null;
   currentBlockIndex: number;
   toolCallIds: Map<number, string>;
+  clampingState: StreamClampingState;
   /** Bytes already written to the client SSE stream. Used by WS4-A mid-stream
    * failover: if the upstream dies before ANY content reaches the client, we
    * transparently fail over to the next endpoint on the same SSE response. */
@@ -481,6 +521,7 @@ export function newStreamState(model: string): {
     currentBlockType: null,
     currentBlockIndex: 0,
     toolCallIds: new Map(),
+    clampingState: newStreamClampingState(),
     committedBytes: 0,
     midStreamRetried: false,
   };

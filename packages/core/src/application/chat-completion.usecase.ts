@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 
 import {
   AllProvidersExhaustedError,
@@ -33,7 +33,9 @@ import type {
 import type { BudgetManager, BudgetMode } from './budget-manager.js';
 import type { ErrorDiagnosticRegistry } from './error-diagnostic-registry.js';
 import { clampAndSanitizeContext } from './context-sanitizer.js';
-import { repairJson, repairToolCallArguments } from './json-repair.js';
+import { repairJson } from './json-repair.js';
+import { healToolCallArguments } from './tool-auto-healer.js';
+import { filterSpecialTokens, filterStreamChunk, newStreamClampingState } from './special-tokens.js';
 import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
 import type { ModelRegistry } from './model-registry.js';
 import type {
@@ -628,24 +630,34 @@ export class ChatCompletionUseCase {
 
         const repairedChoices = (response.choices ?? []).map((choice) => {
           let content = choice.message?.content;
-          if (isJsonMode && typeof content === 'string') {
-            const repaired = repairJson(content);
-            if (repaired.isValidJson) {
-              content = repaired.repaired;
+          if (typeof content === 'string') {
+            content = filterSpecialTokens(content).cleaned;
+            if (isJsonMode) {
+              const repaired = repairJson(content);
+              if (repaired.isValidJson) {
+                content = repaired.repaired;
+              }
             }
           }
 
+          let reasoningContent = choice.message?.reasoningContent;
+          if (typeof reasoningContent === 'string') {
+            reasoningContent = filterSpecialTokens(reasoningContent).cleaned;
+          }
+
           const toolCalls = choice.message?.tool_calls?.map((tc) => {
-            if (tc.function?.arguments && typeof tc.function.arguments === 'string') {
-              return {
-                ...tc,
-                function: {
-                  ...tc.function,
-                  arguments: repairToolCallArguments(tc.function.arguments),
-                },
-              };
-            }
-            return tc;
+            const healed = healToolCallArguments(
+              tc.function?.name ?? '',
+              tc.function?.arguments ?? '{}',
+              effectiveRequest.tools as never,
+            );
+            return {
+              ...tc,
+              function: {
+                ...tc.function,
+                arguments: healed.serialized,
+              },
+            };
           });
 
           return {
@@ -653,6 +665,7 @@ export class ChatCompletionUseCase {
             message: {
               ...choice.message,
               content,
+              ...(reasoningContent !== undefined ? { reasoningContent } : {}),
               ...(toolCalls ? { tool_calls: toolCalls } : {}),
             },
           };
@@ -894,6 +907,7 @@ export class ChatCompletionUseCase {
     let lastUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let finishReason = 'stop';
     const id = randomUUID();
+    const clampingState = newStreamClampingState();
 
     // Sink notification on error happens in the use case's retry decision (and the
     // HTTP handler's catch) — NOT here: a pre-byte failure that will be failed over
@@ -910,6 +924,30 @@ export class ChatCompletionUseCase {
           }
         }
       }
+
+      // Stream Token Sanitization & Runaway Loop Clamping
+      let shouldTerminateStream = false;
+      const delta = chunk.choices[0]?.delta;
+      if (delta) {
+        if (delta.content) {
+          const res = filterStreamChunk(delta.content, clampingState);
+          (chunk.choices[0] as any).delta.content = res.cleaned;
+          if (res.shouldTerminate) shouldTerminateStream = true;
+        }
+        if (delta.reasoning) {
+          const res = filterStreamChunk(delta.reasoning, clampingState);
+          (chunk.choices[0] as any).delta.reasoning = res.cleaned;
+          if (res.shouldTerminate) shouldTerminateStream = true;
+        }
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            if (tc.function?.arguments) {
+              (tc as any).function.arguments = filterSpecialTokens(tc.function.arguments).cleaned;
+            }
+          }
+        }
+      }
+
       chunks.push(chunk);
       if (chunk.choices[0]?.delta?.content) {
         contentBuffer += chunk.choices[0].delta.content;
@@ -921,7 +959,15 @@ export class ChatCompletionUseCase {
       if (chunk.choices[0]?.finish_reason) {
         finishReason = chunk.choices[0].finish_reason;
       }
+      if (shouldTerminateStream) {
+        finishReason = 'length';
+        if (chunk.choices[0]) {
+          (chunk.choices[0] as any).finish_reason = 'length';
+        }
+      }
+
       if (sink) await sink.write(chunk);
+      if (shouldTerminateStream) break;
     }
 
     if (sink) await sink.end();
