@@ -736,6 +736,7 @@ export class ChatCompletionUseCase {
         }
 
         this.errorRegistry?.recordSuccess(endpoint.providerId, selectedKeyId, request.model);
+        this.routing.recordModelSuccess?.(endpoint.id, request.model);
 
         return finalResult;
       } catch (err) {
@@ -743,6 +744,9 @@ export class ChatCompletionUseCase {
         const classification = classifyFailure(error);
         const retryable = classification.retryable;
         await this.routing.recordFailure(endpoint.id, error, retryable, classification.endpointAction, classification.retryAfterMs);
+        if (classification.code === 'MODEL_UNAVAILABLE' || classification.status === 429) {
+          this.routing.recordModelFailure?.(endpoint.id, request.model, classification.retryAfterMs);
+        }
 
         // Trace: record failed attempt.
         if (this.tracer) {

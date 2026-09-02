@@ -135,6 +135,18 @@ export interface RoutingEnginePort {
   ): void;
 
   /**
+   * Notify the engine that a specific model on an endpoint has failed (e.g. 404
+   * model not found, 429 model rate limit). Quarantines only this specific model
+   * on the endpoint, leaving the provider and other models healthy.
+   */
+  recordModelFailure?(endpointId: string, modelId: string, retryAfterMs?: number): void;
+
+  /**
+   * Clear any model-level failure/quarantine state upon successful completion.
+   */
+  recordModelSuccess?(endpointId: string, modelId: string): void;
+
+  /**
    * Register or update an endpoint at runtime.
    */
   registerEndpoint(endpoint: ProviderEndpoint): void;

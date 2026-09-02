@@ -28,6 +28,7 @@ export class RoutingEngine implements RoutingEnginePort {
   private readonly failureWindowMs: number;
   private readonly cooldownMs: number;
   private readonly cooldowns = new Map<string, number>();
+  private readonly modelCooldowns = new Map<string, number>();
   // Endpoints closed by an explicit `mark_unavailable` (billing/quota/auth)
   // action. These must NOT be half-open re-admitted on cooldown expiry — the
   // upstream is dead until the operator fixes billing, so re-admitting only
@@ -99,6 +100,17 @@ export class RoutingEngine implements RoutingEnginePort {
     if (endpoint && (endpoint.health === 'degraded' || endpoint.health === 'circuit_open')) {
       this.setHealth(endpoint, 'healthy', 'real success cleared failure state');
     }
+  }
+
+  recordModelFailure(endpointId: string, modelId: string, retryAfterMs?: number): void {
+    if (!endpointId || !modelId) return;
+    const duration = retryAfterMs && retryAfterMs > 0 ? retryAfterMs : this.cooldownMs;
+    this.modelCooldowns.set(`${endpointId}:${modelId}`, Date.now() + duration);
+  }
+
+  recordModelSuccess(endpointId: string, modelId: string): void {
+    if (!endpointId || !modelId) return;
+    this.modelCooldowns.delete(`${endpointId}:${modelId}`);
   }
 
   recordFailure(
@@ -222,17 +234,16 @@ export class RoutingEngine implements RoutingEnginePort {
       const cooldownUntil = this.cooldowns.get(e.id);
       if (cooldownUntil && now < cooldownUntil) return false;
       if (cooldownUntil && now >= cooldownUntil && e.health === 'circuit_open') {
-        // Half-open: allow it back into the pool for a probe attempt. A
-        // billing/quota-closed endpoint is NOT permanently blacklisted — once
-        // its cooldown expires it gets one real request to prove the upstream
-        // recovered. If that succeeds, recordSuccess clears billingBlocked and
-        // restores health (routing-engine recordSuccess). If it fails again, it
-        // trips back into circuit_open + billingBlocked. This prevents a single
-        // transient failure (e.g. a 401 from a bad key during a restart) from
-        // permanently disabling the provider.
+        // Half-open: allow it back into the pool for a probe attempt.
         this.billingBlocked.delete(e.id);
         this.setHealth(e, 'degraded', 'circuit half-open probe');
         this.cooldowns.delete(e.id);
+      }
+
+      // Granular Per-Model Cooldown check: if this specific model is quarantined on this endpoint, skip it
+      if (request.model) {
+        const modelCooldown = this.modelCooldowns.get(`${e.id}:${request.model}`);
+        if (modelCooldown && now < modelCooldown) return false;
       }
 
       if (request.preferredProviders && !request.preferredProviders.includes(e.providerId)) {
@@ -275,6 +286,37 @@ export class RoutingEngine implements RoutingEnginePort {
         const bPref = prefSet.has(b.providerId) ? 1 : 0;
         return bPref - aPref;
       });
+    } else {
+      // Semantic Tier Priority:
+      const modelLower = (request.model ?? '').toLowerCase();
+      if (modelLower.includes('coding') || modelLower.includes('code') || modelLower.includes('claude')) {
+        const codingOrder: Record<string, number> = {
+          'mistral': 100,
+          'opencode-zen': 90,
+          'nvidia-nim': 80,
+          'google': 70,
+          'openrouter': 60,
+        };
+        copy.sort((a, b) => (codingOrder[b.providerId] ?? 0) - (codingOrder[a.providerId] ?? 0));
+      } else if (modelLower.includes('reason') || modelLower.includes('r1') || modelLower.includes('think')) {
+        const reasonOrder: Record<string, number> = {
+          'nvidia-nim': 100,
+          'mistral': 90,
+          'google': 80,
+          'opencode-zen': 70,
+          'openrouter': 60,
+        };
+        copy.sort((a, b) => (reasonOrder[b.providerId] ?? 0) - (reasonOrder[a.providerId] ?? 0));
+      } else if (modelLower.includes('fast') || modelLower.includes('flash')) {
+        const fastOrder: Record<string, number> = {
+          'google': 100,
+          'opencode-zen': 90,
+          'mistral': 80,
+          'nvidia-nim': 70,
+          'openrouter': 60,
+        };
+        copy.sort((a, b) => (fastOrder[b.providerId] ?? 0) - (fastOrder[a.providerId] ?? 0));
+      }
     }
     switch (strategy) {
       case 'round_robin':
