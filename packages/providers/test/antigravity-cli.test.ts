@@ -68,6 +68,29 @@ gpt-oss-120b-medium	GPT-OSS 120B (Medium)
     }
   }, 15000);
 
+  it("formats multi-turn tool calls and tool results with integrity", () => {
+    const messages = [
+      { role: "system" as const, content: "You are an agent" },
+      { role: "user" as const, content: "Run tool" },
+      {
+        role: "assistant" as const,
+        content: "Calling tool now",
+        tool_calls: [
+          { id: "call_abc", type: "function" as const, function: { name: "execute_cmd", arguments: '{"command":"ls"}' } }
+        ]
+      },
+      { role: "tool" as const, tool_call_id: "call_abc", content: "file1.txt\nfile2.txt" },
+      { role: "user" as const, content: "Summarize results" }
+    ];
+    const flattened = (adapter as any).flattenMessages(messages);
+    expect(flattened).toContain("[System Instructions]");
+    expect(flattened).toContain("[Tool Call: execute_cmd id: call_abc]");
+    expect(flattened).toContain('Arguments: {"command":"ls"}');
+    expect(flattened).toContain("[Tool Result (id: call_abc)]");
+    expect(flattened).toContain("file1.txt");
+    expect(flattened).toContain("Summarize results");
+  });
+
   it("provides detailed health state", async () => {
     const health = await adapter.getDetailedHealth();
     expect(["READY", "NOT_INSTALLED", "INSTALLED_NOT_AUTHENTICATED", "DEGRADED", "ERROR"]).toContain(health.status);

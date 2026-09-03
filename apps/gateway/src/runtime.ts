@@ -43,7 +43,7 @@ import {
 } from '@anx/core';
 import { AutoHealer } from './auto-healer.js';
 import { McpClient } from '@anx/mcp-client';
-import { McpServer } from '@anx/mcp-server';
+import { McpServer, buildNexusTools } from '@anx/mcp-server';
 import { DefaultMemory, FileVectorStore, GatewayEmbeddingsProvider, RagPipeline } from '@anx/memory';
 import { BUILTIN_PLUGINS } from './builtin-plugins.js';
 import { DefaultNetworkService, preferIpv4 } from '@anx/networking';
@@ -1136,6 +1136,7 @@ export class GatewayRuntime {
             });
           },
         },
+        ...buildNexusTools({ registry: modelRegistry }),
       ],
     });
 

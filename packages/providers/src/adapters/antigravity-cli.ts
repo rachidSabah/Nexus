@@ -397,16 +397,25 @@ export class AntigravityCliAdapter implements ProviderAdapter {
             rejectPromise(new ProviderResponseError(endpoint.id, 400, errText, { errorCode: 'INVALID_MODEL', retryable: false }));
             return;
           }
+          if (/quota reached|quota exceeded|rate limit|upgrade your subscription/i.test(errText)) {
+            rejectPromise(new ProviderResponseError(endpoint.id, 429, errText, { errorCode: 'UPSTREAM_429', retryable: false }));
+            return;
+          }
           rejectPromise(new ProviderResponseError(endpoint.id, 500, errText, { errorCode: 'CLI_EXIT_NONZERO', retryable: true }));
           return;
         }
 
         try {
           const parsed = JSON.parse(stdoutAcc.trim());
-          // agy returns status: ERROR on exit 0 for model/session errors
+          // agy returns status: ERROR on exit 0 or non-zero for model/session/quota errors
           if (parsed.status === 'ERROR' && parsed.error) {
             const agy_err = String(parsed.error);
             const isModelErr = /invalid model selection|is not recognized as a known model/i.test(agy_err);
+            const isQuotaErr = /quota reached|quota exceeded|rate limit|upgrade your subscription/i.test(agy_err);
+            if (isQuotaErr) {
+              rejectPromise(new ProviderResponseError(endpoint.id, 429, agy_err, { errorCode: 'UPSTREAM_429', retryable: false }));
+              return;
+            }
             rejectPromise(new ProviderResponseError(endpoint.id, isModelErr ? 400 : 500, agy_err, { errorCode: isModelErr ? 'INVALID_MODEL' : 'AGY_ERROR', retryable: !isModelErr }));
             return;
           }
@@ -579,7 +588,27 @@ export class AntigravityCliAdapter implements ProviderAdapter {
                 },
               ],
             };
+          } else if (parsed.status === 'ERROR' && parsed.error) {
+            const agy_err = String(parsed.error);
+            const isQuotaErr = /quota reached|quota exceeded|rate limit|upgrade your subscription/i.test(agy_err);
+            const isModelErr = /invalid model selection|is not recognized as a known model/i.test(agy_err);
+            throw new ProviderResponseError(
+              endpoint.id,
+              isQuotaErr ? 429 : (isModelErr ? 400 : 500),
+              agy_err,
+              { errorCode: isQuotaErr ? 'UPSTREAM_429' : (isModelErr ? 'INVALID_MODEL' : 'AGY_ERROR'), retryable: !isQuotaErr && !isModelErr }
+            );
           } else if (parsed.event === "result") {
+            if (parsed.result?.status === "ERROR" && parsed.result?.error) {
+              const agy_err = String(parsed.result.error);
+              const isQuotaErr = /quota reached|quota exceeded|rate limit|upgrade your subscription/i.test(agy_err);
+              throw new ProviderResponseError(
+                endpoint.id,
+                isQuotaErr ? 429 : 500,
+                agy_err,
+                { errorCode: isQuotaErr ? 'UPSTREAM_429' : 'AGY_ERROR', retryable: !isQuotaErr }
+              );
+            }
             const usage = parsed.result?.usage;
             yield {
               id: streamId,
@@ -641,14 +670,24 @@ export class AntigravityCliAdapter implements ProviderAdapter {
 
     for (const m of messages) {
       const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      const toolCalls = m.toolCalls ?? m.tool_calls;
+      const toolCallId = m.toolCallId ?? m.tool_call_id;
+
       if (m.role === "system") {
         parts.push(`[System Instructions]\n${content}\n`);
       } else if (m.role === "user") {
         parts.push(content);
       } else if (m.role === "assistant") {
-        parts.push(`[Assistant]\n${content}\n`);
-      } else if (m.role === "tool") {
-        parts.push(`[Tool Result]\n${content}\n`);
+        let text = content ? `[Assistant]\n${content}\n` : `[Assistant]\n`;
+        if (toolCalls && toolCalls.length > 0) {
+          for (const tc of toolCalls) {
+            text += `\n[Tool Call: ${tc.function?.name ?? 'unknown'} id: ${tc.id}]\nArguments: ${tc.function?.arguments ?? '{}'}\n`;
+          }
+        }
+        parts.push(text.trim());
+      } else if (m.role === "tool" || m.role === "function") {
+        const idInfo = toolCallId ? ` (id: ${toolCallId})` : "";
+        parts.push(`[Tool Result${idInfo}]\n${content}\n`);
       }
     }
 
