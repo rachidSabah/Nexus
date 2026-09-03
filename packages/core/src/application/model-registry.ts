@@ -620,6 +620,61 @@ export class ModelRegistry {
   }
 
   /**
+   * Quarantines a model temporarily upon 429 rate limit or quota exhaustion,
+   * keeping the provider and other models healthy while preventing auto-routing
+   * from selecting this model until retryAfterMs elapses.
+   */
+  quarantineModel(providerId: string, modelId: string, retryAfterMs?: number, reason?: string): void {
+    const key = `${providerId}:${modelId}`;
+    const existing = this.models.get(key);
+    if (!existing) return;
+    const cooldown = retryAfterMs && retryAfterMs > 0 ? retryAfterMs : 60_000;
+    const quarantinedUntil = Date.now() + cooldown;
+    this.models.set(key, {
+      ...existing,
+      state: 'QUARANTINED',
+      quarantinedUntil,
+      executable: false,
+      lastError: reason ?? `Quarantined for ${Math.round(cooldown / 1000)}s (rate limit / quota)`,
+    });
+    this.catalogVersion++;
+    this.recordChange(key, 'updated');
+    this.events?.publish(
+      buildEvent('model.availability.changed' as never, {
+        providerId,
+        modelId,
+        available: false,
+        reason: reason ?? 'quarantined',
+        at: Date.now(),
+      } as never),
+    );
+  }
+
+  /**
+   * Records a verified successful execution for a model, confirming it is EXECUTABLE
+   * and clearing any prior quarantine or transient error.
+   */
+  recordModelExecutionSuccess(providerId: string, modelId: string): void {
+    const key = `${providerId}:${modelId}`;
+    const existing = this.models.get(key);
+    if (!existing) return;
+    if (existing.state === 'EXECUTABLE' && existing.executable === true && !existing.quarantinedUntil && !existing.lastError) {
+      return;
+    }
+    this.models.set(key, {
+      ...existing,
+      state: 'EXECUTABLE',
+      executable: true,
+      quarantinedUntil: undefined,
+      lastError: undefined,
+      stale: false,
+      staleReason: undefined,
+    });
+    this.catalogVersion++;
+    this.recordChange(key, 'updated');
+  }
+
+  /**
    * Clears a prior 'unhealthy' stale mark (e.g. after a successful probe or
    * when the user manually re-enables the model). A disappeared model that
    * reappears is cleared automatically by the refresh merge.
@@ -628,7 +683,7 @@ export class ModelRegistry {
     const key = `${providerId}:${modelId}`;
     const existing = this.models.get(key);
     if (!existing || !existing.stale || existing.staleReason !== 'unhealthy') return;
-    this.models.set(key, { ...existing, stale: false, staleReason: undefined, lastError: undefined });
+    this.models.set(key, { ...existing, stale: false, staleReason: undefined, lastError: undefined, state: 'HEALTHY' });
   }
 
   /**

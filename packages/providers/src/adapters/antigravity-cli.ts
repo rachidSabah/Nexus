@@ -311,7 +311,7 @@ export class AntigravityCliAdapter implements ProviderAdapter {
 
     const prompt = this.flattenMessages(request.messages);
     // Strip provider prefix, uri schemes, and nexus virtual alias prefixes.
-    let model = request.model
+    const model = request.model
       .replace(/^antigravity-cli\//, '')
       .replace(/^antigravity\//, '')
       .replace(/^nexus\//, '')
@@ -496,7 +496,7 @@ export class AntigravityCliAdapter implements ProviderAdapter {
     }
 
     const prompt = this.flattenMessages(request.messages);
-    let model = request.model
+    const model = request.model
       .replace(/^antigravity-cli\//, '')
       .replace(/^antigravity\//, '')
       .replace(/^nexus\//, '')

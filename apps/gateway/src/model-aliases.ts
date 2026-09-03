@@ -527,22 +527,20 @@ export class ModelAliasRegistry {
       const cooldownUntil = this.modelCooldowns.get(m.id);
       if (cooldownUntil && now < cooldownUntil) return false;
       const ep = registeredEndpoints.find((e: ProviderEndpoint) => e.providerId === m.providerId || e.id === `auto-${m.providerId}`);
-      // Do NOT hide a model merely because its endpoint is in `circuit_open` —
-      // that state is recoverable (a real success re-admits it) and hiding the
-      // model would make the provider unusable for the whole circuit-open
-      // window. Only a permanently `unhealthy` endpoint (decommissioned) hides
-      // its models. A `circuit_open` model stays visible so the request can be
-      // attempted and either succeed or fail honestly, not vanish from the
-      // catalog as "All providers exhausted".
-      if (ep && ep.health === 'unhealthy') return false;
-      // Only exclude a model when the provider has NO registered keys at all.
-      // A transient key state (cooldown from a single 429, brief circuit) must
-      // NOT hide the model — otherwise a single rate-limit knocks every model
-      // from that provider out of the catalog ("All providers exhausted") until
-      // the key cools down. The request path still picks a live key at call
-      // time, so a cooling key merely means that one key is skipped, not that
-      // the whole provider is unreachable.
-      if (this.keyRegistry && this.keyRegistry.listByProvider(m.providerId).length === 0) return false;
+      // Endpoints in circuit_open or unhealthy are not currently selectable
+      if (ep && (ep.health === 'circuit_open' || ep.health === 'unhealthy')) return false;
+      if (m.state === 'QUARANTINED' || m.state === 'UNAVAILABLE') return false;
+      if (m.executable === false) return false;
+      if (m.quarantinedUntil && now < m.quarantinedUntil) return false;
+      const isCliOrLocal = m.providerId === 'antigravity-cli' || m.providerId === 'antigravity' || ep?.tags?.includes('cli') || ep?.tags?.includes('local') || ep?.baseUrl?.startsWith('cli://');
+      // Exclude models whose provider currently has NO available keys (all in cooldown or invalid),
+      // unless it's a keyless CLI/local provider.
+      if (!isCliOrLocal && this.keyRegistry) {
+        const provKeys = this.keyRegistry.listByProvider(m.providerId);
+        if (provKeys.length === 0) return false;
+        const hasAvailableKey = provKeys.some((k) => k.status === 'active' || (k.status === 'cooldown' && k.cooldownUntil && now >= k.cooldownUntil));
+        if (!hasAvailableKey) return false;
+      }
       return true;
     });
 
@@ -1028,16 +1026,17 @@ export class ModelAliasRegistry {
         // WS5: quality + cost blend — a smart default (like OmniRoute "auto").
         // Free first; then score = quality (capabilities + context) minus
         // normalized cost. Higher is better.
-        const costOf = (m: ModelDescriptor) => (m.pricing?.inputPer1M ?? 0) + (m.pricing?.outputPer1M ?? 0);
+        const costOf = (m: ModelDescriptor) => Math.max(0, (m.pricing?.inputPer1M ?? 0) + (m.pricing?.outputPer1M ?? 0));
         const maxCost = Math.max(1, ...sorted.map(costOf));
         const quality = (m: ModelDescriptor) =>
           this.capabilityCount(m) + Math.log10((m.contextWindow ?? 1000) / 1000);
         const maxQuality = Math.max(1, ...sorted.map(quality));
         const freeBoost = (m: ModelDescriptor) =>
           m.pricing?.isFree || m.pricing?.freeTier === 'FREE' || m.id.endsWith('-free') ? 1000 : 0;
+        const executableBoost = (m: ModelDescriptor) => (m.executable === true ? 500 : 0);
         return sorted.sort((a, b) => {
-          const sa = freeBoost(a) + 2 * quality(a) / maxQuality - costOf(a) / maxCost;
-          const sb = freeBoost(b) + 2 * quality(b) / maxQuality - costOf(b) / maxCost;
+          const sa = freeBoost(a) + executableBoost(a) + 2 * quality(a) / maxQuality - costOf(a) / maxCost;
+          const sb = freeBoost(b) + executableBoost(b) + 2 * quality(b) / maxQuality - costOf(b) / maxCost;
           return sb - sa;
         });
       }

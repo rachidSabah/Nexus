@@ -1,4 +1,4 @@
-﻿import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import {
   AllProvidersExhaustedError,
@@ -535,7 +535,15 @@ export class ChatCompletionUseCase {
               if (resolved && providerModels.some((m: ModelDescriptor) => m.id === resolved || m.id.toLowerCase() === resolved.toLowerCase())) {
                 requestForProvider = { ...effectiveRequest, model: resolved };
               } else {
-                const preferred = providerModels.find((m: ModelDescriptor) => m.capabilities?.toolCalling) ?? providerModels[0];
+                // Pick healthy/executable candidate, avoiding quarantined/unavailable ones
+                const candidatePool = providerModels.filter((m: ModelDescriptor) => {
+                  if (m.state === 'QUARANTINED' || m.state === 'UNAVAILABLE') return false;
+                  if (m.executable === false) return false;
+                  if (m.quarantinedUntil && Date.now() < m.quarantinedUntil) return false;
+                  return true;
+                });
+                const pool = candidatePool.length > 0 ? candidatePool : providerModels;
+                const preferred = pool.find((m: ModelDescriptor) => m.capabilities?.toolCalling) ?? pool[0];
                 if (preferred) {
                   requestForProvider = { ...effectiveRequest, model: preferred.id };
                 }
@@ -756,6 +764,7 @@ export class ChatCompletionUseCase {
 
         this.errorRegistry?.recordSuccess(endpoint.providerId, selectedKeyId, request.model);
         this.routing.recordModelSuccess?.(endpoint.id, request.model);
+        this.modelRegistry?.recordModelExecutionSuccess?.(endpoint.providerId, requestForProvider.model);
 
         return finalResult;
       } catch (err) {
@@ -765,6 +774,7 @@ export class ChatCompletionUseCase {
         await this.routing.recordFailure(endpoint.id, error, retryable, classification.endpointAction, classification.retryAfterMs);
         if (classification.code === 'MODEL_UNAVAILABLE' || classification.status === 429) {
           this.routing.recordModelFailure?.(endpoint.id, request.model, classification.retryAfterMs);
+          this.modelRegistry?.quarantineModel?.(endpoint.providerId, request.model, classification.retryAfterMs, error.message);
         }
 
         // Trace: record failed attempt.

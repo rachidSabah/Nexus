@@ -358,6 +358,7 @@ export function* translateChunkToAnthropicEvents(
     currentBlockType: 'text' | 'tool_use' | 'thinking' | null;
     currentBlockIndex: number;
     toolCallIds: Map<number, string>;
+    toolBlockIndices: Map<number, number>;
     clampingState: StreamClampingState;
   },
 ): Generator<AnthropicStreamEvent> {

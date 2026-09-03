@@ -52,7 +52,7 @@ export async function resolveHarnessModels(ctx: IntegrationContext): Promise<Har
         Accept: 'application/json',
         ...(ctx.apiKey ? { Authorization: `Bearer ${ctx.apiKey}` } : {}),
       },
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(5000),
     });
 
     if (res.ok) {

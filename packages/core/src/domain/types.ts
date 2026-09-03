@@ -355,6 +355,12 @@ export interface ModelDescriptor {
   readonly staleReason?: 'disappeared' | 'unhealthy';
   /** Last error seen when probing/using this model (e.g. upstream 401/404/429). Surfaced in debug endpoints + dashboard. */
   readonly lastError?: string;
+  /** Granular lifecycle state: DISCOVERED | VISIBLE | ELIGIBLE | ROUTABLE | EXECUTABLE | HEALTHY | DEGRADED | QUARANTINED | UNAVAILABLE */
+  readonly state?: ModelState;
+  /** Timestamp until which this model is quarantined due to transient rate limits or quota exhaustion. */
+  readonly quarantinedUntil?: number;
+  /** Whether the model is verified executable or currently blocked by upstream quota. */
+  readonly executable?: boolean;
 }
 
 // ── Network Egress Fabric Domain Model ────────────────────────────────────
@@ -434,3 +440,51 @@ export interface ProxyEndpoint {
   lastUsedAt?: number;
 }
 
+// ── Model Lifecycle & State Intelligence ─────────────────────────────────
+
+export type ModelState =
+  | 'DISCOVERED'
+  | 'VISIBLE'
+  | 'ELIGIBLE'
+  | 'ROUTABLE'
+  | 'EXECUTABLE'
+  | 'HEALTHY'
+  | 'DEGRADED'
+  | 'QUARANTINED'
+  | 'UNAVAILABLE';
+
+// ── Universal Agent Execution Contract ───────────────────────────────────
+
+export interface AgentExecutionContract {
+  readonly agent: string;
+  readonly request: ChatCompletionRequest;
+  readonly session?: string;
+  readonly requestedModel: string;
+  readonly resolvedModel?: string;
+  readonly provider?: string;
+  readonly adapter?: string;
+  readonly capabilities?: Partial<ProviderCapabilities>;
+  readonly context?: Record<string, unknown>;
+  readonly tools?: readonly unknown[];
+  readonly streaming: boolean;
+  readonly authenticated: boolean;
+  readonly routing?: RoutingDecision;
+  readonly execution?: {
+    startedAt: number;
+    completedAt?: number;
+    attempts: number;
+  };
+  readonly errors?: readonly {
+    code?: string;
+    message: string;
+    status?: number;
+    retryable: boolean;
+    timestamp: number;
+  }[];
+  readonly timings?: {
+    routingMs?: number;
+    ttftMs?: number;
+    totalMs?: number;
+  };
+  readonly finalStatus?: 'SUCCESS' | 'DEGRADED' | 'FAILED' | 'ABORTED';
+}

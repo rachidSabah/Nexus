@@ -26,8 +26,8 @@ export { AntigravityCliAdapter } from './adapters/antigravity-cli.js';
 
 import type { ProviderAdapter } from '@anx/core';
 
-import { AntigravityCliAdapter } from './adapters/antigravity-cli.js';
 import { AnthropicAdapter } from './adapters/anthropic.js';
+import { AntigravityCliAdapter } from './adapters/antigravity-cli.js';
 import { BedrockAdapter } from './adapters/bedrock.js';
 import { GoogleAdapter } from './adapters/google.js';
 import {
