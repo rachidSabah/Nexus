@@ -271,17 +271,16 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
 
   override resolveModel(alias: string): string | undefined {
     const norm = alias.toLowerCase().trim();
+    // If the input is already a concrete model (e.g. ends with -free or includes a specific model name), preserve it
+    if (norm.endsWith('-free') || norm === 'big-pickle' || norm.includes('qwen-2.5-coder')) {
+      return alias;
+    }
     if (
       norm === 'deepseek-v4-flash' ||
       norm === 'deepseek-v4' ||
       norm === 'deepseek-v4-pro' ||
       norm === 'deepseek-chat' ||
       norm === 'deepseek-reasoner' ||
-      norm.includes('claude') ||
-      norm.includes('gpt') ||
-      norm.includes('auto') ||
-      norm.includes('coding') ||
-      norm.includes('reason') ||
       norm.includes('deepseek')
     ) {
       return 'deepseek-v4-flash-free';
@@ -289,7 +288,18 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
     if (norm.includes('qwen')) {
       return 'qwen-2.5-coder-32b-instruct';
     }
-    return 'deepseek-v4-flash-free';
+    if (
+      norm.includes('claude') ||
+      norm.includes('gpt') ||
+      norm.includes('auto') ||
+      norm.includes('coding') ||
+      norm.includes('reason')
+    ) {
+      // Default to a healthy free model on Zen
+      return 'mimo-v2.5-free';
+    }
+    // Return undefined to let the requested model pass through unchanged
+    return undefined;
   }
 
   /**
@@ -317,6 +327,16 @@ export class OpenCodeGoAdapter extends OpenCodeZenAdapter {
   protected apiBase = 'https://opencode.ai/zen/go/v1';
   protected apiKeyEnv = 'OPENCODE_GO_API_KEY';
 
+  override resolveModel(alias: string): string | undefined {
+    const norm = alias.toLowerCase().trim();
+    // OpenCode Go has its own native catalog (hy4-preview, hy3, qwen3.7-plus, etc.).
+    // Never force to Zen's -free models.
+    if (norm.includes('qwen')) return 'qwen3.7-plus';
+    if (norm.includes('claude') || norm.includes('auto') || norm.includes('coding')) return 'hy4-preview';
+    // Preserve requested model verbatim
+    return alias;
+  }
+
   /**
    * OpenCode Go keys follow the same FCC-style placeholder convention;
    * placeholder keys mean "no key" and must never be sent upstream.
@@ -338,17 +358,6 @@ export class NvidiaNimAdapter extends OpenAIAdapter {
   protected apiKeyEnv = 'NVIDIA_API_KEY';
 
   override resolveModel(alias: string): string | undefined {
-    const norm = alias.toLowerCase().trim();
-    if (norm.includes('/') && !norm.startsWith('nexus/')) return alias;
-    if (norm.includes('deepseek') || norm.includes('reason') || norm.includes('r1')) {
-      return 'deepseek-ai/deepseek-r1';
-    }
-    if (norm.includes('qwen') || norm.includes('coder') || norm.includes('coding')) {
-      return 'qwen/qwen2.5-coder-32b-instruct';
-    }
-    if (norm.includes('claude') || norm.includes('gpt') || norm.includes('auto')) {
-      return 'meta/llama-3.3-70b-instruct';
-    }
     return alias;
   }
 

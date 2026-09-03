@@ -129,8 +129,7 @@ export function translateAnthropicRequest(
     const imageParts: Array<{ type: 'image_url'; image_url: { url: string } }> = [];
     const toolCalls: ToolCall[] = [];
     const reasoningParts: string[] = [];
-    let toolResultId: string | undefined;
-    let toolResultContent: string | undefined;
+    const toolResults: Array<{ id: string; content: string }> = [];
 
     for (const block of m.content) {
       if (block.type === 'text') {
@@ -154,22 +153,34 @@ export function translateAnthropicRequest(
           },
         });
       } else if (block.type === 'tool_result') {
-        toolResultId = block.tool_use_id;
-        toolResultContent = typeof block.content === 'string'
+        const content = typeof block.content === 'string'
           ? block.content
           : Array.isArray(block.content)
-            ? block.content.map((c) => c.text).join('\n')
+            ? block.content.map((c) => (typeof c === 'string' ? c : (c as { text?: string }).text ?? '')).join('\n')
             : '';
+        toolResults.push({
+          id: block.tool_use_id,
+          content,
+        });
       }
     }
 
-    // If this is a tool_result, emit as a 'tool' role message.
-    if (toolResultId) {
-      messages.push({
-        role: 'tool',
-        content: toolResultContent ?? '',
-        toolCallId: toolResultId,
-      });
+    // If this turn contains tool_result blocks, emit a 'tool' role message for EACH result in order.
+    if (toolResults.length > 0) {
+      for (const tr of toolResults) {
+        messages.push({
+          role: 'tool',
+          content: tr.content,
+          toolCallId: tr.id,
+        });
+      }
+      // If there was also accompanying user text, preserve it as a subsequent user message.
+      if (textParts.length > 0) {
+        messages.push({
+          role: 'user',
+          content: textParts.join('\n'),
+        });
+      }
       continue;
     }
 
@@ -437,13 +448,14 @@ export function* translateChunkToAnthropicEvents(
       const idx = tcWithIndex.index ?? 0;
       // If this is a new tool_call (has an id), start a new tool_use block.
       if (tc.id) {
-        // Close any open text or thinking block.
-        if (state.currentBlockType === 'text' || state.currentBlockType === 'thinking') {
+        // Close any previously open block (text, thinking, or previous tool_use).
+        if (state.currentBlockType !== null) {
           yield { type: 'content_block_stop', index: state.currentBlockIndex };
           state.currentBlockIndex++;
         }
         state.currentBlockType = 'tool_use';
         state.toolCallIds.set(idx, tc.id);
+        state.toolBlockIndices.set(idx, state.currentBlockIndex);
         yield {
           type: 'content_block_start',
           index: state.currentBlockIndex,
@@ -459,9 +471,10 @@ export function* translateChunkToAnthropicEvents(
       if (tc.function?.arguments) {
         const cleanedArgs = filterSpecialTokens(tc.function.arguments).cleaned;
         if (cleanedArgs) {
+          const targetIndex = state.toolBlockIndices.get(idx) ?? state.currentBlockIndex;
           yield {
             type: 'content_block_delta',
-            index: state.currentBlockIndex,
+            index: targetIndex,
             delta: { type: 'input_json_delta', partial_json: cleanedArgs },
           };
         }
@@ -484,7 +497,7 @@ export function* translateChunkToAnthropicEvents(
     let stopReason: string;
     if (finishReason === 'stop') stopReason = 'end_turn';
     else if (finishReason === 'length') stopReason = 'max_tokens';
-    else if (finishReason === 'tool_calls') stopReason = 'tool_use';
+    else if (finishReason === 'tool_calls' || finishReason === 'function_call') stopReason = 'tool_use';
     else stopReason = 'end_turn';
     yield {
       type: 'message_delta',
@@ -506,6 +519,7 @@ export function newStreamState(model: string): {
   currentBlockType: 'text' | 'tool_use' | 'thinking' | null;
   currentBlockIndex: number;
   toolCallIds: Map<number, string>;
+  toolBlockIndices: Map<number, number>;
   clampingState: StreamClampingState;
   /** Bytes already written to the client SSE stream. Used by WS4-A mid-stream
    * failover: if the upstream dies before ANY content reaches the client, we
@@ -521,6 +535,7 @@ export function newStreamState(model: string): {
     currentBlockType: null,
     currentBlockIndex: 0,
     toolCallIds: new Map(),
+    toolBlockIndices: new Map(),
     clampingState: newStreamClampingState(),
     committedBytes: 0,
     midStreamRetried: false,

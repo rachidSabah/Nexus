@@ -227,11 +227,75 @@ export class GoogleAdapter implements ProviderAdapter {
     const systemMessages = req.messages.filter((m) => m.role === 'system');
     const conversation = req.messages.filter((m) => m.role !== 'system');
 
-    const body: Record<string, unknown> = {
-      contents: conversation.map((m) => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
+    // Build map of toolCallId -> function name so tool response turns know their function name
+    const toolNameMap = new Map<string, string>();
+    for (const m of req.messages) {
+      const tcList = (m as { toolCalls?: readonly ToolCall[] }).toolCalls ?? (m as { tool_calls?: readonly ToolCall[] }).tool_calls;
+      if (tcList) {
+        for (const tc of tcList) {
+          if (tc.id && tc.function?.name) {
+            toolNameMap.set(tc.id, tc.function.name);
+          }
+        }
+      }
+    }
+
+    const contents: Array<{ role: string; parts: unknown[] }> = [];
+    for (const m of conversation) {
+      if (m.role === 'tool') {
+        const fnName = toolNameMap.get((m as { toolCallId?: string }).toolCallId ?? '') ?? (m as { name?: string }).name ?? 'tool';
+        let respPayload: unknown = m.content;
+        try {
+          respPayload = typeof m.content === 'string' ? JSON.parse(m.content) : m.content;
+        } catch {
+          respPayload = { content: m.content };
+        }
+        contents.push({
+          role: 'user',
+          parts: [{
+            functionResponse: {
+              name: fnName,
+              response: typeof respPayload === 'object' && respPayload !== null ? respPayload : { content: respPayload },
+            },
+          }],
+        });
+        continue;
+      }
+
+      if (m.role === 'assistant') {
+        const parts: unknown[] = this.translateContentParts(m.content, m.role);
+        const tcList = (m as { toolCalls?: readonly ToolCall[] }).toolCalls ?? (m as { tool_calls?: readonly ToolCall[] }).tool_calls;
+        if (tcList && tcList.length > 0) {
+          for (const tc of tcList) {
+            let parsedArgs = {};
+            try {
+              parsedArgs = typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : (tc.function.arguments ?? {});
+            } catch {
+              parsedArgs = {};
+            }
+            parts.push({
+              functionCall: {
+                name: tc.function.name,
+                args: parsedArgs,
+              },
+            });
+          }
+        }
+        contents.push({
+          role: 'model',
+          parts,
+        });
+        continue;
+      }
+
+      contents.push({
+        role: 'user',
         parts: this.translateContentParts(m.content, m.role),
-      })),
+      });
+    }
+
+    const body: Record<string, unknown> = {
+      contents,
     };
 
     if (systemMessages.length > 0) {
@@ -417,14 +481,36 @@ export class GoogleAdapter implements ProviderAdapter {
     requestModel: string,
   ): ChatCompletionChunk | null {
     const candidates = evt['candidates'] as
-      | Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>
+      | Array<{ content?: { parts?: Array<{ text?: string; functionCall?: { name: string; args?: unknown } }> }; finishReason?: string }>
       | undefined;
     if (!candidates?.length) return null;
 
-    const text = (candidates[0]?.content?.parts ?? [])
-      .map((p) => p.text ?? '')
-      .join('');
-    if (!text && !candidates[0]?.finishReason) return null;
+    const candidate = candidates[0];
+    const parts = candidate?.content?.parts ?? [];
+    const text = parts.map((p) => p.text ?? '').join('');
+    const funcCalls = parts.filter((p) => p.functionCall);
+    if (!text && funcCalls.length === 0 && !candidate?.finishReason) return null;
+
+    const delta: Record<string, unknown> = {};
+    if (text) delta['content'] = text;
+    if (funcCalls.length > 0) {
+      delta['tool_calls'] = funcCalls.map((p, i) => ({
+        index: i,
+        id: `call_${randomUUID().slice(0, 8)}`,
+        type: 'function',
+        function: {
+          name: p.functionCall!.name,
+          arguments: JSON.stringify(p.functionCall!.args ?? {}),
+        },
+      }));
+    }
+
+    const rawFinish = candidate?.finishReason;
+    const finishReason = rawFinish === 'STOP' && funcCalls.length > 0
+      ? 'tool_calls'
+      : rawFinish
+        ? rawFinish.toLowerCase()
+        : null;
 
     return {
       id: randomUUID(),
@@ -434,10 +520,8 @@ export class GoogleAdapter implements ProviderAdapter {
       choices: [
         {
           index: 0,
-          delta: text ? { content: text } : {},
-          finish_reason: candidates[0]?.finishReason
-            ? candidates[0].finishReason.toLowerCase()
-            : null,
+          delta,
+          finish_reason: finishReason,
         },
       ],
     };

@@ -618,15 +618,22 @@ export class ModelAliasRegistry {
     if (model.startsWith('claude-gw-')) {
       const projected = resolveClaudeGwAlias(model, this.modelRegistry.list());
       if (projected) {
-        return {
-          model: projected.modelId,
-          resolution: {
-            modelId: projected.modelId,
-            providerId: projected.providerId,
-            reason: `Claude Code gateway projection '${model}' -> '${projected.modelId}'`,
-            candidateCount: 1,
-          },
-        };
+        const providerSelectable = !this.routing || this.routing.getSelectableProviders().includes(projected.providerId);
+        const hit = typeof this.modelRegistry.get === 'function'
+          ? this.modelRegistry.get(projected.providerId, projected.modelId)
+          : this.modelRegistry.list().find((x) => x.providerId === projected.providerId && x.id === projected.modelId);
+        const modelAvailable = hit ? !hit.stale : true;
+        if (providerSelectable && modelAvailable) {
+          return {
+            model: projected.modelId,
+            resolution: {
+              modelId: projected.modelId,
+              providerId: projected.providerId,
+              reason: `Claude Code gateway projection '${model}' -> '${projected.modelId}'`,
+              candidateCount: 1,
+            },
+          };
+        }
       }
       const fallback = this.resolve('nexus/best-coding', requiredInputTokens) ?? this.resolve('local/coding', requiredInputTokens) ?? this.resolve('local/free', requiredInputTokens);
       if (fallback) {
@@ -635,7 +642,7 @@ export class ModelAliasRegistry {
           resolution: {
             modelId: fallback.modelId,
             providerId: fallback.providerId,
-            reason: `Claude Code gateway projection '${model}' (stale) -> fallback '${fallback.modelId}'`,
+            reason: `Claude Code gateway projection '${model}' (unhealthy/unroutable) -> fallback '${fallback.modelId}'`,
             candidateCount: fallback.candidateCount,
           },
         };

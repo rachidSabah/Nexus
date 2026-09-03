@@ -278,13 +278,13 @@ export class OpenAIAdapter implements ProviderAdapter {
     const lower = modelId.toLowerCase();
     return {
       streaming: true, // OpenAI-compatible providers all stream
-      toolCalling: !lower.includes('instruct') && !lower.includes('base'),
-      vision: lower.includes('vision') || lower.includes('gpt-4o') || lower.includes('claude-3'),
+      toolCalling: !lower.includes('base') && !lower.includes('embedding') && !lower.includes('embed'),
+      vision: lower.includes('vision') || lower.includes('gpt-4o') || lower.includes('claude-3') || lower.includes('vl-') || lower.includes('-vl'),
       audio: false,
       speech: lower.includes('tts'),
       embeddings: lower.includes('embedding') || lower.includes('embed'),
-      reasoning: lower.includes('o1') || lower.includes('o3') || lower.includes('reasoning') || lower.includes('thinking'),
-      jsonMode: !lower.includes('instruct'),
+      reasoning: lower.includes('o1') || lower.includes('o3') || lower.includes('reasoning') || lower.includes('thinking') || lower.includes('r1'),
+      jsonMode: !lower.includes('base') && !lower.includes('embedding') && !lower.includes('embed'),
     };
   }
 

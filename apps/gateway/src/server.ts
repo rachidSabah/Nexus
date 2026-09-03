@@ -143,7 +143,7 @@ import {
   type AnthropicRequest,
 } from './anthropic-compat.js';
 import { ModelAliasRegistry, type AliasRankingStrategy } from './model-aliases.js';
-import { projectClaudeCatalog, claudeCatalogDebug } from './claude-catalog.js';
+import { projectClaudeCatalog, claudeCatalogDebug, resolveClaudeGwAlias } from './claude-catalog.js';
 import { projectGenericCatalog, projectOpenAICatalog, getAgentCompatibilityMatrix, explainFilters } from './model-fabric.js';
 import { IntentDetector, ScoringEngine } from './scoring-engine.js';
 import { defaultBaseUrlFor, defaultCapabilitiesFor, defaultPricingFor } from './endpoints.js';
@@ -8035,7 +8035,7 @@ export class HttpServer {
     this.learnContextWindowFromError(error, model);
     const { status } = this.httpErrorFor(error);
     const msg = error.message ?? '';
-    const isInvalidModel = /invalid model|is not a valid model|not found|unknown model|unsupported model/i.test(msg);
+    const isInvalidModel = /invalid model|is not a valid model|not found|unknown model|unsupported model|model is unavailable|is not supported|not supported/i.test(msg);
     // 404/410 or 400 invalid_model = model truly gone → exclude from catalog. Anything else
     // (401/403 auth+credits, 429, 5xx) keeps the model listed and visible.
     if (status !== 404 && status !== 410 && !(status === 400 && isInvalidModel)) return;
@@ -8046,6 +8046,14 @@ export class HttpServer {
     if (m) {
       native.markModelUnhealthy(m.providerId, m.id, reason);
       return;
+    }
+    // Reversal for claude-gw-* aliases
+    if (model.startsWith('claude-gw-')) {
+      const resolved = resolveClaudeGwAlias(model, native.list());
+      if (resolved) {
+        native.markModelUnhealthy(resolved.providerId, resolved.modelId, reason);
+        return;
+      }
     }
     // Fallback: try to find any model whose id matches after alias reversal.
     const found = native.list().find((x) => `claude-gw-${x.providerId}-${x.id}` === model || `nexus/${x.providerId}/${x.id}` === model);
