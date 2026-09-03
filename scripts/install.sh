@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # Nexus — Linux / WSL / macOS installer
 # Usage:  curl -fsSL https://raw.githubusercontent.com/rachidSabah/Nexus/main/scripts/install.sh | bash
 #
@@ -117,7 +117,7 @@ echo "  Logs      : ${INSTALL_DIR}/gateway.log"
 echo "  Repo      : ${REPO_DIR}"
 echo ""
 echo "  Next steps:"
-echo "    1. Open the dashboard and add a provider API key."
+echo "    1. Open the dashboard (http://127.0.0.1:${DASHBOARD_PORT:-3000}) and add a provider API key (or use local CLIs like Antigravity agy)."
 echo "    2. Point your coding agent at: http://127.0.0.1:${GATEWAY_PORT}/v1"
 echo "    3. Select a routing policy (e.g. nexus/best-coding) and start coding."
 echo ""

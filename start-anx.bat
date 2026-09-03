@@ -3,7 +3,8 @@ title ANX - Agent Nexus Gateway ^& Dashboard
 echo ========================================================
 echo   ANX - Agent Nexus v0.5 Starting...
 echo   Features: Tool Auto-Healer, Schema Sanitizer,
-echo             Stream Clamping, Context Sanitizer
+echo             Stream Clamping, Context Sanitizer,
+echo             Native Google Antigravity CLI (agy)
 echo ========================================================
 cd /d "%~dp0"
 
