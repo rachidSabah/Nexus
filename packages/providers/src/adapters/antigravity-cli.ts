@@ -331,7 +331,7 @@ export class AntigravityCliAdapter implements ProviderAdapter {
 
     const args: string[] = [
       '-p',
-      prompt,
+      '-',
       '--output-format',
       'json',
       '--dangerously-skip-permissions',
@@ -355,6 +355,10 @@ export class AntigravityCliAdapter implements ProviderAdapter {
         shell: false,
         windowsHide: true,
       });
+
+      // Write prompt via stdin to avoid Windows command line length limit (ENAMETOOLONG)
+      child.stdin.write(prompt);
+      child.stdin.end();
 
       const abortHandler = () => {
         this.killProcessTree(child);
@@ -514,7 +518,7 @@ export class AntigravityCliAdapter implements ProviderAdapter {
 
     const args: string[] = [
       '-p',
-      prompt,
+      '-',
       '--output-format',
       'stream-json',
       '--dangerously-skip-permissions',
@@ -533,6 +537,10 @@ export class AntigravityCliAdapter implements ProviderAdapter {
       shell: false,
       windowsHide: true,
     });
+
+    // Write prompt via stdin to avoid Windows command line length limit (ENAMETOOLONG)
+    child.stdin.write(prompt);
+    child.stdin.end();
 
     const abortHandler = () => {
       this.killProcessTree(child);
