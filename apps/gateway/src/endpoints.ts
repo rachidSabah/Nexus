@@ -134,6 +134,16 @@ const PROVIDER_DEFAULT_CAPS: Record<string, ProviderCapabilities> = {
     embeddings: false, reasoning: false, jsonMode: true,
     maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
   },
+  'antigravity-cli': {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 1000000, supportedModalities: ['text', 'image'],
+  },
+  antigravity: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 1000000, supportedModalities: ['text', 'image'],
+  },
 };
 
 const FALLBACK_CAPS: ProviderCapabilities = {
@@ -309,5 +319,41 @@ export async function registerDefaultEndpoints(
         console.log(`[endpoints] auto-${e.providerId} unreachable at ${e.baseUrl} — registered unhealthy (excluded from routing)`);
       }
     }
+
+    // Allow test environments (and explicit opt-out) to suppress the CLI provider.
+    if (!process.env['ANX_DISABLE_ANTIGRAVITY_CLI']) {
+      try {
+        const { AntigravityCliAdapter } = await import('@anx/providers');
+      const agyAdapter = new AntigravityCliAdapter();
+      const agyExe = await agyAdapter.findExecutable();
+      const agyHealthy = agyExe ? await agyAdapter.healthCheck({ id: 'auto-antigravity-cli' } as ProviderEndpoint, AbortSignal.timeout(3000)) : false;
+
+      routing.registerEndpoint({
+        id: 'auto-antigravity-cli',
+        providerId: 'antigravity-cli',
+        displayName: 'Google Antigravity CLI',
+        baseUrl: agyExe ? `cli://${agyExe}` : 'cli://agy',
+        capabilities: defaultCapabilitiesFor('antigravity-cli'),
+        pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+        priority: 2,
+        weight: 1,
+        region: 'local',
+        tags: ['cli', 'local', 'antigravity'],
+        timeoutMs: 300_000,
+        maxRetries: 1,
+        concurrencyLimit: 5,
+        health: agyHealthy ? 'healthy' : 'unhealthy',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      if (!agyHealthy) {
+        console.log('[endpoints] auto-antigravity-cli executable not found or unauthenticated — registered unhealthy');
+      } else {
+        console.log(`[endpoints] auto-antigravity-cli registered healthy at ${agyExe}`);
+      }
+    } catch (err) {
+      console.log(`[endpoints] failed to register auto-antigravity-cli: ${(err as Error).message}`);
+    }
+    } // end if(!ANX_DISABLE_ANTIGRAVITY_CLI)
   }
 }

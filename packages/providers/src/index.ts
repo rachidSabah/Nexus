@@ -22,9 +22,11 @@ export {
   NvidiaNimAdapter,
   GenericOpenAIAdapter,
 } from './adapters/openai-compatible.js';
+export { AntigravityCliAdapter } from './adapters/antigravity-cli.js';
 
 import type { ProviderAdapter } from '@anx/core';
 
+import { AntigravityCliAdapter } from './adapters/antigravity-cli.js';
 import { AnthropicAdapter } from './adapters/anthropic.js';
 import { BedrockAdapter } from './adapters/bedrock.js';
 import { GoogleAdapter } from './adapters/google.js';
@@ -76,12 +78,15 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
     new OpenCodeGoAdapter(),
     new NvidiaNimAdapter(),
     new BedrockAdapter(),
+    new AntigravityCliAdapter(),
   ];
   const map = new Map<string, ProviderAdapter>();
   for (const a of adapters) map.set(a.providerId, a);
   // Alias common shorthand provider IDs
   const nvidia = map.get('nvidia-nim');
   if (nvidia) map.set('nvidia', nvidia);
+  const agy = map.get('antigravity-cli');
+  if (agy) map.set('antigravity', agy);
   return map;
 }
 
@@ -107,6 +112,8 @@ export const SUPPORTED_PROVIDERS = [
   'opencode-go',
   'nvidia-nim',
   'nvidia',
+  'antigravity-cli',
+  'antigravity',
   // Stubs for adapters to be implemented in a future release:
   'aws-bedrock',
   'vertex-ai',

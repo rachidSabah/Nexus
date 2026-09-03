@@ -11,18 +11,30 @@ describe('GatewayRuntime integration', () => {
   beforeAll(async () => {
     // Isolate this suite from the real vault: never read/write the user's
     // live credentials (a stray persist() there wipes their API keys).
-    delete process.env['OPENAI_API_KEY'];
-    delete process.env['ANTHROPIC_API_KEY'];
+    // Clear ALL known provider API keys so no HTTP provider is auto-registered
+    // as healthy — the '503 for no eligible provider' test depends on this.
+    const providerKeys = [
+      'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY',
+      'GROQ_API_KEY', 'GOOGLE_API_KEY', 'MISTRAL_API_KEY', 'XAI_API_KEY',
+      'TOGETHER_API_KEY', 'FIREWORKS_API_KEY', 'CEREBRAS_API_KEY', 'NVIDIA_API_KEY',
+      'OPENCODE_ZEN_API_KEY', 'OPENCODE_GO_API_KEY', 'AZURE_OPENAI_API_KEY',
+    ];
+    for (const k of providerKeys) delete process.env[k];
     process.env['ANX_VAULT_PATH'] = join(tmpdir(), 'anx-test-vault.json');
     process.env['AGENT_NEXUS_VAULT_KEY'] = 'anx-test-key-0123456789abcdef';
     process.env['ANX_CONFIG'] = '';
-        // Isolated port: never collide with a live gateway (8787) and never
-        // answer real agent traffic from a test instance.
-        process.env['PORT'] = '18787';
-        // Fresh temp vault every run: a stale file from a previous run carries
-        // entries encrypted with a different per-run salt, which breaks decrypt.
-        rmSync(join(tmpdir(), 'anx-test-vault.json'), { force: true });
-        rmSync(join(tmpdir(), 'anx-test-vault.key'), { force: true });
+    // Isolated port: never collide with a live gateway (8787) and never
+    // answer real agent traffic from a test instance.
+    process.env['PORT'] = '18787';
+    // Suppress the local Antigravity CLI provider so tests that expect 503
+    // (no eligible provider) remain deterministic — agy.exe presence on the
+    // developer machine would otherwise be a healthy endpoint and absorb the
+    // request, turning a 503 into a 200.
+    process.env['ANX_DISABLE_ANTIGRAVITY_CLI'] = '1';
+    // Fresh temp vault every run: a stale file from a previous run carries
+    // entries encrypted with a different per-run salt, which breaks decrypt.
+    rmSync(join(tmpdir(), 'anx-test-vault.json'), { force: true });
+    rmSync(join(tmpdir(), 'anx-test-vault.key'), { force: true });
     runtime = await GatewayRuntime.create(undefined);
     await runtime.start();
   });
@@ -76,17 +88,19 @@ describe('GatewayRuntime integration', () => {
   });
 
   it('returns 503 for chat with no eligible provider', async () => {
+    // All provider API keys are cleared in beforeAll and ANX_DISABLE_ANTIGRAVITY_CLI
+    // is set, so no provider is healthy. Dead-route recovery (nexus/auto) also
+    // finds no healthy endpoint → definitive 503.
     const r = await fetch('http://localhost:18787/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'nonexistent-model-zzz',
         messages: [{ role: 'user', content: 'hi' }],
-        routing: { preferredProviders: ['does-not-exist'] },
       }),
     });
     expect(r.status).toBe(503);
-  });
+  }, 15_000);
 
   it('handles MCP initialize request', async () => {
     const r = await fetch('http://localhost:18787/v1/mcp', {

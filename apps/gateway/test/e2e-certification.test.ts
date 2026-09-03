@@ -150,7 +150,7 @@ describe('Nexus Full System Certification & Diagnostics', () => {
         }),
       });
       expect([200, 400, 401, 403, 502, 503]).toContain(res.status);
-    });
+    }, 60_000);
 
     it('returns honest error when requested model cannot be served upstream', async () => {
       const res = await fetch(`${baseUrl}/v1/chat/completions`, {

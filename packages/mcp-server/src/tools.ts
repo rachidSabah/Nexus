@@ -184,6 +184,40 @@ export function buildNexusTools(deps: NexusToolDeps): McpTool[] {
         };
       },
     },
+    {
+      name: 'antigravity_list_models',
+      description: 'List discovered Google Antigravity CLI models available in the Nexus model registry.',
+      inputSchema: { type: 'object', properties: {} },
+      async invoke() {
+        const agyModels = registry.list().filter((m) => m.providerId === 'antigravity-cli' || m.providerId === 'antigravity');
+        return {
+          count: agyModels.length,
+          models: agyModels.map((m) => ({
+            id: m.id,
+            name: m.displayName,
+            capabilities: m.capabilities,
+            contextWindow: m.contextWindow,
+            stale: m.stale ?? false,
+          })),
+        };
+      },
+    },
+    {
+      name: 'antigravity_health',
+      description: 'Check status, version, and model discovery state for the local Google Antigravity CLI (agy).',
+      inputSchema: { type: 'object', properties: {} },
+      async invoke() {
+        const agyModels = registry.list().filter((m) => m.providerId === 'antigravity-cli' || m.providerId === 'antigravity');
+        const isRegistered = agyModels.length > 0;
+        return {
+          providerId: 'antigravity-cli',
+          displayName: 'Google Antigravity CLI',
+          transport: 'subprocess',
+          status: isRegistered ? 'READY' : 'DEGRADED',
+          modelsDiscovered: agyModels.length,
+        };
+      },
+    },
   ];
 
   return tools;

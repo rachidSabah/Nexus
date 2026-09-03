@@ -47,7 +47,7 @@ export class AgentSelector {
       }
 
       if (req.category === 'CODING' || req.category === 'DEBUGGING') {
-        if (c.id === 'codex-cli' || c.id === 'claude-code' || c.id === 'hermes-cli') {
+        if (c.id === 'codex-cli' || c.id === 'claude-code' || c.id === 'hermes-cli' || c.id === 'agy') {
           score += 0.2;
           reasons.push('High suitability for code generation and debugging');
         }
