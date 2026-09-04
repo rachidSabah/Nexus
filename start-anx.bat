@@ -12,6 +12,20 @@ rem Release stale dev servers on port 3000 and 8787 if present
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000 " ^| findstr "LISTENING"') do taskkill /f /pid %%a >nul 2>nul
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8787 " ^| findstr "LISTENING"') do taskkill /f /pid %%a >nul 2>nul
 
+rem Ensure pnpm is installed and on PATH
+where pnpm >nul 2>nul
+if %errorlevel% neq 0 (
+  echo pnpm is required but was not found on PATH.
+  echo Installing pnpm globally via npm...
+  call npm install -g pnpm@latest
+)
+
+rem Ensure workspace dependencies are installed (e.g. fresh zip download or new machine)
+if not exist node_modules (
+  echo Workspace dependencies not found. Running pnpm install...
+  call pnpm install
+)
+
 rem Ensure packages are compiled so runtime has latest provider and security fixes
 if not exist packages\providers\dist (
   echo Compiling Nexus core packages...
