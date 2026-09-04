@@ -7,6 +7,7 @@ import type {
   ChatMessageContentPart,
   ModelDescriptor,
   ProviderEndpoint,
+  TokenUsage,
   ToolCall,
 } from '@anx/core';
 import { ProviderResponseError, type ProviderAdapter } from '@anx/core';
@@ -410,7 +411,10 @@ export class AnthropicAdapter implements ProviderAdapter {
         completionTokens: raw.usage?.output_tokens ?? 0,
         totalTokens: (raw.usage?.input_tokens ?? 0) + (raw.usage?.output_tokens ?? 0),
         cachedTokens: raw.usage?.cache_read_input_tokens,
-      },
+        prompt_tokens: raw.usage?.input_tokens ?? 0,
+        completion_tokens: raw.usage?.output_tokens ?? 0,
+        total_tokens: (raw.usage?.input_tokens ?? 0) + (raw.usage?.output_tokens ?? 0),
+      } as unknown as TokenUsage,
       provider: this.providerId,
       endpoint: endpoint.id,
       latencyMs: 0,
@@ -423,6 +427,36 @@ export class AnthropicAdapter implements ProviderAdapter {
   ): ChatCompletionChunk | null {
     const type = evt['type'] as string | undefined;
     if (!type) return null;
+
+    if (type === 'message_delta') {
+      const delta = evt['delta'] as { stop_reason?: string } | undefined;
+      const rawUsage = evt['usage'] as { output_tokens?: number } | undefined;
+      const finishReason = delta?.stop_reason === 'end_turn'
+        ? 'stop'
+        : delta?.stop_reason
+          ? delta.stop_reason.toLowerCase()
+          : null;
+      let usage: TokenUsage | undefined;
+      if (rawUsage) {
+        const out = rawUsage.output_tokens ?? 0;
+        usage = {
+          promptTokens: 0,
+          completionTokens: out,
+          totalTokens: out,
+          prompt_tokens: 0,
+          completion_tokens: out,
+          total_tokens: out,
+        } as unknown as TokenUsage;
+      }
+      return {
+        id: randomUUID(),
+        object: 'chat.completion.chunk',
+        created: Math.floor(Date.now() / 1000),
+        model: requestModel,
+        choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+        ...(usage ? { usage } : {}),
+      };
+    }
 
     if (type === 'content_block_start') {
       // A new content block is starting. If it's a tool_use block, emit a

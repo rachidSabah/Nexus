@@ -428,24 +428,51 @@ export class OpenAIAdapter implements ProviderAdapter {
       const content = rawDelta.content ? filterSpecialTokens(rawDelta.content).cleaned : rawDelta.content;
       const reasoning = rawReasoning ? filterSpecialTokens(rawReasoning).cleaned : undefined;
 
+      // Fix #1: Never emit explicit `undefined` properties — snapshotJsonValue (dsh-session)
+      // rejects any object with an enumerable own key whose value is undefined.
+      // Build delta without 'reasoning' key when there is no reasoning content.
+      const delta: Record<string, unknown> = { ...rawDelta };
+      // Override content (may have had special tokens stripped)
+      if (content !== undefined) {
+        delta['content'] = content;
+      } else {
+        delete delta['content'];
+      }
+      // Only add reasoning when it actually exists — never set to undefined
+      if (reasoning !== undefined) {
+        delta['reasoning'] = reasoning;
+      } else {
+        delete delta['reasoning'];
+      }
+      // Remove any lingering reasoning_content key (adapter-internal, non-standard)
+      delete delta['reasoning_content'];
+
       return {
         index: c['index'] as number,
-        delta: {
-          ...rawDelta,
-          content,
-          reasoning,
-        },
+        delta,
         finish_reason: (c['finish_reason'] as string | null) ?? null,
       };
     });
+
+    // Fix #2: Normalize streaming usage so mapUsage() in dsh-llm-deepseek never
+    // computes NaN (undefined - 0 = NaN) or leaves outputTokens undefined.
+    // The raw usage field is null/absent in most mid-stream chunks and only
+    // populated on the final chunk — normalizeUsage() safely handles all cases.
+    const rawUsage = raw['usage'] as Record<string, unknown> | null | undefined;
+    const usage = rawUsage ? normalizeStreamUsage(rawUsage) : undefined;
+
+    // Fix #3: Omit systemFingerprint entirely when absent rather than setting it
+    // to undefined — an explicit undefined property would also trip snapshotJsonValue.
+    const systemFingerprint = raw['system_fingerprint'] as string | undefined;
+
     return {
       id: raw['id'] as string,
       object: 'chat.completion.chunk',
       created: raw['created'] as number,
       model: raw['model'] as string,
       choices,
-      usage: raw['usage'] as ChatCompletionChunk['usage'],
-      systemFingerprint: raw['system_fingerprint'] as string | undefined,
+      ...(usage !== undefined ? { usage } : {}),
+      ...(systemFingerprint !== undefined ? { systemFingerprint } : {}),
     };
   }
 }
@@ -463,6 +490,34 @@ function normalizeUsage(u: OpenAIChatResponse['usage']): { promptTokens: number;
   const completionTokens = num(src['completionTokens'] ?? src['completion_tokens']);
   const totalTokens = num(src['totalTokens'] ?? src['total_tokens']) || promptTokens + completionTokens;
   return { promptTokens, completionTokens, totalTokens };
+}
+
+/**
+ * Normalize the `usage` field in a streaming SSE chunk to the shape expected by
+ * ChatCompletionChunk['usage']. Critically, all numeric fields are coerced to
+ * finite numbers — never NaN, undefined, or null — so that `dsh-llm-deepseek`'s
+ * `mapUsage()` function (which computes `prompt_tokens - cacheRead`) can never
+ * produce NaN, which would be rejected by `snapshotJsonValue` in dsh-session and
+ * crash the turn with "session event 'assistant/chunk' carries non-JSON-serializable data".
+ */
+function normalizeStreamUsage(u: Record<string, unknown>): ChatCompletionChunk['usage'] {
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const promptTokens = num(u['prompt_tokens'] ?? u['promptTokens']);
+  const completionTokens = num(u['completion_tokens'] ?? u['completionTokens']);
+  const totalTokens = num(u['total_tokens'] ?? u['totalTokens']) || promptTokens + completionTokens;
+  // Only include prompt_tokens_details if it's a plain object with valid fields,
+  // never emit a key whose value would be undefined or NaN.
+  const details = u['prompt_tokens_details'] as Record<string, unknown> | null | undefined;
+  const cachedTokens = details ? num(details['cached_tokens']) : undefined;
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    ...(cachedTokens !== undefined ? { prompt_tokens_details: { cached_tokens: cachedTokens }, cachedTokens } : {}),
+  } as unknown as ChatCompletionChunk['usage'];
 }
 
 interface OpenAIChatResponse {

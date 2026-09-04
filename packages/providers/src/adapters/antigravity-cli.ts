@@ -28,6 +28,7 @@ import type {
   ModelDescriptor,
   ProviderAdapter,
   ProviderEndpoint,
+  TokenUsage,
 } from "@anx/core";
 import { ProviderResponseError } from "@anx/core";
 
@@ -636,11 +637,17 @@ export class AntigravityCliAdapter implements ProviderAdapter {
                     completionTokens: usage.output_tokens || 0,
                     totalTokens: usage.total_tokens || 0,
                     reasoningTokens: usage.thinking_tokens || 0,
-                  }
+                    prompt_tokens: usage.input_tokens || 0,
+                    completion_tokens: usage.output_tokens || 0,
+                    total_tokens: usage.total_tokens || 0,
+                  } as unknown as TokenUsage
                 : undefined,
             };
           }
-        } catch {
+        } catch (err) {
+          if (err instanceof ProviderResponseError) {
+            throw err;
+          }
           yield {
             id: streamId,
             object: "chat.completion.chunk",

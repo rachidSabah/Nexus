@@ -7,6 +7,7 @@ import type {
   ChatMessageContentPart,
   ModelDescriptor,
   ProviderEndpoint,
+  TokenUsage,
   ToolCall,
 } from '@anx/core';
 import { ProviderResponseError, type ProviderAdapter } from '@anx/core';
@@ -469,7 +470,10 @@ export class GoogleAdapter implements ProviderAdapter {
         promptTokens: raw.usageMetadata?.promptTokenCount ?? 0,
         completionTokens: raw.usageMetadata?.candidatesTokenCount ?? 0,
         totalTokens: raw.usageMetadata?.totalTokenCount ?? 0,
-      },
+        prompt_tokens: raw.usageMetadata?.promptTokenCount ?? 0,
+        completion_tokens: raw.usageMetadata?.candidatesTokenCount ?? 0,
+        total_tokens: raw.usageMetadata?.totalTokenCount ?? 0,
+      } as unknown as TokenUsage,
       provider: this.providerId,
       endpoint: endpoint.id,
       latencyMs: 0,
@@ -512,6 +516,22 @@ export class GoogleAdapter implements ProviderAdapter {
         ? rawFinish.toLowerCase()
         : null;
 
+    const usageMetadata = evt['usageMetadata'] as { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number } | undefined;
+    let usage: TokenUsage | undefined;
+    if (usageMetadata) {
+      const promptTokens = usageMetadata.promptTokenCount ?? 0;
+      const completionTokens = usageMetadata.candidatesTokenCount ?? 0;
+      const totalTokens = usageMetadata.totalTokenCount ?? (promptTokens + completionTokens);
+      usage = {
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: totalTokens,
+      } as unknown as TokenUsage;
+    }
+
     return {
       id: randomUUID(),
       object: 'chat.completion.chunk',
@@ -524,6 +544,7 @@ export class GoogleAdapter implements ProviderAdapter {
           finish_reason: finishReason,
         },
       ],
+      ...(usage ? { usage } : {}),
     };
   }
 

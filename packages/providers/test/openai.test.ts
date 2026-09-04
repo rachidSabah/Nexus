@@ -395,4 +395,57 @@ describe('OpenAIAdapter', () => {
     }
     expect(chunks.join('')).toBe('Hello');
   });
+
+  it('emits lossless JSON-serializable stream chunks without undefined properties or NaN usage (dsh-session compatibility)', async () => {
+    const encoder = new TextEncoder();
+    const sse = [
+      'data: {"id":"c1","object":"chat.completion.chunk","created":100,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}\n\n',
+      'data: {"id":"c2","object":"chat.completion.chunk","created":101,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":42,"completion_tokens":15,"total_tokens":57}}\n\n',
+      'data: [DONE]\n\n',
+    ].join('');
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(sse));
+          controller.close();
+        },
+      }),
+    }));
+
+    const adapter = new OpenAIAdapter();
+    const endpoint = makeEndpoint();
+    const chunks = [];
+    for await (const chunk of adapter.streamChatCompletion(
+      endpoint,
+      { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }], stream: true },
+      new AbortController().signal,
+    )) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.length).toBe(2);
+    // Verify Fix #1: Delta does NOT have 'reasoning' as an enumerable undefined key
+    const delta1 = chunks[0]!.choices[0]!.delta as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(delta1, 'reasoning')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(delta1, 'reasoning_content')).toBe(false);
+
+    // Verify Fix #2: Usage is normalized with finite numbers and snake_case + camelCase
+    const usage = chunks[1]!.usage as unknown as Record<string, unknown>;
+    expect(usage).toBeDefined();
+    expect(usage['prompt_tokens']).toBe(42);
+    expect(usage['completion_tokens']).toBe(15);
+    expect(usage['total_tokens']).toBe(57);
+    expect(Number.isFinite(usage['prompt_tokens'] as number)).toBe(true);
+    expect(Number.isFinite(usage['completion_tokens'] as number)).toBe(true);
+
+    // Verify Fix #3: JSON roundtrip preserves all properties without undefined keys
+    for (const chunk of chunks) {
+      const keys = Object.keys(chunk);
+      for (const k of keys) {
+        expect((chunk as Record<string, unknown>)[k]).not.toBeUndefined();
+      }
+    }
+  });
 });

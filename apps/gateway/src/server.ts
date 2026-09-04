@@ -4215,6 +4215,65 @@ export class HttpServer {
       return { messages, changed: false };
     }
 
+    /**
+     * Normalizes an outbound ChatCompletionChunk to ensure 100% compliant, JSON-safe
+     * SSE wire payloads for OpenAI-compatible consumers (like DeepSeek Harness dsh, Claude Code, Aider, etc.).
+     */
+    function formatOpenAiStreamChunk(chunk: ChatCompletionChunk): Record<string, unknown> {
+      const wire: Record<string, unknown> = {
+        id: chunk.id,
+        object: chunk.object ?? 'chat.completion.chunk',
+        created: chunk.created ?? Math.floor(Date.now() / 1000),
+        model: chunk.model,
+        choices: (chunk.choices ?? []).map((c) => {
+          const delta: Record<string, unknown> = {};
+          if (c.delta) {
+            for (const [k, v] of Object.entries(c.delta)) {
+              if (v !== undefined) {
+                delta[k] = v;
+              }
+            }
+            if (delta['reasoning'] !== undefined && delta['reasoning_content'] === undefined) {
+              delta['reasoning_content'] = delta['reasoning'];
+            }
+          }
+          return {
+            index: c.index ?? 0,
+            delta,
+            finish_reason: c.finish_reason ?? null,
+          };
+        }),
+      };
+
+      if (chunk.systemFingerprint !== undefined) {
+        wire['system_fingerprint'] = chunk.systemFingerprint;
+      }
+
+      if (chunk.usage) {
+        const u = chunk.usage as unknown as Record<string, unknown>;
+        const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+        const promptTokens = num(u['prompt_tokens'] ?? u['promptTokens']);
+        const completionTokens = num(u['completion_tokens'] ?? u['completionTokens']);
+        const totalTokens = num(u['total_tokens'] ?? u['totalTokens']) || (promptTokens + completionTokens);
+        const details = u['prompt_tokens_details'] as Record<string, unknown> | null | undefined;
+        const cachedTokens = details ? num(details['cached_tokens']) : num(u['cachedTokens']);
+
+        wire['usage'] = {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: totalTokens,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          prompt_tokens_details: {
+            cached_tokens: cachedTokens,
+          },
+        };
+      }
+
+      return wire;
+    }
+
     // ── Chat Completions (OpenAI-compatible, streaming + non-streaming)
     const handleChatCompletions = async (request: any, reply: any) => {
       const body = request.body as ChatCompletionRequest;
@@ -4336,7 +4395,8 @@ export class HttpServer {
           write: async (chunk: ChatCompletionChunk) => {
             ensureHeaders();
             if (!reply.raw.writableEnded && !reply.raw.destroyed) {
-              reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
+              const formatted = formatOpenAiStreamChunk(chunk);
+              reply.raw.write(`data: ${JSON.stringify(formatted)}\n\n`);
             }
           },
           error: async (error: Error) => {
