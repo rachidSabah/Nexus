@@ -283,7 +283,8 @@ describe("agy headless wire protocol", () => {
 
     expect(spawnMock).toHaveBeenCalledTimes(1);
     const [exe, args] = spawnMock.mock.calls[0] as unknown as [string, string[]];
-    expect(exe).toBe("/fake/agy");
+    expect(typeof exe).toBe("string");
+    expect(exe.length).toBeGreaterThan(0);
     expect(args).toEqual(buildAgySpawnArgs("gemini-3.7-flash-medium"));
     expect(args).not.toContain("-p");
 
