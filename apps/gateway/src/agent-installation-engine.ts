@@ -274,6 +274,9 @@ export class AgentInstallationEngine {
       const args = ['install', '-g', recipe.packageName];
       this.appendLog(job, 'system', `Running npm install command: npm install -g ${recipe.packageName}`);
       await this.executeProcess(job, cmd, args);
+      if (recipe.packageName === 'qwen-code') {
+        await this.postinstallQwenCode(job).catch(() => {});
+      }
     } else if (recipe.type === 'pip' && recipe.packageName) {
       const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
       this.appendLog(job, 'system', `Running pip install command for package: ${recipe.packageName}`);
@@ -447,5 +450,29 @@ export class AgentInstallationEngine {
         }
       });
     });
+  }
+
+  private async postinstallQwenCode(job: InstallationJob): Promise<void> {
+    try {
+      const { existsSync, copyFileSync, mkdirSync } = await import('node:fs');
+      const { homedir } = await import('node:os');
+      const { join } = await import('node:path');
+      const appData = process.env['APPDATA'] ?? join(homedir(), 'AppData', 'Roaming');
+      const qwenDir = join(appData, 'npm', 'node_modules', 'qwen-code');
+      const bundleWasm = join(qwenDir, 'bundle', 'tiktoken_bg.wasm');
+      if (existsSync(qwenDir) && !existsSync(bundleWasm)) {
+        this.appendLog(job, 'system', 'Ensuring tiktoken_bg.wasm is available for qwen-code...');
+        const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+        await this.executeProcess(job, npmCmd, ['install', 'tiktoken', '--prefix', qwenDir]).catch(() => {});
+        const installedWasm = join(qwenDir, 'node_modules', 'tiktoken', 'tiktoken_bg.wasm');
+        if (existsSync(installedWasm)) {
+          mkdirSync(join(qwenDir, 'bundle'), { recursive: true });
+          copyFileSync(installedWasm, bundleWasm);
+          this.appendLog(job, 'system', 'tiktoken_bg.wasm linked successfully.');
+        }
+      }
+    } catch {
+      // Best-effort postinstall
+    }
   }
 }
