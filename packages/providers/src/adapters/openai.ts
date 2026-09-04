@@ -482,14 +482,29 @@ export class OpenAIAdapter implements ProviderAdapter {
  * (prompt_tokens/completion_tokens/total_tokens). Normalize to the internal
  * camelCase shape, coercing missing/NaN fields to finite numbers so token
  * accounting can never poison the KeyRegistry with NaN (JSON null).
+ * Optional detail counters (cache-read, reasoning) are preserved when the
+ * upstream reported them — the harness computes
+ * `inputTokens = prompt_tokens - cached_tokens`, so dropping the detail
+ * silently inflates input-token accounting — and omitted when unknown.
  */
-function normalizeUsage(u: OpenAIChatResponse['usage']): { promptTokens: number; completionTokens: number; totalTokens: number } {
+function normalizeUsage(u: OpenAIChatResponse['usage']): { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number; reasoningTokens?: number } {
   const src = (u ?? {}) as unknown as Record<string, unknown>;
-  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? (v === 0 ? 0 : v) : 0);
+  const knownNum = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? (v === 0 ? 0 : v) : undefined);
   const promptTokens = num(src['promptTokens'] ?? src['prompt_tokens']);
   const completionTokens = num(src['completionTokens'] ?? src['completion_tokens']);
   const totalTokens = num(src['totalTokens'] ?? src['total_tokens']) || promptTokens + completionTokens;
-  return { promptTokens, completionTokens, totalTokens };
+  const promptDetails = src['prompt_tokens_details'] as Record<string, unknown> | null | undefined;
+  const completionDetails = src['completion_tokens_details'] as Record<string, unknown> | null | undefined;
+  const cachedTokens = knownNum(promptDetails?.['cached_tokens'] ?? src['cachedTokens'] ?? src['prompt_cache_hit_tokens']);
+  const reasoningTokens = knownNum(completionDetails?.['reasoning_tokens'] ?? src['reasoningTokens']);
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    ...(cachedTokens !== undefined ? { cachedTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+  };
 }
 
 /**
@@ -501,14 +516,20 @@ function normalizeUsage(u: OpenAIChatResponse['usage']): { promptTokens: number;
  * crash the turn with "session event 'assistant/chunk' carries non-JSON-serializable data".
  */
 function normalizeStreamUsage(u: Record<string, unknown>): ChatCompletionChunk['usage'] {
-  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? (v === 0 ? 0 : v) : 0);
+  const knownNum = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? (v === 0 ? 0 : v) : undefined);
   const promptTokens = num(u['prompt_tokens'] ?? u['promptTokens']);
   const completionTokens = num(u['completion_tokens'] ?? u['completionTokens']);
   const totalTokens = num(u['total_tokens'] ?? u['totalTokens']) || promptTokens + completionTokens;
-  // Only include prompt_tokens_details if it's a plain object with valid fields,
-  // never emit a key whose value would be undefined or NaN.
-  const details = u['prompt_tokens_details'] as Record<string, unknown> | null | undefined;
-  const cachedTokens = details ? num(details['cached_tokens']) : undefined;
+  // Detail counters are preserved when the upstream reported them (from EITHER
+  // shape) and omitted when unknown — never invented as zeros: the harness
+  // computes `inputTokens = prompt_tokens - cached_tokens`, so a fabricated
+  // cached_tokens: 0 silently inflates input accounting, and a dropped
+  // reasoning_tokens loses semantic content.
+  const promptDetails = u['prompt_tokens_details'] as Record<string, unknown> | null | undefined;
+  const completionDetails = u['completion_tokens_details'] as Record<string, unknown> | null | undefined;
+  const cachedTokens = knownNum(promptDetails?.['cached_tokens'] ?? u['cachedTokens'] ?? u['prompt_cache_hit_tokens']);
+  const reasoningTokens = knownNum(completionDetails?.['reasoning_tokens'] ?? u['reasoningTokens']);
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
@@ -517,6 +538,7 @@ function normalizeStreamUsage(u: Record<string, unknown>): ChatCompletionChunk['
     completionTokens,
     totalTokens,
     ...(cachedTokens !== undefined ? { prompt_tokens_details: { cached_tokens: cachedTokens }, cachedTokens } : {}),
+    ...(reasoningTokens !== undefined ? { completion_tokens_details: { reasoning_tokens: reasoningTokens }, reasoningTokens } : {}),
   } as unknown as ChatCompletionChunk['usage'];
 }
 

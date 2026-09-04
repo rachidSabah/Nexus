@@ -76,6 +76,7 @@ import {
 } from './security-fabric.js';
 import { globalObservability } from './observability.js';
 import { failResponsesEvents, finalizeResponsesEvents, newResponsesStreamState, toChatRequest, toResponsesResponse, translateChunkToResponsesEvents, type ResponsesRequest } from './responses-compat.js';
+import { describeUnserializableChunk, formatOpenAiResponse, formatOpenAiStreamChunk } from './openai-wire.js';
 import type {
   BudgetManager,
   ChatCompletionChunk,
@@ -4216,63 +4217,10 @@ export class HttpServer {
     }
 
     /**
-     * Normalizes an outbound ChatCompletionChunk to ensure 100% compliant, JSON-safe
-     * SSE wire payloads for OpenAI-compatible consumers (like DeepSeek Harness dsh, Claude Code, Aider, etc.).
+     * Wire boundary moved to ./openai-wire.js (extracted verbatim from the
+     * original inline implementation so it is unit-testable and shared by the
+     * streaming and non-streaming paths of this handler).
      */
-    function formatOpenAiStreamChunk(chunk: ChatCompletionChunk): Record<string, unknown> {
-      const wire: Record<string, unknown> = {
-        id: chunk.id,
-        object: chunk.object ?? 'chat.completion.chunk',
-        created: chunk.created ?? Math.floor(Date.now() / 1000),
-        model: chunk.model,
-        choices: (chunk.choices ?? []).map((c) => {
-          const delta: Record<string, unknown> = {};
-          if (c.delta) {
-            for (const [k, v] of Object.entries(c.delta)) {
-              if (v !== undefined) {
-                delta[k] = v;
-              }
-            }
-            if (delta['reasoning'] !== undefined && delta['reasoning_content'] === undefined) {
-              delta['reasoning_content'] = delta['reasoning'];
-            }
-          }
-          return {
-            index: c.index ?? 0,
-            delta,
-            finish_reason: c.finish_reason ?? null,
-          };
-        }),
-      };
-
-      if (chunk.systemFingerprint !== undefined) {
-        wire['system_fingerprint'] = chunk.systemFingerprint;
-      }
-
-      if (chunk.usage) {
-        const u = chunk.usage as unknown as Record<string, unknown>;
-        const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-        const promptTokens = num(u['prompt_tokens'] ?? u['promptTokens']);
-        const completionTokens = num(u['completion_tokens'] ?? u['completionTokens']);
-        const totalTokens = num(u['total_tokens'] ?? u['totalTokens']) || (promptTokens + completionTokens);
-        const details = u['prompt_tokens_details'] as Record<string, unknown> | null | undefined;
-        const cachedTokens = details ? num(details['cached_tokens']) : num(u['cachedTokens']);
-
-        wire['usage'] = {
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: totalTokens,
-          promptTokens,
-          completionTokens,
-          totalTokens,
-          prompt_tokens_details: {
-            cached_tokens: cachedTokens,
-          },
-        };
-      }
-
-      return wire;
-    }
 
     // ── Chat Completions (OpenAI-compatible, streaming + non-streaming)
     const handleChatCompletions = async (request: any, reply: any) => {
@@ -4396,7 +4344,16 @@ export class HttpServer {
             ensureHeaders();
             if (!reply.raw.writableEnded && !reply.raw.destroyed) {
               const formatted = formatOpenAiStreamChunk(chunk);
-              reply.raw.write(`data: ${JSON.stringify(formatted)}\n\n`);
+              let payload: string;
+              try {
+                payload = JSON.stringify(formatted);
+              } catch {
+                // Last-resort transport guard: a plugin hook injected an exotic
+                // value (BigInt/circular/function). Emit one structured, redacted
+                // error instead of leaving the SSE stream half-open.
+                payload = JSON.stringify(describeUnserializableChunk(formatted));
+              }
+              reply.raw.write(`data: ${payload}\n\n`);
             }
           },
           error: async (error: Error) => {
@@ -4451,7 +4408,9 @@ export class HttpServer {
       ];
       try {
         const response = (await this.executeChatFallbackChain(body, request, fallbackChain, undefined)) as ChatCompletionResponse;
-        return response;
+        // Same wire boundary for non-streaming: usage must be the snake_case
+        // CompletionUsage object, never the internal camelCase TokenUsage.
+        return formatOpenAiResponse(response);
       } catch (err) {
         const errMsg = (err as Error).message ?? '';
         if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
