@@ -572,7 +572,7 @@ function normalizeStreamUsage(u: Record<string, unknown>): ChatCompletionChunk['
   } as unknown as ChatCompletionChunk['usage'];
 }
 
-interface OpenAIChatResponse {
+export interface OpenAIChatResponse {
   id: string;
   object: 'chat.completion';
   created: number;

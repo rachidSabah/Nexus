@@ -1,8 +1,11 @@
-import type { ChatCompletionRequest, ChatCompletionResponse, ModelDescriptor, ProviderEndpoint } from '@anx/core';
+import type { ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ModelDescriptor, ProviderEndpoint } from '@anx/core';
 
+import { ProviderResponseError } from '@anx/core';
 import { buildHeaders } from '../shared/http.js';
+import { fetchJson, parseSseStream } from '../shared/http.js';
 
 import { OpenAIAdapter } from './openai.js';
+import type { OpenAIChatResponse } from './openai.js';
 
 /**
  * OpenRouter — OpenAI-compatible aggregator.
@@ -444,6 +447,280 @@ export class GenericOpenAIAdapter extends OpenAIAdapter {
     this.displayName = displayName ?? providerId;
     this.apiBase = apiBase ?? '';
     this.apiKeyEnv = `${providerId.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY`;
+  }
+}
+
+// ── Free-tier expansion (FreeLLMAPI parity) ──────────────────────────────
+// Six free-serving OpenAI-compatible providers, each grounded against the
+// upstream platform docs and FreeLLMAPI's provider quirks (verified 2026-09):
+// Cohere (compat endpoint + tool-schema strip), Hugging Face (router),
+// Zhipu AI / Z.ai (dual-console host fallback), ModelScope (chat-probe
+// health check — its GET /models answers 200 even for garbage keys),
+// ElectronHub, Experiential Labs.
+
+/** JSON-Schema keywords Cohere's compat endpoint rejects with HTTP 400. */
+const COHERE_UNSUPPORTED_SCHEMA_KEYS = new Set(['additionalProperties', '$schema']);
+
+/** Recursively drop Cohere-rejected schema keywords (deep clone). */
+function stripCohereSchemaKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripCohereSchemaKeys);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (COHERE_UNSUPPORTED_SCHEMA_KEYS.has(k)) continue;
+      out[k] = stripCohereSchemaKeys(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Cohere — OpenAI-compatible via /compatibility/v1. Bearer auth.
+ * Quirk: the tool-schema validator rejects additionalProperties/$schema,
+ * which strict clients send by default — stripped here before sending.
+ */
+export class CohereAdapter extends OpenAIAdapter {
+  readonly providerId = 'cohere';
+  readonly displayName = 'Cohere';
+  protected apiBase = 'https://api.cohere.ai/compatibility/v1';
+  protected apiKeyEnv = 'COHERE_API_KEY';
+
+  protected override translateRequest(req: ChatCompletionRequest, streaming: boolean): Record<string, unknown> {
+    const body = super.translateRequest(req, streaming);
+    const tools = body['tools'];
+    if (Array.isArray(tools)) {
+      body['tools'] = tools.map((t) => {
+        if (t !== null && typeof t === 'object' && 'function' in t) {
+          const fn = (t as { function?: unknown }).function;
+          if (fn !== null && typeof fn === 'object') {
+            const params = (fn as { parameters?: unknown }).parameters;
+            return { ...t, function: { ...(fn as Record<string, unknown>), parameters: stripCohereSchemaKeys(params) } };
+          }
+        }
+        return t;
+      });
+    }
+    return body;
+  }
+}
+
+/**
+ * Hugging Face Inference Providers — OpenAI-compatible router.
+ * Bearer auth; honors the native HF_TOKEN env alongside HUGGINGFACE_API_KEY.
+ */
+export class HuggingFaceAdapter extends OpenAIAdapter {
+  readonly providerId = 'huggingface';
+  readonly displayName = 'Hugging Face';
+  protected apiBase = 'https://router.huggingface.co/v1';
+  protected apiKeyEnv = 'HUGGINGFACE_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['HF_TOKEN'] ?? process.env[this.apiKeyEnv];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+}
+
+/** Zhipu AI domestic console (bigmodel.cn) — the historical default host. */
+const ZHIPU_DOMESTIC_BASE_URL = 'https://open.bigmodel.cn/api/paas/v4';
+/** Z.ai global console — same surface, disjoint key namespace. */
+const ZHIPU_GLOBAL_BASE_URL = 'https://api.z.ai/api/paas/v4';
+
+/**
+ * Zhipu AI / Z.ai — OpenAI-compatible. One platform, two consoles whose keys
+ * are NOT interchangeable (a z.ai key is a 401 at open.bigmodel.cn and vice
+ * versa). The domestic host stays the default; only a key the domestic host
+ * actually rejects is retried against the global host, and the verdict is
+ * remembered per key so follow-up traffic goes straight to the right host.
+ */
+export class ZhipuAdapter extends OpenAIAdapter {
+  readonly providerId = 'zhipu';
+  readonly displayName = 'Zhipu AI (Z.ai)';
+  protected apiBase = ZHIPU_DOMESTIC_BASE_URL;
+  protected apiKeyEnv = 'ZHIPU_API_KEY';
+
+  /** Keys proven to belong to the global console (in-memory, re-derivable). */
+  private readonly globalKeys = new Set<string>();
+
+  private zhipuBaseFor(apiKey: string): string {
+    return this.globalKeys.has(apiKey) ? ZHIPU_GLOBAL_BASE_URL : ZHIPU_DOMESTIC_BASE_URL;
+  }
+
+  override async chatCompletion(
+    endpoint: ProviderEndpoint,
+    request: ChatCompletionRequest,
+    signal: AbortSignal,
+  ): Promise<ChatCompletionResponse> {
+    const apiKey = this.getApiKey(endpoint);
+    const body = this.translateRequest(request, false);
+    const run = async (base: string): Promise<ChatCompletionResponse> => {
+      const url = base + '/chat/completions';
+      let responseHeaders: Record<string, string> | undefined;
+      const raw = await fetchJson<OpenAIChatResponse>(url, {
+        method: 'POST',
+        headers: this.headers(endpoint, apiKey),
+        body: JSON.stringify(body),
+      }, endpoint, signal, (h) => { responseHeaders = h; });
+      return this.translateResponse(raw, endpoint, responseHeaders);
+    };
+    try {
+      return await run(this.zhipuBaseFor(apiKey));
+    } catch (err) {
+      if ((err as { status?: number }).status === 401 && !this.globalKeys.has(apiKey)) {
+        this.globalKeys.add(apiKey);
+        try {
+          return await run(ZHIPU_GLOBAL_BASE_URL);
+        } catch (err2) {
+          this.globalKeys.delete(apiKey);
+          throw err2;
+        }
+      }
+      throw err;
+    }
+  }
+
+  override async *streamChatCompletion(
+    endpoint: ProviderEndpoint,
+    request: ChatCompletionRequest,
+    signal: AbortSignal,
+  ): AsyncIterable<ChatCompletionChunk> {
+    const apiKey = this.getApiKey(endpoint);
+    const body = this.translateRequest(request, true);
+    let base = this.zhipuBaseFor(apiKey);
+    const openStream = async (b: string) => {
+      const url = b + '/chat/completions';
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: this.headers(endpoint, apiKey),
+        body: JSON.stringify(body),
+        signal,
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new ProviderResponseError(endpoint.id, response.status, text, { url });
+      }
+      if (!response.body) {
+        throw new ProviderResponseError(endpoint.id, 0, 'No response body for stream', { url });
+      }
+      return response.body;
+    };
+    let stream: ReadableStream<Uint8Array>;
+    try {
+      stream = await openStream(base);
+    } catch (err) {
+      if ((err as { status?: number }).status === 401 && !this.globalKeys.has(apiKey)) {
+        this.globalKeys.add(apiKey);
+        base = ZHIPU_GLOBAL_BASE_URL;
+        try {
+          stream = await openStream(base);
+        } catch (err2) {
+          this.globalKeys.delete(apiKey);
+          throw err2;
+        }
+      } else {
+        throw err;
+      }
+    }
+    for await (const evt of parseSseStream(stream)) {
+      const chunk = this.translateChunk(evt);
+      if (chunk) yield chunk;
+    }
+  }
+}
+
+/**
+ * ModelScope (Alibaba) — OpenAI-compatible inference API. Bearer auth;
+ * honors the native MODELSCOPE_API_TOKEN env alongside MODELSCOPE_API_KEY.
+ * Health-check trap: GET /v1/models answers 200 WITHOUT auth (even for
+ * garbage keys), so validation must be a 1-token chat probe. Successful
+ * probes are cached per endpoint for 24h to avoid burning the grain quota;
+ * a revoked key is still caught by the next real request's 401 handling.
+ */
+export class ModelScopeAdapter extends OpenAIAdapter {
+  readonly providerId = 'modelscope';
+  readonly displayName = 'ModelScope';
+  protected apiBase = 'https://api-inference.modelscope.cn/v1';
+  protected apiKeyEnv = 'MODELSCOPE_API_KEY';
+
+  private static readonly VALIDATE_CACHE_MS = 24 * 60 * 60 * 1000;
+  private readonly validatedAt = new Map<string, number>();
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['MODELSCOPE_API_TOKEN'] ?? process.env[this.apiKeyEnv];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  override async healthCheck(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<boolean> {
+    const last = this.validatedAt.get(endpoint.id);
+    if (last !== undefined && Date.now() - last < ModelScopeAdapter.VALIDATE_CACHE_MS) return true;
+    try {
+      const apiKey = this.getApiKey(endpoint);
+      const base = this.resolveBase(endpoint);
+      let probeModel = 'Qwen/Qwen2.5-7B-Instruct';
+      try {
+        const listRes = await fetch(base + '/models', {
+          method: 'GET',
+          headers: this.headers(endpoint, apiKey),
+          signal,
+        });
+        const list = (await listRes.json().catch(() => ({}))) as { data?: { id?: unknown }[] };
+        const first = list?.data?.find((m) => typeof m?.id === 'string')?.id as string | undefined;
+        if (first) probeModel = first;
+      } catch {
+        // Roster lookup failed — fall back to the well-known default id.
+      }
+      const res = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers: { ...this.headers(endpoint, apiKey), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: probeModel,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+        }),
+        signal,
+      });
+      if (!res.ok) return false;
+      this.validatedAt.set(endpoint.id, Date.now());
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * ElectronHub — OpenAI-compatible gateway (also speaks Anthropic at its
+ * root, but the OpenAI surface is what this adapter uses). Bearer ek- keys.
+ */
+export class ElectronHubAdapter extends OpenAIAdapter {
+  readonly providerId = 'electronhub';
+  readonly displayName = 'ElectronHub';
+  protected apiBase = 'https://api.electronhub.ai/v1';
+  protected apiKeyEnv = 'ELECTRONHUB_API_KEY';
+}
+
+/**
+ * Experiential Labs — open-source gateway (BYOK + hosted), OpenAI-compatible
+ * (also serves /v1/messages). Bearer xpl- keys; honors EXPLABS_API_KEY.
+ */
+export class ExperientialAdapter extends OpenAIAdapter {
+  readonly providerId = 'experiential';
+  readonly displayName = 'Experiential Labs';
+  protected apiBase = 'https://api.experientiallabs.ai/v1';
+  protected apiKeyEnv = 'EXPERIENTIAL_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['EXPLABS_API_KEY'] ?? process.env[this.apiKeyEnv];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
   }
 }
 

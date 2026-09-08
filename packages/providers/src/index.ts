@@ -12,6 +12,12 @@ export {
   FireworksAdapter,
   CerebrasAdapter,
   CloudflareAdapter,
+  CohereAdapter,
+  HuggingFaceAdapter,
+  ZhipuAdapter,
+  ModelScopeAdapter,
+  ElectronHubAdapter,
+  ExperientialAdapter,
   OllamaAdapter,
   VllmAdapter,
   LmStudioAdapter,
@@ -40,6 +46,12 @@ import {
   FireworksAdapter,
   CerebrasAdapter,
   CloudflareAdapter,
+  CohereAdapter,
+  HuggingFaceAdapter,
+  ZhipuAdapter,
+  ModelScopeAdapter,
+  ElectronHubAdapter,
+  ExperientialAdapter,
   OllamaAdapter,
   VllmAdapter,
   LmStudioAdapter,
@@ -69,6 +81,12 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
     new FireworksAdapter(),
     new CerebrasAdapter(),
     new CloudflareAdapter(),
+    new CohereAdapter(),
+    new HuggingFaceAdapter(),
+    new ZhipuAdapter(),
+    new ModelScopeAdapter(),
+    new ElectronHubAdapter(),
+    new ExperientialAdapter(),
     new OllamaAdapter(),
     new VllmAdapter(),
     new LmStudioAdapter(),
@@ -87,6 +105,8 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
   if (nvidia) map.set('nvidia', nvidia);
   const agy = map.get('antigravity-cli');
   if (agy) map.set('antigravity', agy);
+  const hf = map.get('huggingface');
+  if (hf) map.set('hf', hf);
   return map;
 }
 
@@ -103,6 +123,13 @@ export const SUPPORTED_PROVIDERS = [
   'fireworks',
   'cerebras',
   'cloudflare',
+  'cohere',
+  'huggingface',
+  'hf',
+  'zhipu',
+  'modelscope',
+  'electronhub',
+  'experiential',
   'ollama',
   'vllm',
   'lmstudio',

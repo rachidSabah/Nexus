@@ -144,6 +144,42 @@ const PROVIDER_DEFAULT_CAPS: Record<string, ProviderCapabilities> = {
     embeddings: false, reasoning: true, jsonMode: true,
     maxOutputTokens: 8192, maxInputTokens: 1000000, supportedModalities: ['text', 'image'],
   },
+  // ── Free-tier expansion (FreeLLMAPI parity) ──
+  cohere: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: true, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  huggingface: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: true, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  hf: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: true, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  zhipu: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  modelscope: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  electronhub: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  experiential: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 200000, supportedModalities: ['text', 'image'],
+  },
 };
 
 const FALLBACK_CAPS: ProviderCapabilities = {
@@ -192,6 +228,13 @@ const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = {
   // that would yield a double `/openai/` path and 404 upstream).
   'azure-openai': 'https://{resource}.openai.azure.com',
   'aws-bedrock': 'https://bedrock-runtime.{region}.amazonaws.com',
+  cohere: 'https://api.cohere.ai/compatibility/v1',
+  huggingface: 'https://router.huggingface.co/v1',
+  hf: 'https://router.huggingface.co/v1',
+  zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  modelscope: 'https://api-inference.modelscope.cn/v1',
+  electronhub: 'https://api.electronhub.ai/v1',
+  experiential: 'https://api.experientiallabs.ai/v1',
 };
 
 /** Default pricing (per 1K tokens, USD) per provider for auto-registered endpoints. */
@@ -216,6 +259,13 @@ const PROVIDER_DEFAULT_PRICING: Record<string, { inputPer1K: number; outputPer1K
   lmstudio: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   litellm: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   'azure-openai': { inputPer1K: 0.01, outputPer1K: 0.03, currency: 'USD' },
+  cohere: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  huggingface: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  hf: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  zhipu: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  modelscope: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  electronhub: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  experiential: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
 };
 
 /** Returns the default base URL for a given provider id. */
@@ -266,7 +316,7 @@ export async function registerDefaultEndpoints(
 
   // Auto-register providers from env vars if no explicit endpoints.
   if (config.endpoints.length === 0) {
-    const autoEndpoints: Array<{ providerId: string; envVar: string; baseUrl: string; keyless: boolean; pricing: { inputPer1K: number; outputPer1K: number; currency: 'USD' | 'EUR' } }> = [
+    const autoEndpoints: Array<{ providerId: string; envVar: string; envVarAlt?: string; baseUrl: string; keyless: boolean; pricing: { inputPer1K: number; outputPer1K: number; currency: 'USD' | 'EUR' } }> = [
       { providerId: 'openai', envVar: 'OPENAI_API_KEY', baseUrl: 'https://api.openai.com/v1', keyless: false, pricing: { inputPer1K: 0.01, outputPer1K: 0.03, currency: 'USD' } },
       { providerId: 'anthropic', envVar: 'ANTHROPIC_API_KEY', baseUrl: 'https://api.anthropic.com', keyless: false, pricing: { inputPer1K: 0.003, outputPer1K: 0.015, currency: 'USD' } },
       { providerId: 'deepseek', envVar: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com/v1', keyless: false, pricing: { inputPer1K: 0.001, outputPer1K: 0.002, currency: 'USD' } },
@@ -281,6 +331,13 @@ export async function registerDefaultEndpoints(
       { providerId: 'nvidia-nim', envVar: 'NVIDIA_API_KEY', baseUrl: 'https://integrate.api.nvidia.com/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'opencode-zen', envVar: 'OPENCODE_ZEN_API_KEY', baseUrl: 'https://opencode.ai/zen/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'opencode-go', envVar: 'OPENCODE_GO_API_KEY', baseUrl: 'https://opencode.ai/zen/go/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      // ── Free-tier expansion (FreeLLMAPI parity): six free-serving providers ──
+      { providerId: 'cohere', envVar: 'COHERE_API_KEY', baseUrl: 'https://api.cohere.ai/compatibility/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'huggingface', envVar: 'HUGGINGFACE_API_KEY', envVarAlt: 'HF_TOKEN', baseUrl: 'https://router.huggingface.co/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'zhipu', envVar: 'ZHIPU_API_KEY', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'modelscope', envVar: 'MODELSCOPE_API_KEY', envVarAlt: 'MODELSCOPE_API_TOKEN', baseUrl: 'https://api-inference.modelscope.cn/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'electronhub', envVar: 'ELECTRONHUB_API_KEY', baseUrl: 'https://api.electronhub.ai/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'experiential', envVar: 'EXPERIENTIAL_API_KEY', envVarAlt: 'EXPLABS_API_KEY', baseUrl: 'https://api.experientiallabs.ai/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       // ── First-class self-hosted / local providers (keyless, probed at boot) ──
       // Ollama, vLLM, and LM Studio expose OpenAI-compatible /v1 endpoints.
       // Registered with the same health-probe + failover treatment as cloud
@@ -291,7 +348,7 @@ export async function registerDefaultEndpoints(
     ];
 
     for (const e of autoEndpoints) {
-      const apiKey = e.envVar ? process.env[e.envVar] : undefined;
+      const apiKey = e.envVar ? (process.env[e.envVar] ?? (e.envVarAlt ? process.env[e.envVarAlt] : undefined)) : undefined;
       if (!apiKey && !e.keyless) continue;
       // Persist real keys only — never write placeholder/local sentinels to
       // the vault (auto-endpoints are re-derived from env at every boot).

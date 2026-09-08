@@ -21,6 +21,12 @@ This document describes how to add and configure provider adapters in Agent Nexu
 | Cerebras | `cerebras` | Bearer token | OpenAI-compatible, ultra-fast |
 | Cloudflare AI | `cloudflare` | Bearer token | OpenAI-compatible (set baseUrl with account ID) |
 | Azure OpenAI | `azure-openai` | `api-key` header | Deployment-based URL scheme |
+| Cohere | `cohere` | Bearer token | Compat endpoint; tool schemas stripped of additionalProperties/$schema |
+| Hugging Face | `huggingface` (`hf` alias) | Bearer token (`HF_TOKEN` honored) | Inference Providers router |
+| Zhipu AI (Z.ai) | `zhipu` | Bearer token | Domestic default; auto-retries global console on 401 per key |
+| ModelScope | `modelscope` | Bearer token (`MODELSCOPE_API_TOKEN` honored) | Chat-probe health check (GET /models ignores auth) |
+| ElectronHub | `electronhub` | Bearer token (`ek-` keys) | OpenAI-compatible gateway |
+| Experiential Labs | `experiential` | Bearer token (`EXPLABS_API_KEY` honored) | BYOK + hosted gateway |
 
 ### Local providers
 
@@ -135,6 +141,12 @@ If `endpoints` is empty in your config, the gateway auto-registers endpoints fro
 | `FIREWORKS_API_KEY` | Fireworks |
 | `CEREBRAS_API_KEY` | Cerebras |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare |
+| `COHERE_API_KEY` | Cohere |
+| `HUGGINGFACE_API_KEY` (or `HF_TOKEN`) | Hugging Face |
+| `ZHIPU_API_KEY` | Zhipu AI (Z.ai) |
+| `MODELSCOPE_API_KEY` (or `MODELSCOPE_API_TOKEN`) | ModelScope |
+| `ELECTRONHUB_API_KEY` | ElectronHub |
+| `EXPERIENTIAL_API_KEY` (or `EXPLABS_API_KEY`) | Experiential Labs |
 
 Ollama is always auto-registered (no API key required).
 
