@@ -127,6 +127,36 @@ export class OpenAIAdapter implements ProviderAdapter {
     };
   }
 
+  /**
+   * Generic OpenAI-style media passthrough (images, video, speech).
+   * Forwards the JSON body to the endpoint's own base URL with the
+   * adapter's key resolution, and relays status + bytes transparently
+   * (JSON metadata and binary audio alike). Every OpenAI-compatible
+   * subclass inherits this; native-wire adapters (Anthropic, Google)
+   * do not implement media and the gateway answers 501 for them.
+   */
+  async media(
+    endpoint: ProviderEndpoint,
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+  ): Promise<{ readonly status: number; readonly contentType: string; readonly data: Uint8Array }> {
+    const apiKey = this.getApiKey(endpoint);
+    const url = this.resolveBase(endpoint) + path;
+    const raw = await fetch(url, {
+      method: 'POST',
+      headers: { ...this.headers(endpoint, apiKey), 'Content-Type': 'application/json' },
+      body: typeof body === 'string' ? body : JSON.stringify(body ?? {}),
+      signal,
+    });
+    const buf = new Uint8Array(await raw.arrayBuffer());
+    return {
+      status: raw.status,
+      contentType: raw.headers.get('content-type') ?? 'application/octet-stream',
+      data: buf,
+    };
+  }
+
   async healthCheck(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<boolean> {
     try {
       const apiKey = this.getApiKey(endpoint);

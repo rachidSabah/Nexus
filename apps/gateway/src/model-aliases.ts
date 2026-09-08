@@ -42,6 +42,7 @@
 import type { ModelDescriptor, ModelRegistry, ProviderEndpoint, RoutingEnginePort, KeyRegistry } from '@anx/core';
 import { isSelectable } from '@anx/core';
 import { resolveClaudeGwAlias } from './claude-catalog.js';
+import { parseAutoModel, autoAliasCandidates } from './freellm-parity.js';
 import { resolveOpenAIModelId, isVirtualModelId } from './model-fabric.js';
 
 /**
@@ -613,6 +614,46 @@ export class ModelAliasRegistry {
    * calls before routing.
    */
   resolveIfAlias(model: string, requiredInputTokens?: number): { model: string; resolution?: AliasResolution } {
+    // FreeLLMAPI-style selectors: auto, auto:fast, auto:smart, auto:<profile>.
+    // Parsed by the pure helper in freellm-parity (unit-tested there); the
+    // registry maps them onto the built-in local/* aliases or a
+    // user-registered named profile. Falls through to normal resolution when
+    // nothing matches — never throws, never invents a model.
+    if (typeof model === 'string') {
+      const auto = parseAutoModel(model);
+      if (auto) {
+        for (const candidate of autoAliasCandidates(auto)) {
+          const hit = this.resolve(candidate, requiredInputTokens);
+          if (hit) {
+            return {
+              model: hit.modelId,
+              resolution: {
+                modelId: hit.modelId,
+                providerId: hit.providerId,
+                reason: 'Auto selector ' + model + ' -> alias ' + candidate + ': ' + hit.reason,
+                candidateCount: hit.candidateCount,
+              },
+            };
+          }
+        }
+        // Named profile with no registered alias: degrade honestly to the
+        // default router pick instead of failing the request.
+        if (auto.kind === 'profile') {
+          const fallback = this.resolve('local/auto', requiredInputTokens);
+          if (fallback) {
+            return {
+              model: fallback.modelId,
+              resolution: {
+                modelId: fallback.modelId,
+                providerId: fallback.providerId,
+                reason: 'Auto selector ' + model + ' (unknown profile) -> default: ' + fallback.reason,
+                candidateCount: fallback.candidateCount,
+              },
+            };
+          }
+        }
+      }
+    }
     if (model.startsWith('claude-gw-')) {
       const projected = resolveClaudeGwAlias(model, this.modelRegistry.list());
       if (projected) {

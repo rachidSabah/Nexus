@@ -77,6 +77,39 @@ import {
 import { globalObservability } from './observability.js';
 import { failResponsesEvents, finalizeResponsesEvents, newResponsesStreamState, toChatRequest, toResponsesResponse, translateChunkToResponsesEvents, type ResponsesRequest } from './responses-compat.js';
 import { describeUnserializableChunk, formatOpenAiResponse, formatOpenAiStreamChunk } from './openai-wire.js';
+import {
+  X_ROUTED_VIA,
+  routedVia,
+  isFusionModel,
+  firstChoiceText,
+  completionsToChat,
+  chatResponseToCompletion,
+  geminiToChat,
+  chatResponseToGemini,
+  estimateGeminiTokens,
+  geminiModelsList,
+  ollamaChatToInternal,
+  ollamaGenerateToInternal,
+  chatResponseToOllamaChat,
+  chatResponseToOllamaGenerate,
+  ollamaStreamLine,
+  ollamaTags,
+  ollamaShow,
+  ollamaEmbeddingsInput,
+  mediaNotAvailable,
+  transcriptionsNotAvailable,
+  buildFusionJudgeMessages,
+  fusionQuestion,
+  FUSION_PANEL_SIZE,
+  OPENAPI_DOCS_HTML,
+} from './freellm-parity.js';
+import type { ParityModelView } from './freellm-parity.js';
+import type {
+  CompletionsRequest,
+  GeminiGenerateBody,
+  OllamaChatRequest,
+  OllamaGenerateRequest,
+} from './freellm-parity.js';
 import type {
   BudgetManager,
   ChatCompletionChunk,
@@ -103,7 +136,7 @@ import type {
   OrchestratedExecutionRequest,
   OrchestrationPolicy,
 } from '@anx/core';
-import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe, aggregateFreeTier, FREE_TIER_CATALOG, estimateMessageTokens, ModelCapabilityService } from '@anx/core';
+import { LocalAgentBridge, AgentOrchestrator, isSsrfSafe, aggregateFreeTier, FREE_TIER_CATALOG, estimateMessageTokens, ModelCapabilityService, NoEligibleProviderError } from '@anx/core';
 import type { InMemoryAuditLog } from '@anx/core';
 import { BUILTIN_INTEGRATIONS, createIntegrationRegistry, TRUSTED_AGENT_CATALOG, type IntegrationContext } from '@anx/integrations';
 import {
@@ -4335,6 +4368,15 @@ export class HttpServer {
             reply.raw.setHeader('Cache-Control', 'no-cache');
             reply.raw.setHeader('Connection', 'keep-alive');
             reply.raw.setHeader('X-Accel-Buffering', 'no');
+            // X-Routed-Via on streams only when the request has a single
+            // routing candidate (no fallback models) and a pinned or hinted
+            // provider — otherwise the header could name the wrong provider
+            // after failover, so it is honestly omitted.
+            const alternates = this.deps.falloverConfig?.get(aliasResolution.model) ?? [];
+            const streamProvider = pinnedProvider ?? providerHint;
+            if (alternates.length === 0 && streamProvider) {
+              reply.raw.setHeader(X_ROUTED_VIA, routedVia(streamProvider, aliasResolution.model));
+            }
             reply.raw.flushHeaders?.();
           }
         };
@@ -4410,6 +4452,8 @@ export class HttpServer {
         const response = (await this.executeChatFallbackChain(body, request, fallbackChain, undefined)) as ChatCompletionResponse;
         // Same wire boundary for non-streaming: usage must be the snake_case
         // CompletionUsage object, never the internal camelCase TokenUsage.
+        // FreeLLMAPI parity: every response names the serving provider.
+        reply.header(X_ROUTED_VIA, routedVia(response.provider, response.model));
         return formatOpenAiResponse(response);
       } catch (err) {
         const errMsg = (err as Error).message ?? '';
@@ -4524,6 +4568,7 @@ export class HttpServer {
       }
       try {
         const response = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), undefined, new AbortController().signal);
+        reply.header(X_ROUTED_VIA, routedVia(response.provider, response.model));
         return toResponsesResponse(response, effectiveBody.model);
       } catch (error) {
         const http = this.httpErrorFor(error as Error);
@@ -4700,6 +4745,7 @@ export class HttpServer {
       ];
       try {
         const response = (await this.executeChatFallbackChain(effectiveReq, request, fallbackChain, undefined)) as ChatCompletionResponse;
+        reply.header(X_ROUTED_VIA, routedVia(response.provider, response.model));
         return translateToAnthropicResponse(response, anthropicReq.model, anthropicReq.tools as never);
       } catch (err) {
         const http = this.httpErrorFor(err as Error);
@@ -4743,10 +4789,405 @@ export class HttpServer {
       }
       try {
         const response = await adapter.embed(endpoint, body, new AbortController().signal);
+        reply.header(X_ROUTED_VIA, routedVia(response.provider, response.model));
         return response;
       } catch (err) {
         return reply.code(500).send({ error: { message: (err as Error).message } });
       }
+    });
+
+    // ── FreeLLMAPI parity: legacy /v1/completions (editor ghost-text) ────
+    // Translates prompt/suffix into the chat pipeline, so completions reuse
+    // aliasing (incl. auto:*), fallback chains, fusion and token optimization.
+    const handleCompletions = async (request: any, reply: any) => {
+      const raw = request.body as CompletionsRequest | null | undefined;
+      if (!raw || typeof raw !== 'object' || raw.prompt === undefined || !raw.model) {
+        return reply.code(400).send({ error: { message: 'model and prompt are required' } });
+      }
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', raw.model, reply);
+      if (authz === 'deny') return reply;
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(raw.model);
+      if (this.deps.aliasRegistry.isExhaustedFreeOnlyAlias(raw.model)) {
+        return reply.code(503).send({
+          error: {
+            message: 'No free-tier model available for ' + raw.model + ' — free-tier exhausted or no free models configured',
+            code: 'NO_ELIGIBLE_PROVIDER',
+          },
+        });
+      }
+      const chatBody = { ...completionsToChat(raw), model: aliasResolution.model };
+      const fallbackChain = [
+        aliasResolution.model,
+        ...(this.deps.falloverConfig?.get(aliasResolution.model) ?? []),
+      ];
+      if (raw.stream) {
+        const sink = {
+          write: async (chunk: ChatCompletionChunk) => {
+            if (!reply.raw.headersSent) {
+              reply.raw.setHeader('Content-Type', 'text/event-stream');
+              reply.raw.setHeader('Cache-Control', 'no-cache');
+              reply.raw.setHeader('Connection', 'keep-alive');
+            }
+            if (reply.raw.writableEnded || reply.raw.destroyed) return;
+            const delta = chunk.choices?.[0]?.delta as { content?: unknown } | undefined;
+            const payload = {
+              id: chunk.id,
+              object: 'text_completion',
+              created: chunk.created,
+              model: raw.model,
+              choices: [
+                {
+                  text: typeof delta?.content === 'string' ? delta.content : '',
+                  index: 0,
+                  finish_reason: chunk.choices?.[0]?.finish_reason ?? null,
+                },
+              ],
+            };
+            reply.raw.write('data: ' + JSON.stringify(payload) + '\n\n');
+          },
+          error: async (error: Error) => {
+            if (reply.raw.headersSent && !reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write('data: ' + JSON.stringify({ error: { message: this.httpErrorFor(error).message } }) + '\n\n');
+              reply.raw.end();
+            }
+          },
+          end: async () => {
+            if (!reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write('data: [DONE]\n\n');
+              reply.raw.end();
+            }
+          },
+        };
+        try {
+          await this.executeChatFallbackChain(chatBody, request, fallbackChain, sink);
+        } catch (err) {
+          const http = this.httpErrorFor(err as Error);
+          if (!reply.raw.headersSent) {
+            return reply.code(http.status).send({ error: { message: http.message } });
+          }
+        }
+        return reply;
+      }
+      try {
+        const response = (await this.executeChatFallbackChain(chatBody, request, fallbackChain, undefined)) as ChatCompletionResponse;
+        reply.header(X_ROUTED_VIA, routedVia(response.provider, response.model));
+        return chatResponseToCompletion(response, raw.model);
+      } catch (err) {
+        const http = this.httpErrorFor(err as Error);
+        return reply.code(http.status).send({ error: { message: http.message } });
+      }
+    };
+    this.fastify.post('/v1/completions', handleCompletions);
+    this.fastify.post('/completions', handleCompletions);
+    this.fastify.post('/v1/v1/completions', handleCompletions);
+
+    // ── FreeLLMAPI parity: media generation passthrough ──────────────────
+    // JSON surfaces (images, video, speech) forward to the resolved
+    // endpoint's own OpenAI-compatible media path via the adapter's key
+    // resolution. Transcriptions need multipart ingest (unsupported) and
+    // answer an honest 501.
+    const resolveMediaEndpoint = (requestedModel: string) => {
+      const endpoints = this.deps.routing.listEndpoints();
+      let endpoint = endpoints.find(
+        (e) => e.tags.includes(requestedModel) || e.id === requestedModel || e.providerId === requestedModel,
+      );
+      if (!endpoint) {
+        const modelEntry = this.deps.modelRegistry.list().find((m) => m.id === requestedModel);
+        if (modelEntry) endpoint = endpoints.find((e) => e.providerId === modelEntry.providerId);
+      }
+      return { endpoints, endpoint };
+    };
+    const handleMedia = (upstreamPath: string) => async (request: any, reply: any) => {
+      const body = request.body as { model?: string } | null | undefined;
+      const requestedModel = body?.model ?? 'auto';
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', requestedModel, reply);
+      if (authz === 'deny') return reply;
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(requestedModel);
+      const { endpoints, endpoint } = resolveMediaEndpoint(aliasResolution.model);
+      if (!endpoint) {
+        return reply.code(404).send({ error: { message: 'No provider for model ' + requestedModel } });
+      }
+      const adapter = this.deps.adapters.get(endpoint.providerId);
+      if (!adapter?.media) {
+        const na = mediaNotAvailable(endpoints.map((e) => e.providerId));
+        return reply.code(na.status).send(na.body);
+      }
+      try {
+        const out = await adapter.media(endpoint, upstreamPath, request.body, AbortSignal.timeout(120_000));
+        reply.header('Content-Type', out.contentType);
+        reply.header(X_ROUTED_VIA, routedVia(endpoint.providerId, aliasResolution.model));
+        return reply.code(out.status).send(Buffer.from(out.data));
+      } catch (err) {
+        return reply.code(500).send({ error: { message: (err as Error).message } });
+      }
+    };
+    this.fastify.post('/v1/images/generations', handleMedia('/images/generations'));
+    this.fastify.post('/v1/videos/generations', handleMedia('/videos/generations'));
+    this.fastify.post('/v1/audio/speech', handleMedia('/audio/speech'));
+    this.fastify.post('/v1/audio/transcriptions', async (_request: unknown, reply: any) => {
+      const t = transcriptionsNotAvailable();
+      return reply.code(t.status).send(t.body);
+    });
+
+    // ── FreeLLMAPI parity: native Gemini /v1beta ─────────────────────────
+    // Gemini CLI speaks generateContent/streamGenerateContent/countTokens on
+    // /v1beta natively; requests run through the same router as everything
+    // else. countTokens is a local estimator (documented in /v1/docs).
+    const parityModelViews = (): ParityModelView[] =>
+      this.deps.modelRegistry
+        .list()
+        .filter((m) => !m.stale)
+        .map((m) => ({ id: m.id, providerId: m.providerId, displayName: m.displayName, contextWindow: m.contextWindow }));
+    this.fastify.get('/v1beta/models', async () => geminiModelsList(parityModelViews()));
+    this.fastify.post('/v1beta/*', async (request: any, reply: any) => {
+      const rawUrl = ((request.raw?.url as string | undefined) ?? '').split('?')[0] ?? '';
+      const m = /^\/v1beta\/models\/(.+):(generateContent|streamGenerateContent|countTokens)$/.exec(rawUrl);
+      if (!m || !m[1] || !m[2]) {
+        return reply.code(404).send({
+          error: {
+            message: 'Unknown v1beta path. Use /v1beta/models/{model}:(generateContent|streamGenerateContent|countTokens)',
+          },
+        });
+      }
+      const rawModel = m[1].replace(/^models\//, '');
+      const action = m[2];
+      const geminiBody = (request.body ?? {}) as GeminiGenerateBody;
+      if (action === 'countTokens') {
+        return { totalTokens: estimateGeminiTokens(geminiBody) };
+      }
+      const requestedModel = rawModel === '' ? 'auto' : rawModel;
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', requestedModel, reply);
+      if (authz === 'deny') return reply;
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(requestedModel);
+      if (this.deps.aliasRegistry.isExhaustedFreeOnlyAlias(requestedModel)) {
+        return reply.code(503).send({
+          error: {
+            message: 'No free-tier model available for ' + requestedModel + ' — free-tier exhausted or no free models configured',
+            code: 'NO_ELIGIBLE_PROVIDER',
+          },
+        });
+      }
+      const chatBody = { ...geminiToChat(aliasResolution.model, geminiBody), model: aliasResolution.model };
+      const fallbackChain = [
+        aliasResolution.model,
+        ...(this.deps.falloverConfig?.get(aliasResolution.model) ?? []),
+      ];
+      if (action === 'streamGenerateContent') {
+        const sink = {
+          write: async (chunk: ChatCompletionChunk) => {
+            if (!reply.raw.headersSent) {
+              reply.raw.setHeader('Content-Type', 'text/event-stream');
+              reply.raw.setHeader('Cache-Control', 'no-cache');
+              reply.raw.setHeader('Connection', 'keep-alive');
+            }
+            if (reply.raw.writableEnded || reply.raw.destroyed) return;
+            const delta = chunk.choices?.[0]?.delta as { content?: unknown } | undefined;
+            const partial = {
+              candidates: [
+                {
+                  content: {
+                    role: 'model',
+                    parts: [{ text: typeof delta?.content === 'string' ? delta.content : '' }],
+                  },
+                  index: 0,
+                },
+              ],
+            };
+            reply.raw.write('data: ' + JSON.stringify(partial) + '\n\n');
+          },
+          error: async (error: Error) => {
+            if (reply.raw.headersSent && !reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write('data: ' + JSON.stringify({ error: { message: this.httpErrorFor(error).message } }) + '\n\n');
+              reply.raw.end();
+            }
+          },
+          end: async () => {
+            if (!reply.raw.writableEnded && !reply.raw.destroyed) reply.raw.end();
+          },
+        };
+        try {
+          await this.executeChatFallbackChain(chatBody, request, fallbackChain, sink);
+        } catch (err) {
+          const http = this.httpErrorFor(err as Error);
+          if (!reply.raw.headersSent) {
+            return reply.code(http.status).send({ error: { message: http.message } });
+          }
+        }
+        return reply;
+      }
+      try {
+        const response = (await this.executeChatFallbackChain(chatBody, request, fallbackChain, undefined)) as ChatCompletionResponse;
+        reply.header(X_ROUTED_VIA, routedVia(response.provider, response.model));
+        return chatResponseToGemini(response, requestedModel);
+      } catch (err) {
+        const http = this.httpErrorFor(err as Error);
+        return reply.code(http.status).send({ error: { message: http.message } });
+      }
+    });
+
+    // ── FreeLLMAPI parity: Ollama emulation (/api/*) ─────────────────────
+    // Serves Zed, JetBrains AI and other local-model clients. Chat/generate
+    // run through the router; tags/show project the discovered catalog.
+    const handleOllamaChat = async (request: any, reply: any) => {
+      const raw = (request.body ?? {}) as OllamaChatRequest;
+      const requestedModel = raw.model ?? 'auto';
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', requestedModel, reply);
+      if (authz === 'deny') return reply;
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(requestedModel);
+      const chatBody = { ...ollamaChatToInternal(raw), model: aliasResolution.model };
+      const fallbackChain = [
+        aliasResolution.model,
+        ...(this.deps.falloverConfig?.get(aliasResolution.model) ?? []),
+      ];
+      if (raw.stream !== false) {
+        reply.raw.setHeader('Content-Type', 'application/x-ndjson');
+        reply.raw.setHeader('Cache-Control', 'no-cache');
+        reply.raw.setHeader('Connection', 'keep-alive');
+        const sink = {
+          write: async (chunk: ChatCompletionChunk) => {
+            if (reply.raw.writableEnded || reply.raw.destroyed) return;
+            reply.raw.write(ollamaStreamLine('chat', requestedModel, chunk, false) + '\n');
+          },
+          error: async (error: Error) => {
+            if (!reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write(JSON.stringify({ error: this.httpErrorFor(error).message }) + '\n');
+              reply.raw.end();
+            }
+          },
+          end: async () => {
+            if (reply.raw.writableEnded || reply.raw.destroyed) return;
+            const doneLine = JSON.stringify({ model: requestedModel, done: true }) + '\n';
+            reply.raw.write(doneLine);
+            reply.raw.end();
+          },
+        };
+        try {
+          await this.executeChatFallbackChain(chatBody, request, fallbackChain, sink);
+        } catch (err) {
+          if (!reply.raw.headersSent) {
+            const http = this.httpErrorFor(err as Error);
+            return reply.code(http.status).send({ error: http.message });
+          }
+        }
+        return reply;
+      }
+      try {
+        const response = (await this.executeChatFallbackChain(chatBody, request, fallbackChain, undefined)) as ChatCompletionResponse;
+        reply.header(X_ROUTED_VIA, routedVia(response.provider, response.model));
+        return chatResponseToOllamaChat(response, requestedModel);
+      } catch (err) {
+        const http = this.httpErrorFor(err as Error);
+        return reply.code(http.status).send({ error: http.message });
+      }
+    };
+    const handleOllamaGenerate = async (request: any, reply: any) => {
+      const raw = (request.body ?? {}) as OllamaGenerateRequest;
+      const requestedModel = raw.model ?? 'auto';
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', requestedModel, reply);
+      if (authz === 'deny') return reply;
+      const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(requestedModel);
+      const chatBody = { ...ollamaGenerateToInternal(raw), model: aliasResolution.model };
+      const fallbackChain = [
+        aliasResolution.model,
+        ...(this.deps.falloverConfig?.get(aliasResolution.model) ?? []),
+      ];
+      if (raw.stream !== false) {
+        reply.raw.setHeader('Content-Type', 'application/x-ndjson');
+        reply.raw.setHeader('Cache-Control', 'no-cache');
+        reply.raw.setHeader('Connection', 'keep-alive');
+        const sink = {
+          write: async (chunk: ChatCompletionChunk) => {
+            if (reply.raw.writableEnded || reply.raw.destroyed) return;
+            reply.raw.write(ollamaStreamLine('generate', requestedModel, chunk, false) + '\n');
+          },
+          error: async (error: Error) => {
+            if (!reply.raw.writableEnded && !reply.raw.destroyed) {
+              reply.raw.write(JSON.stringify({ error: this.httpErrorFor(error).message }) + '\n');
+              reply.raw.end();
+            }
+          },
+          end: async () => {
+            if (reply.raw.writableEnded || reply.raw.destroyed) return;
+            reply.raw.write(JSON.stringify({ model: requestedModel, done: true }) + '\n');
+            reply.raw.end();
+          },
+        };
+        try {
+          await this.executeChatFallbackChain(chatBody, request, fallbackChain, sink);
+        } catch (err) {
+          if (!reply.raw.headersSent) {
+            const http = this.httpErrorFor(err as Error);
+            return reply.code(http.status).send({ error: http.message });
+          }
+        }
+        return reply;
+      }
+      try {
+        const response = (await this.executeChatFallbackChain(chatBody, request, fallbackChain, undefined)) as ChatCompletionResponse;
+        reply.header(X_ROUTED_VIA, routedVia(response.provider, response.model));
+        return chatResponseToOllamaGenerate(response, requestedModel);
+      } catch (err) {
+        const http = this.httpErrorFor(err as Error);
+        return reply.code(http.status).send({ error: http.message });
+      }
+    };
+    this.fastify.post('/api/chat', handleOllamaChat);
+    this.fastify.post('/api/generate', handleOllamaGenerate);
+    this.fastify.get('/api/tags', async () => ollamaTags(parityModelViews()));
+    this.fastify.get('/api/version', async () => ({ version: 'nexus-ollama-compat' }));
+    this.fastify.post('/api/show', async (request: any, reply: any) => {
+      const name = ((request.body as { model?: unknown } | null)?.model as string | undefined) ?? '';
+      const bare = name.replace(/:latest$/, '');
+      const found = parityModelViews().find((m) => m.id === name || m.id === bare);
+      const shown = ollamaShow(found);
+      if (!shown) return reply.code(404).send({ error: 'model ' + name + ' not found' });
+      return shown;
+    });
+    this.fastify.post('/api/embeddings', async (request: any, reply: any) => {
+      const raw = (request.body ?? {}) as { model?: string; input?: unknown; prompt?: unknown };
+      const inputs = ollamaEmbeddingsInput(raw);
+      if (!raw.model || inputs.length === 0) {
+        return reply.code(400).send({ error: 'model and input (or prompt) are required' });
+      }
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:embed', raw.model, reply);
+      if (authz === 'deny') return reply;
+      const endpoints = this.deps.routing.listEndpoints();
+      let endpoint = endpoints.find(
+        (e) => e.tags.includes(raw.model as string) || e.id === raw.model || e.providerId === raw.model,
+      );
+      if (!endpoint) {
+        const modelEntry = this.deps.modelRegistry.list().find((m) => m.id === raw.model);
+        if (modelEntry) endpoint = endpoints.find((e) => e.providerId === modelEntry.providerId);
+      }
+      if (!endpoint) {
+        return reply.code(404).send({ error: 'No provider for model ' + raw.model });
+      }
+      const adapter = this.deps.adapters.get(endpoint.providerId);
+      if (!adapter?.embed) {
+        return reply.code(501).send({ error: 'Provider ' + endpoint.providerId + ' does not support embeddings' });
+      }
+      try {
+        const response = await adapter.embed(
+          endpoint,
+          { model: raw.model, input: inputs },
+          AbortSignal.timeout(60_000),
+        );
+        return { ...response, model: raw.model };
+      } catch (err) {
+        return reply.code(500).send({ error: (err as Error).message });
+      }
+    });
+
+    // ── FreeLLMAPI parity: dependency-free /v1/docs viewer ───────────────
+    this.fastify.get('/v1/docs', async (_request: unknown, reply: any) => {
+      reply.header('Content-Type', 'text/html; charset=utf-8');
+      return OPENAPI_DOCS_HTML;
     });
 
     // ── Prometheus metrics ─────────────────────────────────────────────
@@ -5124,6 +5565,25 @@ export class HttpServer {
           },
           '/v1/models': { get: { summary: 'List discovered and registered models' } },
           '/v1/catalog': { get: { summary: 'Universal normalized model catalog' } },
+          '/v1/chat/completions': { post: { summary: 'OpenAI-compatible chat completions (auto:* selectors, fusion virtual model, X-Routed-Via)' } },
+          '/v1/completions': { post: { summary: 'Legacy text completions for editor ghost-text (prompt/suffix over the chat router)' } },
+          '/v1/responses': { post: { summary: 'OpenAI Responses API for Codex CLI and modern agents' } },
+          '/v1/messages': { post: { summary: 'Anthropic Messages API for Claude Code over the free pool' } },
+          '/v1/embeddings': { post: { summary: 'OpenAI-compatible embeddings' } },
+          '/v1/images/generations': { post: { summary: 'Image generation via media-capable OpenAI-compatible endpoints' } },
+          '/v1/videos/generations': { post: { summary: 'Video generation via media-capable OpenAI-compatible endpoints' } },
+          '/v1/audio/speech': { post: { summary: 'Speech synthesis via media-capable OpenAI-compatible endpoints' } },
+          '/v1/audio/transcriptions': { post: { summary: 'Transcriptions — 501 until multipart ingest lands (TRANSCRIPTION_MULTIPART_UNSUPPORTED)' } },
+          '/v1beta/models': { get: { summary: 'Gemini-native model list for Gemini CLI' } },
+          '/v1beta/models/{model}:generateContent': { post: { summary: 'Gemini-native generateContent over the router' } },
+          '/v1beta/models/{model}:streamGenerateContent': { post: { summary: 'Gemini-native streaming generation over the router' } },
+          '/v1beta/models/{model}:countTokens': { post: { summary: 'Local token estimate (~4 chars/token, documented estimator)' } },
+          '/api/chat': { post: { summary: 'Ollama-compatible chat (NDJSON stream) for Zed and JetBrains AI' } },
+          '/api/generate': { post: { summary: 'Ollama-compatible generate (NDJSON stream)' } },
+          '/api/tags': { get: { summary: 'Ollama-compatible model tags from the discovered catalog' } },
+          '/api/show': { post: { summary: 'Ollama-compatible model details' } },
+          '/api/embeddings': { post: { summary: 'Ollama-compatible embeddings' } },
+          '/v1/docs': { get: { summary: 'Dependency-free interactive API viewer over this spec' } },
           '/v1/catalog/status': { get: { summary: 'Real-time catalog and provider discovery status' } },
           '/v1/runtime-agents': { get: { summary: 'List detected and configured coding agents' } },
           '/v1/runtime-agents/health': { get: { summary: 'Health diagnostics for supported agents' } },
@@ -7935,14 +8395,106 @@ export class HttpServer {
   }
 
   /**
-   * Retries a chat completion across a chain of MODELS: the resolved primary
-   * first, then any operator-pinned manual fallback models (in order). Each
-   * model is re-resolved (alias + provider hint + token optimization) so the
-   * correct adapter translation applies per model. Manual fallbacks are tried
-   * BEFORE the automatic endpoint-level failover inside ChatCompletionUseCase,
-   * augmenting (never replacing) it. `sink` is provided for streaming; when
-   * null the non-streaming response is returned. Throws only if every model in
-   * the chain fails.
+   * Fusion virtual model (FreeLLMAPI parity): fan the prompt out to a panel
+   * of diverse models in parallel, then a judge model synthesizes one answer.
+   * The panel reuses the alias registry (local/free, local/fast, local/best)
+   * so every eligibility rule (keys, health, cooldowns) applies unchanged.
+   */
+  private async executeFusion(
+    originalBody: ChatCompletionRequest,
+    sink: ChunkSink | undefined,
+  ): Promise<ChatCompletionResponse | void> {
+    const seen = new Set<string>();
+    const panel: { modelId: string; providerId: string }[] = [];
+    for (const alias of ['local/free', 'local/fast', 'local/best']) {
+      const hit = this.deps.aliasRegistry.resolve(alias);
+      if (hit && !seen.has(hit.modelId)) {
+        seen.add(hit.modelId);
+        panel.push({ modelId: hit.modelId, providerId: hit.providerId });
+      }
+      if (panel.length >= FUSION_PANEL_SIZE) break;
+    }
+    if (panel.length === 0) {
+      throw new NoEligibleProviderError(
+        'fusion',
+        'No eligible models for the fusion panel — no free or healthy models available',
+      );
+    }
+    const question = fusionQuestion(
+      (originalBody.messages ?? []) as { role: string; content: unknown }[],
+    );
+    const started = Date.now();
+    const settled = await Promise.allSettled(
+      panel.map(async (p) => {
+        const draftReq: ChatCompletionRequest = { ...originalBody, model: p.modelId };
+        const res = (await this.deps.chatUseCase.execute(
+          this.fitToContextWindow(draftReq, p.modelId),
+          undefined,
+          AbortSignal.timeout(100_000),
+        )) as ChatCompletionResponse;
+        return { model: p.modelId, text: firstChoiceText(res) };
+      }),
+    );
+    const drafts = settled
+      .filter(
+        (s): s is PromiseFulfilledResult<{ model: string; text: string }> => s.status === 'fulfilled',
+      )
+      .map((s) => s.value)
+      .filter((d) => d.text.trim().length > 0);
+    if (drafts.length === 0) {
+      const firstErr = (settled.find((s) => s.status === 'rejected') as PromiseRejectedResult | undefined)
+        ?.reason;
+      throw firstErr instanceof Error
+        ? firstErr
+        : new NoEligibleProviderError('fusion', 'All fusion panel models failed');
+    }
+    const judgeModel = panel[0]!.modelId;
+    const judgeReq: ChatCompletionRequest = {
+      ...originalBody,
+      model: judgeModel,
+      messages: buildFusionJudgeMessages(question, drafts),
+      maxTokens: Math.min(originalBody.maxTokens ?? 2048, 4096),
+    };
+    try {
+      if (sink) {
+        await this.deps.chatUseCase.execute(
+          this.fitToContextWindow(judgeReq, judgeModel),
+          sink,
+          AbortSignal.timeout(100_000),
+        );
+        return;
+      }
+      const judged = (await this.deps.chatUseCase.execute(
+        this.fitToContextWindow(judgeReq, judgeModel),
+        undefined,
+        AbortSignal.timeout(100_000),
+      )) as ChatCompletionResponse;
+      return { ...judged, model: 'fusion' };
+    } catch {
+      // Judge failed but drafts exist: return the first draft, honestly
+      // labeled as a fusion-panel fallback, instead of failing the request.
+      const fallback = drafts[0]!;
+      return {
+        id: 'chatcmpl-fusion-' + String(Date.now()),
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: 'fusion',
+        choices: [{ index: 0, message: { role: 'assistant', content: fallback.text }, finish_reason: 'stop' }],
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        provider: 'fusion-panel',
+        endpoint: 'fusion-panel',
+        latencyMs: Date.now() - started,
+      };
+    }
+  }
+
+  /**
+   * Manual failover across a pinned chain of fallback MODELS for the resolved
+   * primary. Retried (re-resolved per model) on primary/upstream failure.
+   * When `sink` is set the chunks stream and void resolves; otherwise the
+   * non-streaming response is returned. Throws only if every model in the
+   * chain fails. A `fusion` request is intercepted above and never reaches
+   * the per-model loop (see executeFusion).
    */
   private async executeChatFallbackChain(
     originalBody: ChatCompletionRequest,
@@ -7950,6 +8502,12 @@ export class HttpServer {
     chain: string[],
     sink: ChunkSink | undefined,
   ): Promise<ChatCompletionResponse | void> {
+    // Fusion virtual model (FreeLLMAPI parity): fan-out + judge synthesis.
+    // Intercepted here so every surface (chat, messages, responses,
+    // completions, Gemini, Ollama) gets it through the one choke point.
+    if (isFusionModel((originalBody as { model?: unknown }).model)) {
+      return this.executeFusion(originalBody, sink);
+    }
     const bodyRouting = (originalBody as { routing?: Record<string, unknown> }).routing ?? {};
     const pinnedProvider =
       (request.headers['x-nexus-provider'] as string | undefined)?.trim() ||

@@ -70,6 +70,22 @@ export interface ProviderAdapter {
   ): Promise<EmbeddingResponse>;
 
   /**
+   * OpenAI-style media generation passthrough (optional — only providers
+   * whose upstream serves media models implement it).
+   *
+   * `path` is the OpenAI-format media path (e.g.
+   * `/v1/images/generations`); `body` is the parsed JSON request. Returns
+   * the upstream status, content type and raw bytes so the gateway can
+   * relay JSON and binary (audio) payloads transparently.
+   */
+  media?(
+    endpoint: ProviderEndpoint,
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+  ): Promise<{ readonly status: number; readonly contentType: string; readonly data: Uint8Array }>;
+
+  /**
    * Translate a generic "model" alias into a provider-specific model name.
    */
   resolveModel?(alias: string): string | undefined;
