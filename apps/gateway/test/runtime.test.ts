@@ -31,6 +31,7 @@ describe('GatewayRuntime integration', () => {
     // developer machine would otherwise be a healthy endpoint and absorb the
     // request, turning a 503 into a 200.
     process.env['ANX_DISABLE_ANTIGRAVITY_CLI'] = '1';
+    process.env['ANX_DISABLE_KEYLESS_PROVIDERS'] = '1';
     // Fresh temp vault every run: a stale file from a previous run carries
     // entries encrypted with a different per-run salt, which breaks decrypt.
     rmSync(join(tmpdir(), 'anx-test-vault.json'), { force: true });

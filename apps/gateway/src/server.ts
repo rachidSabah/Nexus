@@ -97,7 +97,6 @@ import {
   ollamaShow,
   ollamaEmbeddingsInput,
   mediaNotAvailable,
-  transcriptionsNotAvailable,
   buildFusionJudgeMessages,
   fusionQuestion,
   FUSION_PANEL_SIZE,
@@ -164,6 +163,7 @@ import type { WorkflowEngine } from '@anx/workflow';
 import { GenericOpenAIAdapter } from '@anx/providers';
 import fastifyCors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
+import fastifyMultipart from '@fastify/multipart';
 import Fastify from 'fastify';
 
 import { AgentDetector } from './agent-detector.js';
@@ -337,6 +337,33 @@ export class HttpServer {
   readonly liveErrorResolver: LiveErrorResolver;
   // WS4-C: detached background task store (survive agent disconnect on long runs)
   readonly taskStore: DetachedTaskStore = new DetachedTaskStore();
+  // Phase 3: 30-minute sticky conversation sessions
+  readonly stickySessions = new Map<string, { sessionId: string; providerId: string; modelId: string; lastActive: number }>();
+
+  getStickySession(sessionId: string): { sessionId: string; providerId: string; modelId: string; lastActive: number } | undefined {
+    const session = this.stickySessions.get(sessionId);
+    if (!session) return undefined;
+    if (Date.now() - session.lastActive > 30 * 60 * 1000) {
+      this.stickySessions.delete(sessionId);
+      return undefined;
+    }
+    return session;
+  }
+
+  setStickySession(sessionId: string, providerId: string, modelId: string): void {
+    this.stickySessions.set(sessionId, {
+      sessionId,
+      providerId,
+      modelId,
+      lastActive: Date.now(),
+    });
+    if (this.stickySessions.size > 1000) {
+      const cutoff = Date.now() - 30 * 60 * 1000;
+      for (const [id, s] of this.stickySessions.entries()) {
+        if (s.lastActive < cutoff) this.stickySessions.delete(id);
+      }
+    }
+  }
 
   constructor(private readonly deps: HttpServerDeps) {
     this.fastify = Fastify({ logger: false });
@@ -459,6 +486,24 @@ export class HttpServer {
     });
     // ── Phase 19/31: request correlation ids + secret-redaction hook ──
     this.fastify.addHook('onRequest', async (request) => {
+      // FreeLLMAPI parity: URL token prefix /v1/t/:token/*
+      // Extracts :token from URL, sets Bearer auth if header is absent, and rewrites raw.url to /v1/*
+      const rawUrl = request.raw.url ?? request.url ?? '';
+      if (rawUrl.startsWith('/v1/t/')) {
+        const urlObj = new URL(rawUrl, 'http://127.0.0.1');
+        const m = urlObj.pathname.match(/^\/v1\/t\/([^/]+)(\/.*)?$/);
+        if (m && m[1]) {
+          const token = m[1];
+          const rest = m[2] ?? '';
+          if (!request.headers['authorization']) {
+            request.headers['authorization'] = `Bearer ${token}`;
+          }
+          const rewritten = `/v1${rest}${urlObj.search}`;
+          request.raw.url = rewritten;
+          (request as unknown as { url: string }).url = rewritten;
+        }
+      }
+
       const headers = request.headers as Record<string, string | undefined>;
       const reqId = headers['x-nexus-request-id'] || headers['x-request-id'] || newRequestId();
       const missionId = headers['x-nexus-mission-id'];
@@ -608,6 +653,11 @@ export class HttpServer {
       credentials: this.deps.config.server.cors.credentials,
     });
     await this.fastify.register(fastifyWebsocket);
+    await this.fastify.register(fastifyMultipart, {
+      limits: {
+        fileSize: 50 * 1024 * 1024,
+      },
+    });
 
     this.registerRoutes();
 
@@ -1277,7 +1327,7 @@ export class HttpServer {
     // When a discovered model has pricing/capabilities, those are included
     // so the dashboard can show "free" badges and capability icons.
     const handleModels = async (request: any, reply: any) => {
-      const q = request.query as { free?: string; capability?: string; include_policies?: string };
+      const q = request.query as { free?: string; capability?: string; include_policies?: string; available?: string };
       const models = new Map<string, {
         id: string;
         object: 'model';
@@ -1291,6 +1341,9 @@ export class HttpServer {
         health_reason?: string;
         /** Last upstream error seen for this model's provider, if any. */
         last_error?: string;
+        routable?: boolean;
+        execution_status?: 'ready' | 'degraded' | 'unavailable';
+        available?: boolean;
         agentSnippets?: {
           claudeCode?: string;
           codexCli?: string;
@@ -1491,7 +1544,31 @@ export class HttpServer {
         }
       }
 
-      return { object: 'list', data: Array.from(models.values()) };
+      // FreeLLMAPI parity: compute execution_status and available flags
+      for (const [id, entry] of models.entries()) {
+        const isDegraded = entry.health === 'degraded';
+        const isDown = entry.health === 'unhealthy' || entry.health === 'circuit_open' || entry.routable === false;
+
+        const execution_status: 'ready' | 'degraded' | 'unavailable' = isDown
+          ? 'unavailable'
+          : isDegraded
+            ? 'degraded'
+            : 'ready';
+        const available = execution_status !== 'unavailable';
+
+        models.set(id, {
+          ...entry,
+          execution_status,
+          available,
+        });
+      }
+
+      let data = Array.from(models.values());
+      if (q.available === 'true') {
+        data = data.filter((m) => m.available === true && m.execution_status !== 'unavailable');
+      }
+
+      return { object: 'list', data };
     };
     this.fastify.get('/v1/models', handleModels);
     this.fastify.get('/models', handleModels);
@@ -4887,25 +4964,50 @@ export class HttpServer {
     // endpoint's own OpenAI-compatible media path via the adapter's key
     // resolution. Transcriptions need multipart ingest (unsupported) and
     // answer an honest 501.
-    const resolveMediaEndpoint = (requestedModel: string) => {
+    const resolveMediaEndpoint = (requestedModel: string, kind: 'image' | 'audio' | 'video' = 'image') => {
       const endpoints = this.deps.routing.listEndpoints();
-      let endpoint = endpoints.find(
-        (e) => e.tags.includes(requestedModel) || e.id === requestedModel || e.providerId === requestedModel,
-      );
+      let endpoint: ProviderEndpoint | undefined;
+      if (requestedModel && requestedModel !== 'auto' && requestedModel !== 'default') {
+        endpoint = endpoints.find(
+          (e) => e.tags.includes(requestedModel) || e.id === requestedModel || e.providerId === requestedModel,
+        );
+        if (!endpoint) {
+          const modelEntry = this.deps.modelRegistry.list().find((m) => m.id === requestedModel);
+          if (modelEntry) endpoint = endpoints.find((e) => e.providerId === modelEntry.providerId);
+        }
+      }
       if (!endpoint) {
-        const modelEntry = this.deps.modelRegistry.list().find((m) => m.id === requestedModel);
-        if (modelEntry) endpoint = endpoints.find((e) => e.providerId === modelEntry.providerId);
+        if (kind === 'image') {
+          endpoint = endpoints.find(
+            (e) => e.providerId === 'pollinations' ||
+                   e.providerId === 'openai' ||
+                   e.providerId === 'together' ||
+                   e.providerId === 'openrouter' ||
+                   e.providerId === 'aihorde' ||
+                   e.capabilities?.supportedModalities?.includes('image') ||
+                   e.capabilities?.vision,
+          );
+        } else if (kind === 'audio') {
+          endpoint = endpoints.find(
+            (e) => e.providerId === 'openai' ||
+                   e.providerId === 'groq' ||
+                   e.providerId === 'elevenlabs' ||
+                   e.capabilities?.speech ||
+                   e.capabilities?.audio ||
+                   e.capabilities?.supportedModalities?.includes('audio'),
+          );
+        }
       }
       return { endpoints, endpoint };
     };
-    const handleMedia = (upstreamPath: string) => async (request: any, reply: any) => {
+    const handleMedia = (upstreamPath: string, kind: 'image' | 'audio' | 'video' = 'image') => async (request: any, reply: any) => {
       const body = request.body as { model?: string } | null | undefined;
       const requestedModel = body?.model ?? 'auto';
       const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
       const authz = this.requirePermission(principal, 'gateway:chat', requestedModel, reply);
       if (authz === 'deny') return reply;
       const aliasResolution = this.deps.aliasRegistry.resolveIfAlias(requestedModel);
-      const { endpoints, endpoint } = resolveMediaEndpoint(aliasResolution.model);
+      const { endpoints, endpoint } = resolveMediaEndpoint(aliasResolution.model, kind);
       if (!endpoint) {
         return reply.code(404).send({ error: { message: 'No provider for model ' + requestedModel } });
       }
@@ -4923,13 +5025,130 @@ export class HttpServer {
         return reply.code(500).send({ error: { message: (err as Error).message } });
       }
     };
-    this.fastify.post('/v1/images/generations', handleMedia('/images/generations'));
-    this.fastify.post('/v1/videos/generations', handleMedia('/videos/generations'));
-    this.fastify.post('/v1/audio/speech', handleMedia('/audio/speech'));
-    this.fastify.post('/v1/audio/transcriptions', async (_request: unknown, reply: any) => {
-      const t = transcriptionsNotAvailable();
-      return reply.code(t.status).send(t.body);
+    this.fastify.post('/v1/images/generations', handleMedia('/images/generations', 'image'));
+    this.fastify.post('/v1/videos/generations', handleMedia('/videos/generations', 'video'));
+    this.fastify.post('/v1/audio/speech', handleMedia('/audio/speech', 'audio'));
+    this.fastify.post('/v1/audio/transcriptions', async (request: any, reply: any) => {
+      const principal = await this.authenticate(request.headers['authorization'] as string | undefined);
+      const authz = this.requirePermission(principal, 'gateway:chat', 'whisper-1', reply);
+      if (authz === 'deny') return reply;
+
+      let audioBuffer: Buffer | null = null;
+      let filename = 'audio.mp3';
+      let mimetype = 'audio/mpeg';
+      const fields: Record<string, string> = {};
+
+      if (typeof request.isMultipart === 'function' && request.isMultipart()) {
+        try {
+          const parts = request.parts();
+          for await (const part of parts) {
+            if (part.type === 'file') {
+              audioBuffer = await part.toBuffer();
+              filename = part.filename || filename;
+              mimetype = part.mimetype || mimetype;
+            } else {
+              fields[part.fieldname] = String(part.value);
+            }
+          }
+        } catch (err) {
+          return reply.code(400).send({ error: { message: 'Failed to parse multipart audio request: ' + (err as Error).message } });
+        }
+      } else if (request.body && typeof request.body === 'object') {
+        const b = request.body as Record<string, any>;
+        Object.assign(fields, b);
+        if (b.file) {
+          if (Buffer.isBuffer(b.file)) {
+            audioBuffer = b.file;
+          } else if (typeof b.file === 'string') {
+            audioBuffer = Buffer.from(b.file, 'base64');
+          }
+        }
+      }
+
+      const requestedModel = fields.model || 'whisper-1';
+      const endpoints = this.deps.routing.listEndpoints();
+      let endpoint = endpoints.find(
+        (e) => e.providerId === requestedModel || e.tags.includes(requestedModel) || e.id === requestedModel,
+      );
+      if (!endpoint) {
+        endpoint = endpoints.find(
+          (e) => e.capabilities?.audio === true ||
+                 e.capabilities?.supportedModalities?.includes('audio') ||
+                 e.providerId === 'groq' ||
+                 e.providerId === 'openai',
+        );
+      }
+
+      if (!endpoint) {
+        return reply.code(503).send({
+          error: {
+            message: 'No audio transcription provider available. Configure Groq (GROQ_API_KEY) or OpenAI (OPENAI_API_KEY) for Whisper audio transcription.',
+            code: 'TRANSCRIPTION_UNAVAILABLE',
+          },
+        });
+      }
+
+      try {
+        const adapter = this.deps.adapters.get(endpoint.providerId);
+        const apiKey = (adapter as any)?.getApiKey ? (adapter as any).getApiKey(endpoint) : (endpoint as any).apiKey;
+        const baseUrl = (adapter as any)?.resolveBase ? (adapter as any).resolveBase(endpoint) : endpoint.baseUrl;
+        const upstreamUrl = `${baseUrl.replace(/\/+$/, '')}/audio/transcriptions`;
+
+        const formData = new FormData();
+        if (audioBuffer) {
+          const blob = new Blob([audioBuffer], { type: mimetype });
+          formData.append('file', blob, filename);
+        }
+        formData.append('model', fields.model || 'whisper-1');
+        if (fields.language) formData.append('language', fields.language);
+        if (fields.prompt) formData.append('prompt', fields.prompt);
+        if (fields.response_format) formData.append('response_format', fields.response_format);
+        if (fields.temperature) formData.append('temperature', fields.temperature);
+
+        const upstreamHeaders: Record<string, string> = {};
+        if (apiKey) {
+          upstreamHeaders['Authorization'] = `Bearer ${apiKey}`;
+        }
+
+        const upstreamResp = await fetch(upstreamUrl, {
+          method: 'POST',
+          headers: upstreamHeaders,
+          body: formData,
+          signal: AbortSignal.timeout(120_000),
+        });
+
+        const respText = await upstreamResp.text();
+        reply.header('Content-Type', upstreamResp.headers.get('content-type') || 'application/json');
+        reply.header(X_ROUTED_VIA, routedVia(endpoint.providerId, requestedModel));
+        return reply.code(upstreamResp.status).send(respText);
+      } catch (err) {
+        return reply.code(500).send({ error: { message: (err as Error).message } });
+      }
     });
+
+    // ── FreeLLMAPI parity: /v1/t/:token/* URL token routing ──────────────
+    const forwardUrlToken = async (request: any, reply: any) => {
+      const token = request.params.token;
+      const wildcard = request.params['*'] ?? '';
+      if (!request.headers['authorization']) {
+        request.headers['authorization'] = `Bearer ${token}`;
+      }
+      const targetUrl = `/v1${wildcard ? (wildcard.startsWith('/') ? wildcard : '/' + wildcard) : ''}`;
+      const query = request.query ? '?' + new URLSearchParams(request.query).toString() : '';
+      return this.fastify.inject({
+        method: request.method,
+        url: targetUrl + query,
+        headers: request.headers,
+        payload: request.body,
+      }).then((res) => {
+        for (const [k, v] of Object.entries(res.headers)) {
+          if (v !== undefined) reply.header(k, v);
+        }
+        return reply.code(res.statusCode).send(res.rawPayload);
+      });
+    };
+    this.fastify.all('/v1/t/:token/*', forwardUrlToken);
+    this.fastify.all('/v1/t/:token', forwardUrlToken);
 
     // ── FreeLLMAPI parity: native Gemini /v1beta ─────────────────────────
     // Gemini CLI speaks generateContent/streamGenerateContent/countTokens on
@@ -8514,11 +8733,22 @@ export class HttpServer {
       (request.query as { provider?: string })?.provider?.trim() ||
       undefined;
 
+    // Phase 3: 30-minute sticky conversation session resolution
+    const sessionId =
+      (request?.headers?.['x-session-id'] as string | undefined)?.trim() ||
+      (request?.headers?.['x-nexus-session-id'] as string | undefined)?.trim() ||
+      (request?.headers?.['x-conversation-id'] as string | undefined)?.trim() ||
+      (originalBody as { session_id?: string })?.session_id ||
+      (originalBody as { conversation_id?: string })?.conversation_id ||
+      undefined;
+    const activeSession = sessionId ? this.getStickySession(sessionId) : undefined;
+
     const buildEffective = (requestedModel: string): ChatCompletionRequest => {
       const ar = this.deps.aliasRegistry.resolveIfAlias(requestedModel);
       const hint = this.preferredProviderFor(ar.model, ar.resolution);
       const extra: Record<string, unknown> = { ...bodyRouting };
       if (pinnedProvider) extra.preferredProviders = [pinnedProvider];
+      else if (activeSession?.providerId) extra.preferredProviders = [activeSession.providerId];
       else if (hint) extra.preferredProviders = [hint];
       const eb: ChatCompletionRequest = { ...originalBody, model: ar.model, routing: extra as ChatCompletionRequest['routing'] };
       return eb;
@@ -8529,15 +8759,40 @@ export class HttpServer {
       const requestedModel = chain[i]!;
       const effectiveBody = buildEffective(requestedModel);
       const targetProvider = this.preferredProviderFor(effectiveBody.model, undefined);
+
+      // Failover context-handoff synthesis:
+      // If previous model failed (i > 0), synthesize a continuity bridge
+      if (i > 0) {
+        const failedModel = chain[i - 1]!;
+        const handoffNotice = `[Nexus Continuity Handoff: Execution transferred from ${failedModel} to ${effectiveBody.model}. Conversation context preserved.]`;
+        const updatedMessages = [...effectiveBody.messages];
+        const sysIdx = updatedMessages.findIndex((m) => m.role === 'system');
+        if (sysIdx >= 0 && typeof updatedMessages[sysIdx]?.content === 'string') {
+          updatedMessages[sysIdx] = {
+            ...updatedMessages[sysIdx]!,
+            content: `${updatedMessages[sysIdx]!.content}\n\n${handoffNotice}`,
+          };
+        } else {
+          updatedMessages.unshift({ role: 'system', content: handoffNotice });
+        }
+        (effectiveBody as unknown as { messages: typeof updatedMessages }).messages = updatedMessages;
+      }
+
       try {
         if (sink) {
           await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), sink, new AbortController().signal);
           if (targetProvider) this.errorRegistry.recordSuccess(targetProvider, undefined, effectiveBody.model);
+          if (sessionId) {
+            this.setStickySession(sessionId, targetProvider ?? 'auto', effectiveBody.model);
+          }
           return;
         }
         const res = await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, effectiveBody.model), undefined, new AbortController().signal);
         const actualProvider = (res as { provider?: string })?.provider ?? targetProvider;
         if (actualProvider) this.errorRegistry.recordSuccess(actualProvider, undefined, effectiveBody.model);
+        if (sessionId) {
+          this.setStickySession(sessionId, actualProvider ?? 'auto', effectiveBody.model);
+        }
         return res;
       } catch (err) {
         lastErr = err;

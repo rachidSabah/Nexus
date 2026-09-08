@@ -29,7 +29,11 @@ import type {
   IncidentRepositoryPort,
   IncidentStatus,
   SubsystemName,
+  DailyQuotaLedgerPort,
+  DailyQuotaUsageRecord,
+  DailyQuotaCheckResult,
 } from '@anx/core';
+import { currentDayUtc, nextUtcMidnight, msUntilUtcMidnight } from '@anx/core';
 
 // ─── Domain Models for Durable State ────────────────────────────────────────
 
@@ -104,6 +108,7 @@ export interface BackupBundle {
     checkpoints: MissionCheckpoint[];
     agentExecutions: DurableAgentExecution[];
     incidents?: RuntimeIncident[];
+    dailyQuotaLedger?: DailyQuotaUsageRecord[];
     auditLogs: Array<{
       id: string;
       occurredAt: string;
@@ -286,6 +291,10 @@ function createSqliteEmulator(filePath: string): SqliteDB {
             const rec = store.get('runtime_incidents')?.get(params[0] as string);
             return rec ? { data: rec.data } : undefined;
           }
+          if (normSql.includes('FROM daily_quota_ledger WHERE key_id = ? AND provider_id = ? AND model_id = ? AND day_utc = ?')) {
+            const compositeKey = `${params[0]}:${params[1]}:${params[2]}:${params[3]}`;
+            return store.get('daily_quota_ledger')?.get(compositeKey);
+          }
           return undefined;
         },
         all: (...params: unknown[]) => {
@@ -315,6 +324,26 @@ function createSqliteEmulator(filePath: string): SqliteDB {
           }
           if (normSql.includes('FROM api_keys_metadata')) {
             return Array.from(store.get('api_keys_metadata')?.values() ?? []);
+          }
+          if (normSql.includes('FROM daily_quota_ledger')) {
+            let list = Array.from(store.get('daily_quota_ledger')?.values() ?? []);
+            const keyMatch = normSql.match(/key_id\s*=\s*\?/);
+            const providerMatch = normSql.match(/provider_id\s*=\s*\?/);
+            const dayMatch = normSql.match(/day_utc\s*=\s*\?/);
+            let pIdx = 0;
+            if (keyMatch) {
+              const k = params[pIdx++] as string;
+              list = list.filter((r: any) => r.key_id === k);
+            }
+            if (providerMatch) {
+              const p = params[pIdx++] as string;
+              list = list.filter((r: any) => r.provider_id === p);
+            }
+            if (dayMatch) {
+              const d = params[pIdx++] as string;
+              list = list.filter((r: any) => r.day_utc === d);
+            }
+            return list;
           }
           if (normSql.includes('FROM runtime_incidents')) {
             let list = Array.from(store.get('runtime_incidents')?.values() ?? []);
@@ -451,6 +480,35 @@ function createSqliteEmulator(filePath: string): SqliteDB {
               updated_at: params[7],
             });
             store.set('runtime_incidents', tbl);
+          } else if (normSql.includes('INTO daily_quota_ledger')) {
+            const tbl = store.get('daily_quota_ledger') ?? new Map();
+            const compositeKey = `${params[0]}:${params[1]}:${params[2]}:${params[3]}`;
+            tbl.set(compositeKey, {
+              key_id: params[0],
+              provider_id: params[1],
+              model_id: params[2],
+              day_utc: params[3],
+              requests: params[4],
+              tokens: params[5],
+              errors: params[6],
+              updated_at: params[7],
+            });
+            store.set('daily_quota_ledger', tbl);
+          } else if (normSql.includes('DELETE FROM daily_quota_ledger WHERE day_utc = ?')) {
+            const tbl = store.get('daily_quota_ledger');
+            if (tbl) {
+              for (const [k, v] of tbl.entries()) {
+                if ((v as any)?.day_utc === params[0]) tbl.delete(k);
+              }
+            }
+          } else if (normSql.includes('DELETE FROM daily_quota_ledger WHERE day_utc < ?')) {
+            const tbl = store.get('daily_quota_ledger');
+            if (tbl) {
+              const cutoff = String(params[0]);
+              for (const [k, v] of tbl.entries()) {
+                if ((v as any)?.day_utc < cutoff) tbl.delete(k);
+              }
+            }
           }
           persist();
         },
@@ -465,7 +523,7 @@ function createSqliteEmulator(filePath: string): SqliteDB {
 // ─── Schema Migrator ────────────────────────────────────────────────────────
 
 export class SchemaMigrationManager {
-  static readonly CURRENT_SCHEMA_VERSION = 3;
+  static readonly CURRENT_SCHEMA_VERSION = 4;
 
   static async applyMigrations(db: SqliteDB): Promise<number> {
     db.exec(`
@@ -589,6 +647,27 @@ export class SchemaMigrationManager {
       db.prepare('INSERT OR REPLACE INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)')
         .run(3, 'Phase 34 Runtime Intelligence incidents, anomalies, and remediation history', new Date().toISOString());
       current = 3;
+    }
+
+    if (current < 4) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS daily_quota_ledger (
+          key_id TEXT NOT NULL,
+          provider_id TEXT NOT NULL,
+          model_id TEXT NOT NULL,
+          day_utc TEXT NOT NULL,
+          requests INTEGER NOT NULL DEFAULT 0,
+          tokens INTEGER NOT NULL DEFAULT 0,
+          errors INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (key_id, provider_id, model_id, day_utc)
+        );
+        CREATE INDEX IF NOT EXISTS idx_quota_key_day ON daily_quota_ledger(key_id, day_utc);
+        CREATE INDEX IF NOT EXISTS idx_quota_provider_day ON daily_quota_ledger(provider_id, day_utc);
+      `);
+      db.prepare('INSERT OR REPLACE INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)')
+        .run(4, 'Phase 35 Daily quota ledger with UTC midnight resets', new Date().toISOString());
+      current = 4;
     }
 
     return current;
@@ -1036,6 +1115,225 @@ export class DurableIncidentStore implements IncidentRepositoryPort {
   }
 }
 
+// ─── Durable Quota Ledger (Phase 35) ────────────────────────────────────────
+
+export class DurableQuotaLedger implements DailyQuotaLedgerPort {
+  private dbPromise: Promise<SqliteDB> | undefined;
+
+  constructor(private readonly opts: SqliteAdapterOptions) {}
+
+  private async db() {
+    if (!this.dbPromise) {
+      this.dbPromise = openSqlite(this.opts.path).then(async (db) => {
+        await SchemaMigrationManager.applyMigrations(db);
+        return db;
+      });
+    }
+    return this.dbPromise;
+  }
+
+  async recordUsage(params: {
+    keyId: string;
+    providerId: string;
+    modelId?: string;
+    tokens?: number;
+    isError?: boolean;
+    timestamp?: number;
+  }): Promise<void> {
+    const db = await this.db();
+    const ts = params.timestamp ?? Date.now();
+    const day = currentDayUtc(new Date(ts));
+    const model = params.modelId ?? '*';
+    const addedTokens = params.tokens ?? 0;
+    const isErr = params.isError ? 1 : 0;
+
+    const existing = db.prepare(
+      'SELECT requests, tokens, errors FROM daily_quota_ledger WHERE key_id = ? AND provider_id = ? AND model_id = ? AND day_utc = ?'
+    ).get(params.keyId, params.providerId, model, day) as { requests: number; tokens: number; errors: number } | undefined;
+
+    const newRequests = (existing?.requests ?? 0) + 1;
+    const newTokens = (existing?.tokens ?? 0) + addedTokens;
+    const newErrors = (existing?.errors ?? 0) + isErr;
+
+    db.prepare(`
+      INSERT OR REPLACE INTO daily_quota_ledger (key_id, provider_id, model_id, day_utc, requests, tokens, errors, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      params.keyId,
+      params.providerId,
+      model,
+      day,
+      newRequests,
+      newTokens,
+      newErrors,
+      ts,
+    );
+  }
+
+  async getKeyDailyUsage(keyId: string, dayUtc?: string): Promise<{
+    requests: number;
+    tokens: number;
+    errors: number;
+    dayUtc: string;
+    resetAtUtc: number;
+    msUntilReset: number;
+  }> {
+    const db = await this.db();
+    const day = dayUtc ?? currentDayUtc();
+    const rows = db.prepare(
+      'SELECT requests, tokens, errors FROM daily_quota_ledger WHERE key_id = ? AND day_utc = ?'
+    ).all(keyId, day) as Array<{ requests: number; tokens: number; errors: number }>;
+
+    let requests = 0;
+    let tokens = 0;
+    let errors = 0;
+    for (const r of rows) {
+      requests += r.requests;
+      tokens += r.tokens;
+      errors += r.errors;
+    }
+
+    const resetAtUtc = nextUtcMidnight();
+    return {
+      requests,
+      tokens,
+      errors,
+      dayUtc: day,
+      resetAtUtc,
+      msUntilReset: msUntilUtcMidnight(),
+    };
+  }
+
+  async getProviderDailyUsage(providerId: string, dayUtc?: string): Promise<{
+    requests: number;
+    tokens: number;
+    errors: number;
+    dayUtc: string;
+    resetAtUtc: number;
+    msUntilReset: number;
+  }> {
+    const db = await this.db();
+    const day = dayUtc ?? currentDayUtc();
+    const rows = db.prepare(
+      'SELECT requests, tokens, errors FROM daily_quota_ledger WHERE provider_id = ? AND day_utc = ?'
+    ).all(providerId, day) as Array<{ requests: number; tokens: number; errors: number }>;
+
+    let requests = 0;
+    let tokens = 0;
+    let errors = 0;
+    for (const r of rows) {
+      requests += r.requests;
+      tokens += r.tokens;
+      errors += r.errors;
+    }
+
+    const resetAtUtc = nextUtcMidnight();
+    return {
+      requests,
+      tokens,
+      errors,
+      dayUtc: day,
+      resetAtUtc,
+      msUntilReset: msUntilUtcMidnight(),
+    };
+  }
+
+  async checkQuota(
+    keyId: string,
+    limits: { maxDailyRequests?: number; maxDailyTokens?: number },
+    dayUtc?: string,
+  ): Promise<DailyQuotaCheckResult> {
+    const usage = await this.getKeyDailyUsage(keyId, dayUtc);
+    let allowed = true;
+    let remainingRequests: number | undefined;
+    let remainingTokens: number | undefined;
+
+    if (limits.maxDailyRequests !== undefined) {
+      remainingRequests = Math.max(0, limits.maxDailyRequests - usage.requests);
+      if (usage.requests >= limits.maxDailyRequests) {
+        allowed = false;
+      }
+    }
+
+    if (limits.maxDailyTokens !== undefined) {
+      remainingTokens = Math.max(0, limits.maxDailyTokens - usage.tokens);
+      if (usage.tokens >= limits.maxDailyTokens) {
+        allowed = false;
+      }
+    }
+
+    return {
+      allowed,
+      remainingRequests,
+      remainingTokens,
+      requestsToday: usage.requests,
+      tokensToday: usage.tokens,
+      errorsToday: usage.errors,
+      dayUtc: usage.dayUtc,
+      resetAtUtc: usage.resetAtUtc,
+      msUntilReset: usage.msUntilReset,
+    };
+  }
+
+  async listEntries(filter?: { keyId?: string; providerId?: string; dayUtc?: string }): Promise<DailyQuotaUsageRecord[]> {
+    const db = await this.db();
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filter?.keyId) {
+      conditions.push('key_id = ?');
+      params.push(filter.keyId);
+    }
+    if (filter?.providerId) {
+      conditions.push('provider_id = ?');
+      params.push(filter.providerId);
+    }
+    if (filter?.dayUtc) {
+      conditions.push('day_utc = ?');
+      params.push(filter.dayUtc);
+    }
+
+    let sql = 'SELECT key_id, provider_id, model_id, day_utc, requests, tokens, errors, updated_at FROM daily_quota_ledger';
+    if (conditions.length > 0) {
+      sql += ` WHERE ${conditions.join(' AND ')}`;
+    }
+    sql += ' ORDER BY updated_at DESC';
+
+    const rows = db.prepare(sql).all(...params) as Array<{
+      key_id: string;
+      provider_id: string;
+      model_id: string;
+      day_utc: string;
+      requests: number;
+      tokens: number;
+      errors: number;
+      updated_at: number;
+    }>;
+
+    return rows.map((r) => ({
+      keyId: r.key_id,
+      providerId: r.provider_id,
+      modelId: r.model_id,
+      dayUtc: r.day_utc,
+      requests: r.requests,
+      tokens: r.tokens,
+      errors: r.errors,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async resetDay(dayUtc: string): Promise<void> {
+    const db = await this.db();
+    db.prepare('DELETE FROM daily_quota_ledger WHERE day_utc = ?').run(dayUtc);
+  }
+
+  async pruneOldDays(keepDays = 30): Promise<void> {
+    const db = await this.db();
+    const cutoff = new Date(Date.now() - keepDays * 86_400_000).toISOString().slice(0, 10);
+    db.prepare('DELETE FROM daily_quota_ledger WHERE day_utc < ?').run(cutoff);
+  }
+}
+
 // ─── Backup & Restore Engine ────────────────────────────────────────────────
 
 export class BackupRestoreEngine {
@@ -1052,6 +1350,16 @@ export class BackupRestoreEngine {
     const checkpoints = (db.prepare('SELECT data FROM mission_checkpoints').all() as any[]).map((r) => JSON.parse(r.data));
     const agentExecutions = (db.prepare('SELECT data FROM agent_executions').all() as any[]).map((r) => JSON.parse(r.data));
     const incidents = (db.prepare('SELECT data FROM runtime_incidents').all() as any[]).map((r) => JSON.parse(r.data));
+    const dailyQuotaLedger = (db.prepare('SELECT * FROM daily_quota_ledger').all() as any[]).map((r) => ({
+      keyId: r.key_id,
+      providerId: r.provider_id,
+      modelId: r.model_id,
+      dayUtc: r.day_utc,
+      requests: r.requests,
+      tokens: r.tokens,
+      errors: r.errors,
+      updatedAt: r.updated_at,
+    }));
     const auditLogs = (db.prepare('SELECT * FROM audit_log ORDER BY occurred_at DESC LIMIT 5000').all() as any[]).map((r) => ({
       id: r.id,
       occurredAt: r.occurred_at,
@@ -1071,6 +1379,7 @@ export class BackupRestoreEngine {
       checkpoints,
       agentExecutions,
       incidents,
+      dailyQuotaLedger,
       auditLogs,
     };
 
@@ -1150,6 +1459,24 @@ export class BackupRestoreEngine {
       counts['incidents'] = (counts['incidents'] ?? 0) + 1;
     }
 
+    for (const q of bundle.data.dailyQuotaLedger ?? []) {
+      db.prepare(`
+        INSERT OR REPLACE INTO daily_quota_ledger (
+          key_id, provider_id, model_id, day_utc, requests, tokens, errors, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        q.keyId,
+        q.providerId,
+        q.modelId,
+        q.dayUtc,
+        q.requests,
+        q.tokens,
+        q.errors,
+        q.updatedAt ?? Date.now(),
+      );
+      counts['dailyQuotaLedger'] = (counts['dailyQuotaLedger'] ?? 0) + 1;
+    }
+
     return { restoredCounts: counts };
   }
 }
@@ -1170,6 +1497,7 @@ export interface PersistenceLayer {
   readonly idempotency?: DurableIdempotencyStore;
   readonly agentExecutions?: DurableAgentExecutionStore;
   readonly incidents?: DurableIncidentStore;
+  readonly quotaLedger?: DurableQuotaLedger;
   readonly backupRestore?: BackupRestoreEngine;
 }
 
@@ -1180,6 +1508,7 @@ export function createPersistence(config: PersistenceConfig): PersistenceLayer {
         endpoints: new InMemoryEndpointRepository(),
         auditLog: new InMemoryAuditLogRepository(),
         incidents: new DurableIncidentStore(),
+        quotaLedger: new DurableQuotaLedger({ path: ':memory:' }),
       };
     case 'sqlite': {
       if (!config.sqlitePath) throw new Error('sqlitePath required for sqlite backend');
@@ -1191,6 +1520,7 @@ export function createPersistence(config: PersistenceConfig): PersistenceLayer {
         idempotency: new DurableIdempotencyStore(opts),
         agentExecutions: new DurableAgentExecutionStore(opts),
         incidents: new DurableIncidentStore(opts),
+        quotaLedger: new DurableQuotaLedger(opts),
         backupRestore: new BackupRestoreEngine(config.sqlitePath),
       };
     }

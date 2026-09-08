@@ -7,6 +7,12 @@ import {
   ModelScopeAdapter,
   ElectronHubAdapter,
   ExperientialAdapter,
+  KiloGatewayAdapter,
+  PollinationsAdapter,
+  AiHordeAdapter,
+  RadeonAdapter,
+  AnyApiAdapter,
+  GitHubModelsAdapter,
   createDefaultAdapters,
   SUPPORTED_PROVIDERS,
 } from '../src/index.js';
@@ -297,3 +303,118 @@ describe('ModelScope chat-probe health check', () => {
     expect(ok).toBe(false);
   });
 });
+
+describe('keyless free providers (Kilo, Pollinations, AI Horde)', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('registers Kilo, Pollinations, and AI Horde in default adapters', () => {
+    const map = createDefaultAdapters();
+    expect(map.get('kilo')).toBeInstanceOf(KiloGatewayAdapter);
+    expect(map.get('pollinations')).toBeInstanceOf(PollinationsAdapter);
+    expect(map.get('aihorde')).toBeInstanceOf(AiHordeAdapter);
+    expect(map.get('horde')).toBe(map.get('aihorde'));
+  });
+
+  it('Kilo allows keyless requests and omits Authorization when key is empty', () => {
+    const adapter = new KiloGatewayAdapter();
+    const ep = makeEndpoint({ providerId: 'kilo', apiKey: undefined });
+    const key = (adapter as unknown as { getApiKey: (e: ProviderEndpoint) => string }).getApiKey(ep);
+    expect(key).toBe('');
+    const headers = (adapter as unknown as { headers: (e: ProviderEndpoint, k: string) => Record<string, string> }).headers(ep, key);
+    expect(headers['Authorization']).toBeUndefined();
+
+    // When key is provided, sets Authorization
+    const headersWithKey = (adapter as unknown as { headers: (e: ProviderEndpoint, k: string) => Record<string, string> }).headers(ep, 'kilo-secret');
+    expect(headersWithKey['Authorization']).toBe('Bearer kilo-secret');
+  });
+
+  it('Pollinations is completely keyless and discovers models', async () => {
+    const adapter = new PollinationsAdapter();
+    const ep = makeEndpoint({ providerId: 'pollinations', apiKey: undefined });
+    const key = (adapter as unknown as { getApiKey: (e: ProviderEndpoint) => string }).getApiKey(ep);
+    expect(key).toBe('');
+    const headers = (adapter as unknown as { headers: (e: ProviderEndpoint, k: string) => Record<string, string> }).headers(ep, key);
+    expect(headers['Authorization']).toBeUndefined();
+
+    // Mock models endpoint returning array of objects
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [{ name: 'openai' }, { name: 'mistral' }],
+    })));
+
+    const models = await adapter.discoverModels(ep, new AbortController().signal);
+    expect(models).toHaveLength(2);
+    expect(models[0].id).toBe('openai');
+    expect(models[0].isFree).toBe(true);
+    expect(models[0].providerId).toBe('pollinations');
+  });
+
+  it('AI Horde defaults to anonymous key 0000000000 and sets Client-Agent', () => {
+    const adapter = new AiHordeAdapter();
+    const ep = makeEndpoint({ providerId: 'aihorde', apiKey: undefined });
+    const key = (adapter as unknown as { getApiKey: (e: ProviderEndpoint) => string }).getApiKey(ep);
+    expect(key).toBe('0000000000');
+
+    const headers = (adapter as unknown as { headers: (e: ProviderEndpoint, k: string) => Record<string, string> }).headers(ep, key);
+    expect(headers['Authorization']).toBe('Bearer 0000000000');
+    expect(headers['Client-Agent']).toBe('Nexus:0.5.0:nexus@local');
+  });
+});
+
+describe('specialized presets (Radeon, AnyAPI, GitHub Models)', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('registers Radeon, AnyAPI, and GitHub Models in default adapters and aliases', () => {
+    const map = createDefaultAdapters();
+    expect(map.get('radeon')).toBeInstanceOf(RadeonAdapter);
+    expect(map.get('amd')).toBe(map.get('radeon'));
+    expect(map.get('anyapi')).toBeInstanceOf(AnyApiAdapter);
+    expect(map.get('github')).toBeInstanceOf(GitHubModelsAdapter);
+    expect(map.get('gh')).toBe(map.get('github'));
+  });
+
+  it('Radeon forces single tool call and parallel_tool_calls: false', () => {
+    const adapter = new RadeonAdapter();
+    const req: ChatCompletionRequest = {
+      model: 'deepseek-r1',
+      messages: [{ role: 'user', content: 'hello' }],
+      tools: [
+        { type: 'function', function: { name: 'tool1' } },
+        { type: 'function', function: { name: 'tool2' } },
+      ],
+    };
+    const translated = (adapter as unknown as {
+      translateRequest: (r: ChatCompletionRequest, s: boolean) => Record<string, unknown>;
+    }).translateRequest(req, false);
+
+    expect(Array.isArray(translated['tools'])).toBe(true);
+    expect((translated['tools'] as unknown[]).length).toBe(1);
+    expect(translated['parallel_tool_calls']).toBe(false);
+  });
+
+  it('GitHub Models sets User-Agent and honors GITHUB_TOKEN', () => {
+    vi.stubEnv('GITHUB_TOKEN', 'ghp_secret');
+    const adapter = new GitHubModelsAdapter();
+    const ep = makeEndpoint({ providerId: 'github', apiKey: undefined });
+    const key = (adapter as unknown as { getApiKey: (e: ProviderEndpoint) => string }).getApiKey(ep);
+    expect(key).toBe('ghp_secret');
+
+    const headers = (adapter as unknown as { headers: (e: ProviderEndpoint, k: string) => Record<string, string> }).headers(ep, key);
+    expect(headers['Authorization']).toBe('Bearer ghp_secret');
+    expect(headers['User-Agent']).toBe('Nexus-Gateway/0.5.0');
+  });
+
+  it('AnyAPI resolves model aliases properly', () => {
+    const adapter = new AnyApiAdapter();
+    expect(adapter.resolveModel('anyapi/llama-3-8b')).toBe('llama-3-8b');
+    expect(adapter.resolveModel('deepseek-v3')).toBe('deepseek-v3');
+  });
+});
+

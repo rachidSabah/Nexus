@@ -25,7 +25,8 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
-import type { CredentialVaultPort } from './ports.js';
+import type { CredentialVaultPort, DailyQuotaLedgerPort } from './ports.js';
+import { currentDayUtc, nextUtcMidnight } from './quota-ledger.js';
 
 export type KeyRotationStrategy =
   | 'round_robin'
@@ -90,6 +91,12 @@ export interface KeyDescriptor {
   remainingTokens?: number;
   remainingRequests?: number;
   quotaResetAt?: number;
+  /** Persistent Daily Quota Tracking (RPD & TPD with UTC midnight reset) */
+  dailyRequestLimit?: number;
+  dailyTokenLimit?: number;
+  dailyRequests?: number;
+  dailyTokens?: number;
+  dailyDayUtc?: string;
 }
 
 export interface KeyRegistryOptions {
@@ -106,6 +113,8 @@ export interface KeyRegistryOptions {
    * instead of hammering a single key (master prompt #15).
    */
   defaultConcurrencyLimit?: number;
+  /** Optional persistent daily quota ledger (SQLite or InMemory). */
+  quotaLedger?: DailyQuotaLedgerPort;
 }
 
 export interface SelectKeyOptions {
@@ -131,6 +140,7 @@ export class KeyRegistry {
   private readonly latencyAlpha: number;
   /** Default per-key concurrency cap; undefined = uncapped. */
   private readonly defaultConcurrencyLimit?: number;
+  private readonly quotaLedger?: DailyQuotaLedgerPort;
 
   constructor(vault: CredentialVaultPort, opts: KeyRegistryOptions = {}) {
     this.vault = vault;
@@ -138,6 +148,7 @@ export class KeyRegistry {
     this.defaultStrategy = opts.defaultStrategy ?? 'adaptive';
     this.latencyAlpha = opts.latencyAlpha ?? 0.3;
     this.defaultConcurrencyLimit = opts.defaultConcurrencyLimit;
+    this.quotaLedger = opts.quotaLedger;
   }
 
   /**
@@ -153,6 +164,8 @@ export class KeyRegistry {
     label?: string;
     /** Optional per-key concurrency cap (P5). */
     concurrencyLimit?: number;
+    /** Optional daily quota limits (RPD / TPD). */
+    dailyLimits?: { maxRequests?: number; maxTokens?: number };
   }): Promise<KeyDescriptor> {
     if (this.keys.has(params.id)) {
       throw new Error(`Key '${params.id}' is already registered`);
@@ -164,6 +177,13 @@ export class KeyRegistry {
       providerId: params.providerId,
       label: params.label,
     }));
+
+    let dailyTokenLimit = params.dailyLimits?.maxTokens;
+    let dailyRequestLimit = params.dailyLimits?.maxRequests;
+    // AnyAPI default preset: 100K daily tokens free-tier quota
+    if (dailyTokenLimit === undefined && (params.providerId === 'anyapi' || params.id.includes('anyapi'))) {
+      dailyTokenLimit = 100_000;
+    }
 
     const descriptor: KeyDescriptor = {
       id: params.id,
@@ -182,6 +202,11 @@ export class KeyRegistry {
       registeredAt: Date.now(),
       activeRequests: 0,
       concurrencyLimit: params.concurrencyLimit,
+      dailyRequestLimit,
+      dailyTokenLimit,
+      dailyRequests: 0,
+      dailyTokens: 0,
+      dailyDayUtc: currentDayUtc(),
     };
     this.keys.set(params.id, descriptor);
 
@@ -319,18 +344,44 @@ export class KeyRegistry {
     const cap = opts.concurrencyLimit ?? this.defaultConcurrencyLimit;
     let candidates = this.listByProvider(providerId);
 
-    // Expire cooldowns.
+    // Expire cooldowns and daily quota resets.
     const now = Date.now();
+    const today = currentDayUtc(new Date(now));
     for (const k of candidates) {
+      if (k.dailyDayUtc && k.dailyDayUtc !== today) {
+        k.dailyRequests = 0;
+        k.dailyTokens = 0;
+        k.dailyDayUtc = today;
+        if (k.status === 'exhausted' && (k.quotaResetAt === undefined || now >= k.quotaResetAt)) {
+          k.status = 'active';
+          k.quotaResetAt = undefined;
+        }
+      }
       if (k.status === 'cooldown' && k.cooldownUntil !== 0 && k.cooldownUntil < now) {
         k.status = 'active';
         k.cooldownUntil = 0;
+      }
+      if (k.status === 'exhausted' && k.quotaResetAt !== undefined && now >= k.quotaResetAt) {
+        k.status = 'active';
+        k.quotaResetAt = undefined;
       }
     }
 
     if (skipCooldown) {
       candidates = candidates.filter((k) => k.status === 'active');
     }
+
+    // Skip keys whose daily quota is exhausted
+    const dailyQuotaSafe = candidates.filter((k) => {
+      if (k.dailyRequestLimit !== undefined && (k.dailyRequests ?? 0) >= k.dailyRequestLimit) {
+        return false;
+      }
+      if (k.dailyTokenLimit !== undefined && (k.dailyTokens ?? 0) >= k.dailyTokenLimit) {
+        return false;
+      }
+      return true;
+    });
+    if (dailyQuotaSafe.length > 0) candidates = dailyQuotaSafe;
 
     // Honor per-key concurrency caps (P5): skip keys already at their limit so
     // load spreads across the pool instead of hammering one key. When a cap is
@@ -416,18 +467,47 @@ export class KeyRegistry {
   recordSuccess(keyId: string, latencyMs: number, tokens: number): void {
     const k = this.keys.get(keyId);
     if (!k) return;
+    const now = Date.now();
     k.requests++;
-    k.tokens += Number.isFinite(tokens) ? tokens : 0;
-    k.lastSuccessAt = Date.now();
+    const addedTokens = Number.isFinite(tokens) ? tokens : 0;
+    k.tokens += addedTokens;
+    k.lastSuccessAt = now;
     if (k.latencyMs === 0) {
       k.latencyMs = latencyMs;
     } else {
       k.latencyMs = k.latencyMs * (1 - this.latencyAlpha) + latencyMs * this.latencyAlpha;
     }
-    // If the key was on cooldown, a successful request clears it.
-    if (k.status === 'cooldown') {
+
+    // Daily quota accounting
+    const today = currentDayUtc(new Date(now));
+    if (k.dailyDayUtc !== today) {
+      k.dailyDayUtc = today;
+      k.dailyRequests = 0;
+      k.dailyTokens = 0;
+    }
+    k.dailyRequests = (k.dailyRequests ?? 0) + 1;
+    k.dailyTokens = (k.dailyTokens ?? 0) + addedTokens;
+
+    if (
+      (k.dailyRequestLimit !== undefined && k.dailyRequests >= k.dailyRequestLimit) ||
+      (k.dailyTokenLimit !== undefined && k.dailyTokens >= k.dailyTokenLimit)
+    ) {
+      k.status = 'exhausted';
+      k.quotaResetAt = nextUtcMidnight(new Date(now));
+    } else if (k.status === 'cooldown') {
+      // If the key was on cooldown, a successful request clears it.
       k.status = 'active';
       k.cooldownUntil = 0;
+    }
+
+    if (this.quotaLedger) {
+      this.quotaLedger.recordUsage({
+        keyId,
+        providerId: k.providerId,
+        tokens: addedTokens,
+        isError: false,
+        timestamp: now,
+      }).catch(() => {});
     }
   }
 
@@ -446,10 +526,29 @@ export class KeyRegistry {
   recordFailure(keyId: string, status: number | string, retryable: boolean, retryAfterMs?: number): void {
     const k = this.keys.get(keyId);
     if (!k) return;
+    const now = Date.now();
     k.requests++;
     k.errors++;
-    k.lastFailureAt = Date.now();
+    k.lastFailureAt = now;
     k.lastFailureReason = String(status);
+
+    const today = currentDayUtc(new Date(now));
+    if (k.dailyDayUtc !== today) {
+      k.dailyDayUtc = today;
+      k.dailyRequests = 0;
+      k.dailyTokens = 0;
+    }
+    k.dailyRequests = (k.dailyRequests ?? 0) + 1;
+
+    if (this.quotaLedger) {
+      this.quotaLedger.recordUsage({
+        keyId,
+        providerId: k.providerId,
+        tokens: 0,
+        isError: true,
+        timestamp: now,
+      }).catch(() => {});
+    }
 
     const sNum = typeof status === 'number' ? status : parseInt(status, 10);
     if (sNum === 429 || status === '429') {

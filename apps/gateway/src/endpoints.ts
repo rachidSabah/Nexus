@@ -180,6 +180,51 @@ const PROVIDER_DEFAULT_CAPS: Record<string, ProviderCapabilities> = {
     embeddings: false, reasoning: true, jsonMode: true,
     maxOutputTokens: 8192, maxInputTokens: 200000, supportedModalities: ['text', 'image'],
   },
+  kilo: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text'],
+  },
+  pollinations: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 4096, maxInputTokens: 32768, supportedModalities: ['text', 'image'],
+  },
+  aihorde: {
+    streaming: false, toolCalling: false, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: false,
+    maxOutputTokens: 4096, maxInputTokens: 16384, supportedModalities: ['text'],
+  },
+  horde: {
+    streaming: false, toolCalling: false, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: false,
+    maxOutputTokens: 4096, maxInputTokens: 16384, supportedModalities: ['text'],
+  },
+  radeon: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 4096, maxInputTokens: 64000, supportedModalities: ['text'],
+  },
+  amd: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 4096, maxInputTokens: 64000, supportedModalities: ['text'],
+  },
+  anyapi: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: false, jsonMode: true,
+    maxOutputTokens: 4096, maxInputTokens: 32768, supportedModalities: ['text'],
+  },
+  github: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: true, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  gh: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: true, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
 };
 
 const FALLBACK_CAPS: ProviderCapabilities = {
@@ -235,6 +280,15 @@ const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = {
   modelscope: 'https://api-inference.modelscope.cn/v1',
   electronhub: 'https://api.electronhub.ai/v1',
   experiential: 'https://api.experientiallabs.ai/v1',
+  kilo: 'https://api.kilo.ai/api/gateway/v1',
+  pollinations: 'https://text.pollinations.ai/openai',
+  aihorde: 'https://oai.aihorde.net/v1',
+  horde: 'https://oai.aihorde.net/v1',
+  radeon: 'https://developer.amd.com.cn/radeon/api/v1',
+  amd: 'https://developer.amd.com.cn/radeon/api/v1',
+  anyapi: 'https://api.anyapi.ai/v1',
+  github: 'https://models.github.ai/inference',
+  gh: 'https://models.github.ai/inference',
 };
 
 /** Default pricing (per 1K tokens, USD) per provider for auto-registered endpoints. */
@@ -266,6 +320,15 @@ const PROVIDER_DEFAULT_PRICING: Record<string, { inputPer1K: number; outputPer1K
   modelscope: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   electronhub: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   experiential: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  kilo: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  pollinations: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  aihorde: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  horde: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  radeon: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  amd: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  anyapi: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  github: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  gh: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
 };
 
 /** Returns the default base URL for a given provider id. */
@@ -338,6 +401,13 @@ export async function registerDefaultEndpoints(
       { providerId: 'modelscope', envVar: 'MODELSCOPE_API_KEY', envVarAlt: 'MODELSCOPE_API_TOKEN', baseUrl: 'https://api-inference.modelscope.cn/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'electronhub', envVar: 'ELECTRONHUB_API_KEY', baseUrl: 'https://api.electronhub.ai/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'experiential', envVar: 'EXPERIENTIAL_API_KEY', envVarAlt: 'EXPLABS_API_KEY', baseUrl: 'https://api.experientiallabs.ai/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      // ── Keyless free providers & specialized presets (FreeLLMAPI parity) ──
+      { providerId: 'kilo', envVar: 'KILO_API_KEY', baseUrl: 'https://api.kilo.ai/api/gateway/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'pollinations', envVar: 'POLLINATIONS_API_KEY', baseUrl: 'https://text.pollinations.ai/openai', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'aihorde', envVar: 'AIHORDE_API_KEY', baseUrl: 'https://oai.aihorde.net/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'radeon', envVar: 'RADEON_API_KEY', envVarAlt: 'AMD_RADEON_API_KEY', baseUrl: 'https://developer.amd.com.cn/radeon/api/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'anyapi', envVar: 'ANYAPI_API_KEY', baseUrl: 'https://api.anyapi.ai/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'github', envVar: 'GITHUB_TOKEN', envVarAlt: 'GITHUB_MODELS_API_KEY', baseUrl: 'https://models.github.ai/inference', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       // ── First-class self-hosted / local providers (keyless, probed at boot) ──
       // Ollama, vLLM, and LM Studio expose OpenAI-compatible /v1 endpoints.
       // Registered with the same health-probe + failover treatment as cloud
@@ -348,6 +418,7 @@ export async function registerDefaultEndpoints(
     ];
 
     for (const e of autoEndpoints) {
+      if (process.env['ANX_DISABLE_KEYLESS_PROVIDERS'] && e.keyless) continue;
       const apiKey = e.envVar ? (process.env[e.envVar] ?? (e.envVarAlt ? process.env[e.envVarAlt] : undefined)) : undefined;
       if (!apiKey && !e.keyless) continue;
       // Persist real keys only — never write placeholder/local sentinels to

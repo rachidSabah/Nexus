@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @anx/core — the heart of Agent Nexus Gateway.
  *
  * Hexagonal architecture layers:
@@ -174,6 +174,20 @@ export * from './domain/error-diagnostic.js';
 export { ErrorDiagnosticRegistry, type ErrorDiagnosticFilter } from './application/error-diagnostic-registry.js';
 export { LiveErrorResolver, type RemediationReport, type ResolutionStepLog, type LiveErrorResolverDeps } from './application/live-error-resolver.js';
 
+// ── Phase 35: Daily Quota Ledger (UTC midnight reset) ───────────────────────
+export {
+  InMemoryDailyQuotaLedger,
+  currentDayUtc,
+  nextUtcMidnight,
+  msUntilUtcMidnight,
+} from './application/quota-ledger.js';
+export type {
+  DailyQuotaLedgerPort,
+  DailyQuotaUsageRecord,
+  DailyQuotaCheckResult,
+} from './application/ports.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';
+
 

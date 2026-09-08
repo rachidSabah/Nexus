@@ -1,0 +1,27 @@
+{
+  "name": "@anx/desktop",
+  "version": "0.5.0",
+  "description": "Agent Nexus Desktop — System Tray Shell & Native Process Manager",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/main.ts",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist .turbo"
+  },
+  "dependencies": {
+    "@anx/core": "workspace:*",
+    "@anx/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "rimraf": "^6.0.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

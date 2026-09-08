@@ -724,5 +724,269 @@ export class ExperientialAdapter extends OpenAIAdapter {
   }
 }
 
+/**
+ * Kilo Gateway — OpenAI-compatible keyless free gateway & proxy.
+ * Base: https://api.kilo.ai/api/gateway/v1. Keyless operation permitted.
+ */
+export class KiloGatewayAdapter extends OpenAIAdapter {
+  readonly providerId = 'kilo';
+  readonly displayName = 'Kilo Gateway';
+  protected apiBase = 'https://api.kilo.ai/api/gateway/v1';
+  protected apiKeyEnv = 'KILO_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit && !/^kilo-placeholder/i.test(explicit)) return explicit;
+    return process.env[this.apiKeyEnv] ?? '';
+  }
+
+  protected override headers(endpoint: ProviderEndpoint, apiKey: string): Record<string, string> {
+    const h = buildHeaders(endpoint, '');
+    delete h['Authorization'];
+    if (apiKey) h['Authorization'] = `Bearer ${apiKey}`;
+    return h;
+  }
+
+  protected override resolveModelsUrl(endpoint: ProviderEndpoint): string {
+    return `${this.resolveBase(endpoint)}/models`;
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    let m = alias.replace(/^(?:anthropic\/)?kilo\//i, '').trim();
+    return m || undefined;
+  }
+}
+
+/**
+ * Pollinations AI — completely keyless, unlimited free text and image generation.
+ * Base: https://text.pollinations.ai/openai.
+ */
+export class PollinationsAdapter extends OpenAIAdapter {
+  readonly providerId = 'pollinations';
+  readonly displayName = 'Pollinations AI';
+  protected apiBase = 'https://text.pollinations.ai/openai';
+  protected apiKeyEnv = 'POLLINATIONS_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    return process.env[this.apiKeyEnv] ?? '';
+  }
+
+  protected override headers(endpoint: ProviderEndpoint, apiKey: string): Record<string, string> {
+    const h = buildHeaders(endpoint, '');
+    delete h['Authorization'];
+    if (apiKey) h['Authorization'] = `Bearer ${apiKey}`;
+    return h;
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    let m = alias.replace(/^(?:anthropic\/)?pollinations\//i, '').trim();
+    return m || undefined;
+  }
+
+  override async discoverModels(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<readonly ModelDescriptor[]> {
+    try {
+      const apiKey = this.getApiKey(endpoint);
+      const url = `${this.resolveBase(endpoint)}/models`;
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: this.headers(endpoint, apiKey),
+        signal,
+      });
+      if (res.ok) {
+        const json = (await res.json()) as unknown;
+        const now = Date.now();
+        if (json && typeof json === 'object' && Array.isArray((json as { data?: unknown[] }).data)) {
+          return ((json as { data: Array<{ id: string }> }).data).map((m) => ({
+            id: m.id,
+            providerId: this.providerId,
+            displayName: m.id,
+            contextWindow: 32768,
+            maxOutputTokens: 4096,
+            isFree: true,
+            discoveredAt: now,
+          }));
+        }
+        if (Array.isArray(json)) {
+          return json.map((item) => {
+            const id = typeof item === 'string' ? item : ((item as { name?: string; id?: string }).name ?? (item as { id?: string }).id ?? 'openai');
+            return {
+              id,
+              providerId: this.providerId,
+              displayName: id,
+              contextWindow: 32768,
+              maxOutputTokens: 4096,
+              isFree: true,
+              discoveredAt: now,
+            };
+          });
+        }
+      }
+    } catch {
+      // Fall through to default catalog
+    }
+    const defaultModels = ['openai', 'mistral', 'qwen', 'searchgpt'];
+    const now = Date.now();
+    return defaultModels.map((id) => ({
+      id,
+      providerId: this.providerId,
+      displayName: id,
+      contextWindow: 32768,
+      maxOutputTokens: 4096,
+      isFree: true,
+      discoveredAt: now,
+    }));
+  }
+
+  override async media(
+    endpoint: ProviderEndpoint,
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+  ): Promise<{ readonly status: number; readonly contentType: string; readonly data: Uint8Array }> {
+    if (path.includes('images')) {
+      const b = (typeof body === 'string' ? JSON.parse(body) : (body ?? {})) as {
+        prompt?: string;
+        model?: string;
+        size?: string;
+        n?: number;
+      };
+      const prompt = b.prompt || 'a serene landscape';
+      const sizeParts = (b.size || '1024x1024').split('x');
+      const width = parseInt(sizeParts[0] || '1024', 10) || 1024;
+      const height = parseInt(sizeParts[1] || '1024', 10) || 1024;
+      const model = b.model && b.model !== 'auto' ? `&model=${encodeURIComponent(b.model)}` : '';
+      const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true${model}`;
+
+      const responsePayload = {
+        created: Math.floor(Date.now() / 1000),
+        data: [
+          {
+            url: imageUrl,
+            revised_prompt: prompt,
+          },
+        ],
+      };
+      const bytes = new TextEncoder().encode(JSON.stringify(responsePayload));
+      return {
+        status: 200,
+        contentType: 'application/json',
+        data: bytes,
+      };
+    }
+    return super.media(endpoint, path, body, signal);
+  }
+}
+
+/**
+ * AI Horde — volunteer-powered crowdsourced compute with anonymous fallback key '0000000000'.
+ * Official OpenAI-compatible gateway: https://oai.aihorde.net/v1.
+ */
+export class AiHordeAdapter extends OpenAIAdapter {
+  readonly providerId = 'aihorde';
+  readonly displayName = 'AI Horde';
+  protected apiBase = 'https://oai.aihorde.net/v1';
+  protected apiKeyEnv = 'AIHORDE_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit && !/^aihorde-placeholder/i.test(explicit)) return explicit;
+    return process.env[this.apiKeyEnv] ?? '0000000000';
+  }
+
+  protected override headers(endpoint: ProviderEndpoint, apiKey: string): Record<string, string> {
+    const h = super.headers(endpoint, apiKey);
+    h['Client-Agent'] = 'Nexus:0.5.0:nexus@local';
+    return h;
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    let m = alias.replace(/^(?:anthropic\/)?(?:aihorde|horde)\//i, '').trim();
+    return m || undefined;
+  }
+}
+
+/**
+ * AMD Radeon Cloud — specialized inference preset with single tool call requirement.
+ * Base: https://developer.amd.com.cn/radeon/api/v1.
+ */
+export class RadeonAdapter extends OpenAIAdapter {
+  readonly providerId = 'radeon';
+  readonly displayName = 'AMD Radeon Cloud';
+  protected apiBase = 'https://developer.amd.com.cn/radeon/api/v1';
+  protected apiKeyEnv = 'RADEON_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['RADEON_API_KEY'] ?? process.env['AMD_RADEON_API_KEY'];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    let m = alias.replace(/^(?:anthropic\/)?(?:radeon|amd)\//i, '').trim();
+    return m || undefined;
+  }
+
+  protected override translateRequest(req: ChatCompletionRequest, streaming: boolean): Record<string, unknown> {
+    const body = super.translateRequest(req, streaming);
+    const tools = body['tools'];
+    // AMD Radeon Cloud requires single tool call handling
+    if (Array.isArray(tools) && tools.length > 1) {
+      body['tools'] = [tools[0]];
+    }
+    body['parallel_tool_calls'] = false;
+    return body;
+  }
+}
+
+/**
+ * AnyAPI — hosted OpenAI-compatible router with 100K daily tokens free-tier quota.
+ * Base: https://api.anyapi.ai/v1.
+ */
+export class AnyApiAdapter extends OpenAIAdapter {
+  readonly providerId = 'anyapi';
+  readonly displayName = 'AnyAPI';
+  protected apiBase = 'https://api.anyapi.ai/v1';
+  protected apiKeyEnv = 'ANYAPI_API_KEY';
+
+  override resolveModel(alias: string): string | undefined {
+    let m = alias.replace(/^(?:anthropic\/)?anyapi\//i, '').trim();
+    return m || undefined;
+  }
+}
+
+/**
+ * GitHub Models — Azure-backed developer inference catalog. Bearer auth via GITHUB_TOKEN.
+ * Base: https://models.github.ai/inference.
+ */
+export class GitHubModelsAdapter extends OpenAIAdapter {
+  readonly providerId = 'github';
+  readonly displayName = 'GitHub Models';
+  protected apiBase = 'https://models.github.ai/inference';
+  protected apiKeyEnv = 'GITHUB_TOKEN';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['GITHUB_TOKEN'] ?? process.env['GITHUB_MODELS_API_KEY'] ?? process.env['GH_TOKEN'];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  protected override headers(endpoint: ProviderEndpoint, apiKey: string): Record<string, string> {
+    const h = super.headers(endpoint, apiKey);
+    h['User-Agent'] = 'Nexus-Gateway/0.5.0';
+    return h;
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    let m = alias.replace(/^(?:anthropic\/)?(?:github|gh)\//i, '').trim();
+    return m || undefined;
+  }
+}
+
 // Re-export the type so subclasses can import it together.
 // (Type imports are hoisted to the top of the file for ESLint import/order compliance.)

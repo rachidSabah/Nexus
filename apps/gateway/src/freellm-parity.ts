@@ -221,7 +221,15 @@ export function geminiToChat(requestedModel: string, body: GeminiGenerateBody): 
     });
   }
   const gc = body.generationConfig ?? {};
-  return {
+  const hasSearch = (body as unknown as Record<string, unknown>).tools
+    ? (
+        ((body as unknown as Record<string, unknown>).tools as Array<Record<string, unknown>>).some(
+          (t) => t.google_search || t.googleSearch,
+        )
+      )
+    : false;
+
+  const req: ChatCompletionRequest = {
     model: requestedModel,
     messages,
     ...(gc.temperature !== undefined ? { temperature: gc.temperature } : {}),
@@ -229,6 +237,10 @@ export function geminiToChat(requestedModel: string, body: GeminiGenerateBody): 
     ...(gc.maxOutputTokens !== undefined ? { maxTokens: gc.maxOutputTokens } : {}),
     ...(gc.stopSequences !== undefined ? { stop: gc.stopSequences } : {}),
   };
+  if (hasSearch) {
+    (req as unknown as Record<string, unknown>).google_search = true;
+  }
+  return req;
 }
 
 /** Translate a chat response into a Gemini generateContent response. */
@@ -237,12 +249,17 @@ export function chatResponseToGemini(
   requestedModel: string,
 ): Record<string, unknown> {
   const u = toSnakeUsage(resp.usage);
+  const grounding =
+    (resp as unknown as Record<string, unknown>).grounding_metadata ??
+    ((resp.choices[0] as unknown as Record<string, unknown>)?.grounding_metadata);
+
   return {
     candidates: [
       {
         content: { role: 'model', parts: [{ text: firstChoiceText(resp) }] },
         finishReason: 'STOP',
         index: 0,
+        ...(grounding ? { groundingMetadata: grounding } : {}),
       },
     ],
     usageMetadata: {

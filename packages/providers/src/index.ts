@@ -18,6 +18,12 @@ export {
   ModelScopeAdapter,
   ElectronHubAdapter,
   ExperientialAdapter,
+  KiloGatewayAdapter,
+  PollinationsAdapter,
+  AiHordeAdapter,
+  RadeonAdapter,
+  AnyApiAdapter,
+  GitHubModelsAdapter,
   OllamaAdapter,
   VllmAdapter,
   LmStudioAdapter,
@@ -52,6 +58,12 @@ import {
   ModelScopeAdapter,
   ElectronHubAdapter,
   ExperientialAdapter,
+  KiloGatewayAdapter,
+  PollinationsAdapter,
+  AiHordeAdapter,
+  RadeonAdapter,
+  AnyApiAdapter,
+  GitHubModelsAdapter,
   OllamaAdapter,
   VllmAdapter,
   LmStudioAdapter,
@@ -87,6 +99,12 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
     new ModelScopeAdapter(),
     new ElectronHubAdapter(),
     new ExperientialAdapter(),
+    new KiloGatewayAdapter(),
+    new PollinationsAdapter(),
+    new AiHordeAdapter(),
+    new RadeonAdapter(),
+    new AnyApiAdapter(),
+    new GitHubModelsAdapter(),
     new OllamaAdapter(),
     new VllmAdapter(),
     new LmStudioAdapter(),
@@ -107,6 +125,12 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
   if (agy) map.set('antigravity', agy);
   const hf = map.get('huggingface');
   if (hf) map.set('hf', hf);
+  const horde = map.get('aihorde');
+  if (horde) map.set('horde', horde);
+  const radeon = map.get('radeon');
+  if (radeon) map.set('amd', radeon);
+  const github = map.get('github');
+  if (github) map.set('gh', github);
   return map;
 }
 
@@ -130,6 +154,15 @@ export const SUPPORTED_PROVIDERS = [
   'modelscope',
   'electronhub',
   'experiential',
+  'kilo',
+  'pollinations',
+  'aihorde',
+  'horde',
+  'radeon',
+  'amd',
+  'anyapi',
+  'github',
+  'gh',
   'ollama',
   'vllm',
   'lmstudio',

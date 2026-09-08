@@ -77,6 +77,13 @@ export class NexusCli {
   }
 
   private async launch(args: string[]): Promise<void> {
+    if (args[0] === 'claude') {
+      return this.launchClaude(args.slice(1));
+    }
+    if (args[0] === 'codex') {
+      return this.launchCodex(args.slice(1));
+    }
+
     const flags = this.parseFlags(args);
     const openBrowser = flags['open'] !== 'false';
     const devMode = flags['dev'] === 'true' || flags['watch'] === 'true';
@@ -157,6 +164,83 @@ export class NexusCli {
         spawn(openCmd, { shell: true, stdio: 'ignore' });
       }, 4000);
     }
+  }
+
+  private async launchClaude(agentArgs: string[]): Promise<void> {
+    const { spawn, spawnSync } = await import('node:child_process');
+    const port = process.env['ANX_PORT'] ?? process.env['PORT'] ?? '8787';
+    const gatewayUrl = `http://127.0.0.1:${port}`;
+    const token = process.env['ANX_AUTH_TOKEN'] ?? process.env['NEXUS_API_KEY'] ?? 'nexus';
+
+    process.stdout.write(`\n🚀 Launching Claude Code with ephemeral Nexus Gateway environment...\n`);
+    process.stdout.write(`   Anthropic Base URL: ${gatewayUrl}\n`);
+    process.stdout.write(`   Auth Token: [ephemeral]\n\n`);
+
+    const env = {
+      ...process.env,
+      ANTHROPIC_BASE_URL: gatewayUrl,
+      ANTHROPIC_AUTH_TOKEN: token,
+      ANTHROPIC_API_KEY: token,
+    };
+
+    const isWin = process.platform === 'win32';
+    const claudeCmd = isWin ? 'claude.cmd' : 'claude';
+    let cmd = claudeCmd;
+    let finalArgs = agentArgs;
+
+    const check = spawnSync(isWin ? 'where' : 'which', [cmd], { shell: true });
+    if (check.status !== 0) {
+      cmd = isWin ? 'npx.cmd' : 'npx';
+      finalArgs = ['@anthropic-ai/claude-code', ...agentArgs];
+    }
+
+    const proc = spawn(cmd, finalArgs, {
+      stdio: 'inherit',
+      shell: true,
+      env,
+    });
+
+    proc.on('exit', (code) => {
+      process.exit(code ?? 0);
+    });
+  }
+
+  private async launchCodex(agentArgs: string[]): Promise<void> {
+    const { spawn, spawnSync } = await import('node:child_process');
+    const port = process.env['ANX_PORT'] ?? process.env['PORT'] ?? '8787';
+    const gatewayUrl = `http://127.0.0.1:${port}/v1`;
+    const token = process.env['ANX_AUTH_TOKEN'] ?? process.env['NEXUS_API_KEY'] ?? 'nexus';
+
+    process.stdout.write(`\n🚀 Launching Codex with ephemeral Nexus Gateway environment...\n`);
+    process.stdout.write(`   OpenAI Base URL: ${gatewayUrl}\n`);
+    process.stdout.write(`   API Key: [ephemeral]\n\n`);
+
+    const env = {
+      ...process.env,
+      OPENAI_BASE_URL: gatewayUrl,
+      OPENAI_API_KEY: token,
+    };
+
+    const isWin = process.platform === 'win32';
+    const codexCmd = isWin ? 'codex.cmd' : 'codex';
+    let cmd = codexCmd;
+    let finalArgs = agentArgs;
+
+    const check = spawnSync(isWin ? 'where' : 'which', [cmd], { shell: true });
+    if (check.status !== 0) {
+      cmd = isWin ? 'npx.cmd' : 'npx';
+      finalArgs = ['@openai/codex', ...agentArgs];
+    }
+
+    const proc = spawn(cmd, finalArgs, {
+      stdio: 'inherit',
+      shell: true,
+      env,
+    });
+
+    proc.on('exit', (code) => {
+      process.exit(code ?? 0);
+    });
   }
 
   private client(): NexusClient {

@@ -325,20 +325,43 @@ export class GoogleAdapter implements ProviderAdapter {
     if (Object.keys(generationConfig).length > 0) body['generationConfig'] = generationConfig;
 
     // Tools: translate OpenAI tool definitions to Gemini's functionDeclarations.
-        if (req.tools && req.tools.length > 0) {
-          const functionDeclarations: unknown[] = [];
-          for (const t of req.tools as Array<{ function?: { name: string; description?: string; parameters?: unknown } }>) {
-            if (!t.function) continue;
-            functionDeclarations.push({
-              name: t.function.name,
-              description: t.function.description,
-              parameters: sanitizeSchemaForGemini(t.function.parameters),
-            });
-          }
-          if (functionDeclarations.length > 0) {
-            body['tools'] = [{ functionDeclarations }];
-          }
+    const toolsList: unknown[] = [];
+    if (req.tools && req.tools.length > 0) {
+      const functionDeclarations: unknown[] = [];
+      for (const t of req.tools as Array<{ type?: string; function?: { name: string; description?: string; parameters?: unknown } }>) {
+        if (t.type === 'google_search' || t.type === 'googleSearch' || t.type === 'web_search') {
+          toolsList.push({ googleSearch: {} });
+          continue;
         }
+        if (!t.function) continue;
+        functionDeclarations.push({
+          name: t.function.name,
+          description: t.function.description,
+          parameters: sanitizeSchemaForGemini(t.function.parameters),
+        });
+      }
+      if (functionDeclarations.length > 0) {
+        toolsList.push({ functionDeclarations });
+      }
+    }
+
+    // Direct google search grounding flag or search model variant
+    const reqRecord = req as unknown as Record<string, unknown>;
+    const hasSearchFlag =
+      reqRecord['google_search'] === true ||
+      reqRecord['googleSearch'] === true ||
+      reqRecord['web_search'] === true ||
+      reqRecord['grounding'] === true ||
+      req.model.toLowerCase().includes(':search') ||
+      req.model.toLowerCase().endsWith('-search');
+
+    if (hasSearchFlag && !toolsList.some((t: any) => (t as Record<string, unknown>)['googleSearch'] || (t as Record<string, unknown>)['google_search'])) {
+      toolsList.push({ googleSearch: {} });
+    }
+
+    if (toolsList.length > 0) {
+      body['tools'] = toolsList;
+    }
 
     // Tool choice: 'auto' | 'none' | { type: 'function', function: { name } }
     if (req.toolChoice !== undefined) {
@@ -454,18 +477,21 @@ export class GoogleAdapter implements ProviderAdapter {
       message.tool_calls = toolCalls;
     }
 
+    const grounding = (candidate as Record<string, unknown>)?.groundingMetadata ?? (raw as Record<string, unknown>)?.groundingMetadata;
+    const choice: Record<string, unknown> = {
+      index: 0,
+      message,
+      finish_reason: finishReason === 'STOP' ? 'stop' : finishReason.toLowerCase(),
+      ...(grounding ? { grounding_metadata: grounding } : {}),
+    };
+
     return {
       id: randomUUID(),
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model: requestModel,
-      choices: [
-        {
-          index: 0,
-          message,
-          finish_reason: finishReason === 'STOP' ? 'stop' : finishReason.toLowerCase(),
-        },
-      ],
+      choices: [choice as never],
+      ...(grounding ? { grounding_metadata: grounding } : {}),
       usage: {
         promptTokens: raw.usageMetadata?.promptTokenCount ?? 0,
         completionTokens: raw.usageMetadata?.candidatesTokenCount ?? 0,
@@ -485,7 +511,7 @@ export class GoogleAdapter implements ProviderAdapter {
     requestModel: string,
   ): ChatCompletionChunk | null {
     const candidates = evt['candidates'] as
-      | Array<{ content?: { parts?: Array<{ text?: string; functionCall?: { name: string; args?: unknown } }> }; finishReason?: string }>
+      | Array<{ content?: { parts?: Array<{ text?: string; functionCall?: { name: string; args?: unknown } }> }; finishReason?: string; groundingMetadata?: unknown }>
       | undefined;
     if (!candidates?.length) return null;
 
@@ -507,6 +533,10 @@ export class GoogleAdapter implements ProviderAdapter {
           arguments: JSON.stringify(p.functionCall!.args ?? {}),
         },
       }));
+    }
+    const streamGrounding = candidate?.groundingMetadata ?? evt['groundingMetadata'];
+    if (streamGrounding) {
+      delta['grounding_metadata'] = streamGrounding;
     }
 
     const rawFinish = candidate?.finishReason;
@@ -542,9 +572,11 @@ export class GoogleAdapter implements ProviderAdapter {
           index: 0,
           delta,
           finish_reason: finishReason,
-        },
+          ...(streamGrounding ? { grounding_metadata: streamGrounding } : {}),
+        } as never,
       ],
       ...(usage ? { usage } : {}),
+      ...(streamGrounding ? { grounding_metadata: streamGrounding } : {}),
     };
   }
 

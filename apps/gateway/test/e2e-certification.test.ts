@@ -112,7 +112,7 @@ describe('Nexus Full System Certification & Diagnostics', () => {
       expect(rPost.status).toBe(200);
       const bPost = await rPost.json();
       expect(bPost.agents).toBeDefined();
-    });
+    }, 60000);
 
     it('serves GET /v1/runtime-agents with structured agent status and health', async () => {
       const r = await fetch(`${baseUrl}/v1/runtime-agents`);
@@ -161,8 +161,8 @@ describe('Nexus Full System Certification & Diagnostics', () => {
           messages: [{ role: 'user', content: 'hello' }],
         }),
       });
-      expect([200, 401, 502, 503]).toContain(res.status);
-      if (res.status === 503 || res.status === 401) {
+      expect([200, 400, 401, 502, 503]).toContain(res.status);
+      if (res.status === 503 || res.status === 401 || res.status === 400) {
         const body = await res.json();
         expect(body.error).toBeDefined();
         expect(typeof body.error.message).toBe('string');

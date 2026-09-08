@@ -410,3 +410,66 @@ export interface CostCalculatorPort {
     pricing: { inputPer1K: number; outputPer1K: number; cachedInputPer1K?: number },
   ): { inputCostUsd: number; outputCostUsd: number; cachedInputCostUsd: number; totalCostUsd: number };
 }
+
+/**
+ * Daily Quota Ledger — tracks cumulative daily requests (RPD) and tokens (TPD)
+ * per (keyId, providerId, modelId) with automatic resets at UTC midnight (00:00:00 UTC).
+ */
+export interface DailyQuotaUsageRecord {
+  readonly keyId: string;
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly dayUtc: string;
+  readonly requests: number;
+  readonly tokens: number;
+  readonly errors: number;
+  readonly updatedAt: number;
+}
+
+export interface DailyQuotaCheckResult {
+  readonly allowed: boolean;
+  readonly remainingRequests?: number;
+  readonly remainingTokens?: number;
+  readonly requestsToday: number;
+  readonly tokensToday: number;
+  readonly errorsToday: number;
+  readonly dayUtc: string;
+  readonly resetAtUtc: number;
+  readonly msUntilReset: number;
+}
+
+export interface DailyQuotaLedgerPort {
+  recordUsage(params: {
+    keyId: string;
+    providerId: string;
+    modelId?: string;
+    tokens?: number;
+    isError?: boolean;
+    timestamp?: number;
+  }): Promise<void>;
+
+  getKeyDailyUsage(keyId: string, dayUtc?: string): Promise<{
+    requests: number;
+    tokens: number;
+    errors: number;
+    dayUtc: string;
+    resetAtUtc: number;
+    msUntilReset: number;
+  }>;
+
+  getProviderDailyUsage(providerId: string, dayUtc?: string): Promise<{
+    requests: number;
+    tokens: number;
+    errors: number;
+    dayUtc: string;
+    resetAtUtc: number;
+    msUntilReset: number;
+  }>;
+
+  checkQuota(
+    keyId: string,
+    limits: { maxDailyRequests?: number; maxDailyTokens?: number },
+    dayUtc?: string,
+  ): Promise<DailyQuotaCheckResult>;
+}
+

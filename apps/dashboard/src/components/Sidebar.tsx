@@ -1,11 +1,12 @@
 'use client';
 
-import { Activity, Boxes, Brain, Blocks, Cpu, Gauge, GitBranch, GitCompare, History, KeyRound, Layers, Network, Plug, ScrollText, Settings, Settings2, ShieldAlert, ShieldCheck, Store, Terminal, Users, Workflow } from 'lucide-react';
+import { Activity, Boxes, Brain, Blocks, Cpu, Gauge, GitBranch, GitCompare, History, KeyRound, Layers, Network, Plug, ScrollText, Settings, Settings2, ShieldAlert, ShieldCheck, Sparkles, Store, Terminal, Users, Workflow } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Gauge },
+  { href: '/playground', label: 'Playground', icon: Sparkles },
   { href: '/providers', label: 'Providers', icon: Boxes },
   { href: '/models', label: 'Models', icon: Cpu },
   { href: '/keys', label: 'API Keys', icon: KeyRound },
