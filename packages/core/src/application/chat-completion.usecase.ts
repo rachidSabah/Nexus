@@ -1371,7 +1371,7 @@ export function classifyFailure(error: Error): FailureClassification {
     const isModelUnavailable =
       status === 404 ||
       ((status === 400 || status === 422) &&
-        /invalid[ -]?model|model[ -]?(not[ -]?found|unavailable|does not exist)|unsupported model/i.test(
+        /invalid[ -]?model|model\s*(?:is\s*)?(not[ -]?found|unavailable|does not exist)|unsupported model|model[ -]?(not[ -]?found|unavailable|does not exist)/i.test(
           error.message ?? '',
         ));
     if (isModelUnavailable) {
@@ -1381,6 +1381,26 @@ export function classifyFailure(error: Error): FailureClassification {
         keyAction: 'none',
         endpointAction: 'record_failure',
         reason: `HTTP ${status}: model not found or unsupported on this provider — failing over to alternative provider`,
+      };
+    }
+    // Upstream provider client-verification or session-requirement errors, or
+    // upstream provider 5xx-in-400 responses (e.g. OpenCode's "MissingSessionID:
+    // OpenCode's free tier can only be used in OpenCode" or "server_error: Upstream request failed")
+    // are provider-level rejections, NOT client request syntax errors. They MUST be
+    // retryable so the failover chain immediately tries the next candidate provider.
+    const isProviderRestriction =
+      status === 400 &&
+      /MissingSessionID|only be used in OpenCode|unauthorized_client|client_verification_failed|server_error|upstream request failed/i.test(
+        error.message ?? '',
+      );
+    if (isProviderRestriction) {
+      return {
+        status: 400,
+        code: 'PROVIDER_RESTRICTION',
+        retryable: true,
+        keyAction: 'none',
+        endpointAction: 'mark_degraded',
+        reason: `HTTP 400: provider restriction or upstream error — failing over to alternative provider`,
       };
     }
     // 408 Request Timeout — retryable, key is fine.

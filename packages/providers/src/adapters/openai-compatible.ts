@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ModelDescriptor, ProviderEndpoint } from '@anx/core';
 
 import { ProviderResponseError } from '@anx/core';
@@ -269,6 +270,14 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
     const h = buildHeaders(endpoint, '');
     delete h['Authorization'];
     if (apiKey) h['Authorization'] = `Bearer ${apiKey}`;
+    const sessId =
+      (endpoint as any).sessionId ||
+      (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : randomUUID());
+    h['x-opencode-session'] = sessId;
+    h['X-Session-ID'] = sessId;
+    h['opencode-session-id'] = sessId;
+    h['x-session-id'] = sessId;
+    h['User-Agent'] = 'opencode/1.0.0 (Nexus Gateway; node)';
     return h;
   }
 
@@ -316,7 +325,13 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
       .replace(new RegExp('^' + this.providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/'), '');
     const resolved = this.resolveModel(model);
     if (resolved) model = resolved;
-    return super.translateRequest({ ...req, model }, streaming);
+    const body = super.translateRequest({ ...req, model }, streaming);
+    const sessId = (req as any).session_id || (req as any).sessionId || randomUUID();
+    if (!body['user']) {
+      body['user'] = sessId;
+    }
+    body['session_id'] = sessId;
+    return body;
   }
 }
 

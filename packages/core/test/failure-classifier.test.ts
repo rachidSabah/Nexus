@@ -202,4 +202,30 @@ describe('classifyFailure', () => {
     const c = classifyFailure(err);
     expect(c.retryAfterMs).toBe(12_000);
   });
+
+  it('classifies OpenCode MissingSessionID 400 as retryable provider restriction failover', () => {
+    const err = new ProviderResponseError(
+      'ep1',
+      400,
+      '{"type":"error","error":{"type":"MissingSessionID","message":"Error from provider (Console): OpenCode\'s free tier can only be used in OpenCode"}}',
+    );
+    const c = classifyFailure(err);
+    expect(c.status).toBe(400);
+    expect(c.retryable).toBe(true);
+    expect(c.code).toBe('PROVIDER_RESTRICTION');
+    expect(c.endpointAction).toBe('mark_degraded');
+  });
+
+  it('classifies upstream server_error / Model is unavailable 400 as retryable failover', () => {
+    const err = new ProviderResponseError(
+      'ep1',
+      400,
+      '{"error":{"type":"server_error","message":"Error from provider (Console): Upstream request failed: Model is unavailable."}}',
+    );
+    const c = classifyFailure(err);
+    expect(c.status).toBe(400);
+    expect(c.retryable).toBe(true);
+    expect(c.code).toBe('MODEL_UNAVAILABLE');
+    expect(c.endpointAction).toBe('record_failure');
+  });
 });

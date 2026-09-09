@@ -22,7 +22,8 @@ import { etagFetcher } from '@/lib/etagFetcher';
 
 interface DiscoveredModel {
   id: string;
-  providerId: string;
+  providerId?: string;
+  owned_by?: string;
   displayName?: string;
   isFree?: boolean;
   freeTier?: string;
@@ -65,7 +66,26 @@ export default function PlaygroundPage() {
   );
 
   const models = modelsData?.data ?? [];
+  const [selectedProvider, setSelectedProvider] = useState<string>('auto');
   const [selectedModel, setSelectedModel] = useState<string>('auto');
+  const [sessionId, setSessionId] = useState<string>(() => `playground-${Date.now()}`);
+
+  const providers = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const m of models) {
+      const p = m.providerId || m.owned_by;
+      if (p && p !== 'nexus' && p !== 'auto') {
+        set.add(p);
+      }
+    }
+    return Array.from(set).sort();
+  }, [models]);
+
+  const filteredModels = React.useMemo(() => {
+    if (selectedProvider === 'auto') return models;
+    return models.filter((m) => (m.providerId || m.owned_by) === selectedProvider);
+  }, [models, selectedProvider]);
+
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -95,8 +115,12 @@ export default function PlaygroundPage() {
   // Set default model once models load
   useEffect(() => {
     if (models.length > 0 && selectedModel === 'auto') {
-      const freeModel = models.find((m) => m.pricing?.isFree || m.isFree || m.providerId === 'pollinations');
-      if (freeModel) setSelectedModel(freeModel.id);
+      const freeModel = models.find((m) => m.pricing?.isFree || m.isFree || (m.providerId || m.owned_by) === 'pollinations');
+      if (freeModel) {
+        setSelectedModel(freeModel.id);
+        const prov = freeModel.providerId || freeModel.owned_by;
+        if (prov && prov !== 'nexus') setSelectedProvider(prov);
+      }
     }
   }, [models, selectedModel]);
 
@@ -319,12 +343,23 @@ export default function PlaygroundPage() {
         payload['google_search'] = true;
       }
 
+      const reqHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'x-session-id': sessionId,
+      };
+      if (selectedProvider !== 'auto') {
+        reqHeaders['x-nexus-provider'] = selectedProvider;
+      } else {
+        const matched = models.find((m) => m.id === selectedModel);
+        const prov = matched?.providerId || matched?.owned_by;
+        if (prov && prov !== 'nexus' && prov !== 'auto') {
+          reqHeaders['x-nexus-provider'] = prov;
+        }
+      }
+
       const res = await fetch('/api/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-session-id': 'playground-interactive',
-        },
+        headers: reqHeaders,
         body: JSON.stringify(payload),
         signal: abortController.signal,
       });
@@ -412,6 +447,7 @@ export default function PlaygroundPage() {
   };
 
   const clearChat = () => {
+    setSessionId(`playground-${Date.now()}`);
     setMessages([
       {
         id: 'welcome',
@@ -468,26 +504,77 @@ export default function PlaygroundPage() {
         </div>
 
         {/* Model Selection & Controls */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {/* Provider Selector */}
+          <div className="relative">
+            <select
+              value={selectedProvider}
+              onChange={(e) => {
+                const newProv = e.target.value;
+                setSelectedProvider(newProv);
+                if (newProv !== 'auto') {
+                  const firstOfProv = models.find((m) => (m.providerId || m.owned_by) === newProv);
+                  if (firstOfProv) setSelectedModel(firstOfProv.id);
+                }
+              }}
+              className="h-9 w-40 rounded-md border border-slate-700 bg-slate-800/80 px-3 pr-8 text-xs font-medium text-slate-200 shadow-sm focus:border-cyan-500 focus:outline-none"
+              disabled={modelsLoading}
+            >
+              <option value="auto">All Providers (Auto)</option>
+              {providers.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Model Selector */}
           <div className="relative">
             <select
               value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="h-9 w-64 rounded-md border border-slate-700 bg-slate-800/80 px-3 pr-8 text-xs font-medium text-slate-200 shadow-sm focus:border-cyan-500 focus:outline-none"
+              onChange={(e) => {
+                const newModel = e.target.value;
+                setSelectedModel(newModel);
+                const matched = models.find((m) => m.id === newModel);
+                const prov = matched?.providerId || matched?.owned_by;
+                if (prov && selectedProvider !== 'auto' && prov !== selectedProvider) {
+                  setSelectedProvider(prov);
+                }
+              }}
+              className="h-9 w-60 rounded-md border border-slate-700 bg-slate-800/80 px-3 pr-8 text-xs font-medium text-slate-200 shadow-sm focus:border-cyan-500 focus:outline-none"
               disabled={modelsLoading}
             >
-              <option value="auto">auto (Gateway Balanced)</option>
-              <option value="auto:fast">auto:fast (Low Latency)</option>
-              <option value="auto:smart">auto:smart (Frontier Reasoning)</option>
-              <option value="nexus/free">nexus/free (Zero-Cost Free Tier)</option>
-              <option value="fusion">fusion (Multi-Model Consensus)</option>
-              <optgroup label="Discovered Available Models">
-                {models.map((m) => (
+              {selectedProvider === 'auto' && (
+                <>
+                  <option value="auto">auto (Gateway Balanced)</option>
+                  <option value="auto:fast">auto:fast (Low Latency)</option>
+                  <option value="auto:smart">auto:smart (Frontier Reasoning)</option>
+                  <option value="nexus/free">nexus/free (Zero-Cost Free Tier)</option>
+                  <option value="fusion">fusion (Multi-Model Consensus)</option>
+                </>
+              )}
+              {selectedProvider === 'auto' ? (
+                providers.map((prov) => {
+                  const provModels = models.filter((m) => (m.providerId || m.owned_by) === prov);
+                  if (provModels.length === 0) return null;
+                  return (
+                    <optgroup key={prov} label={prov}>
+                      {provModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.id} {m.pricing?.isFree || m.isFree ? '★ (Free)' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })
+              ) : (
+                filteredModels.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.id} {m.pricing?.isFree || m.isFree ? '★ (Free)' : ''}
                   </option>
-                ))}
-              </optgroup>
+                ))
+              )}
             </select>
           </div>
 

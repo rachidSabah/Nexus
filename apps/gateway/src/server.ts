@@ -4504,7 +4504,7 @@ export class HttpServer {
           await runWithFallbacks(sink);
         } catch (err) {
           const errMsg = (err as Error).message ?? '';
-          if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
+          if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('MissingSessionID') || errMsg.includes('only be used in OpenCode')) {
             this.deps.aliasRegistry.recordRateLimitCooldown(aliasResolution.model, 60_000);
           }
           this.reportUpstreamModelError(aliasResolution.model, err as Error);
@@ -4534,7 +4534,7 @@ export class HttpServer {
         return formatOpenAiResponse(response);
       } catch (err) {
         const errMsg = (err as Error).message ?? '';
-        if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
+        if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('MissingSessionID') || errMsg.includes('only be used in OpenCode')) {
           this.deps.aliasRegistry.recordRateLimitCooldown(aliasResolution.model, 60_000);
         }
         this.reportUpstreamModelError(aliasResolution.model, err as Error);
@@ -4604,7 +4604,7 @@ export class HttpServer {
           },
           error: async (error: Error) => {
             const errMsg = (error as Error).message ?? '';
-            if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('404')) {
+            if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('404') || errMsg.includes('MissingSessionID') || errMsg.includes('only be used in OpenCode')) {
               this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
             }
             this.reportUpstreamModelError(effectiveBody.model, error as Error);
@@ -4627,7 +4627,7 @@ export class HttpServer {
           await this.deps.chatUseCase.execute(this.fitToContextWindow(effectiveBody, aliasResolution.model), sink, new AbortController().signal);
         } catch (error) {
           const errMsg = (error as Error).message ?? '';
-          if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('404')) {
+          if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('404') || errMsg.includes('MissingSessionID') || errMsg.includes('only be used in OpenCode')) {
             this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
           }
           this.reportUpstreamModelError(effectiveBody.model, error as Error);
@@ -8748,8 +8748,8 @@ export class HttpServer {
       const hint = this.preferredProviderFor(ar.model, ar.resolution);
       const extra: Record<string, unknown> = { ...bodyRouting };
       if (pinnedProvider) extra.preferredProviders = [pinnedProvider];
-      else if (activeSession?.providerId) extra.preferredProviders = [activeSession.providerId];
       else if (hint) extra.preferredProviders = [hint];
+      else if (activeSession?.providerId) extra.preferredProviders = [activeSession.providerId];
       const eb: ChatCompletionRequest = { ...originalBody, model: ar.model, routing: extra as ChatCompletionRequest['routing'] };
       return eb;
     };
@@ -8812,7 +8812,7 @@ export class HttpServer {
           error: err,
           status,
         });
-        if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {
+        if (errMsg.includes('Rate limit') || errMsg.includes('FreeUsageLimitError') || errMsg.includes('429') || errMsg.includes('exhausted') || errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402') || errMsg.includes('MissingSessionID') || errMsg.includes('only be used in OpenCode')) {
           this.deps.aliasRegistry.recordRateLimitCooldown(effectiveBody.model, 60_000);
         }
         if (errMsg.includes('Missing API key') || errMsg.includes('401') || errMsg.includes('402')) {

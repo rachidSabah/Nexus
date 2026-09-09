@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { OpenAIAdapter } from '../src/adapters/openai.js';
+import { OpenCodeZenAdapter } from '../src/adapters/openai-compatible.js';
 import type { ChatCompletionRequest, ProviderEndpoint } from '@anx/core';
 
 function makeEndpoint(overrides: Partial<ProviderEndpoint & { apiKey?: string }> = {}): ProviderEndpoint & { apiKey?: string } {
@@ -447,5 +448,23 @@ describe('OpenAIAdapter', () => {
         expect((chunk as Record<string, unknown>)[k]).not.toBeUndefined();
       }
     }
+  });
+
+  it('injects x-opencode-session, User-Agent, and session_id in OpenCodeZenAdapter', async () => {
+    const adapter = new OpenCodeZenAdapter();
+    const endpoint = makeEndpoint({ providerId: 'opencode-zen', apiKey: '' });
+    const headers = (adapter as any).headers(endpoint, '');
+    expect(headers['x-opencode-session']).toBeDefined();
+    expect(headers['X-Session-ID']).toBe(headers['x-opencode-session']);
+    expect(headers['opencode-session-id']).toBe(headers['x-opencode-session']);
+    expect(headers['User-Agent']).toContain('opencode/1.0.0');
+
+    const translated = (adapter as any).translateRequest(
+      { model: 'deepseek-chat', messages: [{ role: 'user', content: 'hello' }] },
+      false,
+    );
+    expect(translated.model).toBe('deepseek-v4-flash-free');
+    expect(translated.session_id).toBeDefined();
+    expect(translated.user).toBe(translated.session_id);
   });
 });
