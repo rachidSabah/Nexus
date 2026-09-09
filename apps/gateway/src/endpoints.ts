@@ -1,6 +1,8 @@
 import type { ProviderCapabilities, RoutingEnginePort, CredentialVaultPort, ProviderEndpoint } from '@anx/core';
 
 import type { GatewayConfig } from './config.js';
+import { loadCustomProviders } from './custom-providers.js';
+import { autoImportLocalCredentials } from './local-credentials.js';
 
 /**
  * Probes an endpoint's base URL before registration so unreachable services
@@ -255,6 +257,26 @@ const PROVIDER_DEFAULT_CAPS: Record<string, ProviderCapabilities> = {
     embeddings: true, reasoning: true, jsonMode: true,
     maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
   },
+  kiro: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  kr: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  kimchi: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  kc: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
 };
 
 const FALLBACK_CAPS: ProviderCapabilities = {
@@ -325,6 +347,10 @@ const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = {
   novita: 'https://api.novita.ai/v3/openai',
   siliconflow: 'https://api.siliconflow.cn/v1',
   silicon: 'https://api.siliconflow.cn/v1',
+  kiro: 'https://api.kiro.ai/v1',
+  kr: 'https://api.kiro.ai/v1',
+  kimchi: 'https://api.kimchi.ai/v1',
+  kc: 'https://api.kimchi.ai/v1',
 };
 
 /** Default pricing (per 1K tokens, USD) per provider for auto-registered endpoints. */
@@ -371,6 +397,10 @@ const PROVIDER_DEFAULT_PRICING: Record<string, { inputPer1K: number; outputPer1K
   novita: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   siliconflow: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   silicon: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  kiro: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  kr: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  kimchi: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  kc: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
 };
 
 /** Returns the default base URL for a given provider id. */
@@ -450,6 +480,8 @@ export async function registerDefaultEndpoints(
       { providerId: 'radeon', envVar: 'RADEON_API_KEY', envVarAlt: 'AMD_RADEON_API_KEY', baseUrl: 'https://developer.amd.com.cn/radeon/api/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'anyapi', envVar: 'ANYAPI_API_KEY', baseUrl: 'https://api.anyapi.ai/v1', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       { providerId: 'github', envVar: 'GITHUB_TOKEN', envVarAlt: 'GITHUB_MODELS_API_KEY', baseUrl: 'https://models.github.ai/inference', keyless: false, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'kiro', envVar: 'KIRO_API_KEY', baseUrl: 'https://api.kiro.ai/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
+      { providerId: 'kimchi', envVar: 'KIMCHI_API_KEY', baseUrl: 'https://api.kimchi.ai/v1', keyless: true, pricing: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' } },
       // ── First-class self-hosted / local providers (keyless, probed at boot) ──
       // Ollama, vLLM, and LM Studio expose OpenAI-compatible /v1 endpoints.
       // Registered with the same health-probe + failover treatment as cloud
@@ -525,5 +557,28 @@ export async function registerDefaultEndpoints(
       console.log(`[endpoints] failed to register auto-antigravity-cli: ${(err as Error).message}`);
     }
     } // end if(!ANX_DISABLE_ANTIGRAVITY_CLI)
+
+    // Zero-config: auto-discover active local session credentials from Claude Code,
+    // Codex CLI, GitHub Copilot, and Antigravity, registering healthy endpoints.
+    if (!process.env['ANX_DISABLE_LOCAL_CREDENTIAL_DISCOVERY']) {
+      try {
+        const importedCount = await autoImportLocalCredentials(vault, routing);
+        if (importedCount > 0) {
+          console.log(`[local-credentials] auto-imported ${importedCount} active credential(s) from local coding tools`);
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    // Hot-reloadable custom-providers/ directory loader (9Router parity)
+    try {
+      const customCount = await loadCustomProviders(vault, routing);
+      if (customCount > 0) {
+        console.log(`[custom-providers] loaded ${customCount} custom provider endpoint(s)`);
+      }
+    } catch {
+      // non-fatal
+    }
   }
 }

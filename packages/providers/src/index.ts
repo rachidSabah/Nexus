@@ -28,6 +28,8 @@ export {
   HyperbolicAdapter,
   NovitaAdapter,
   SiliconFlowAdapter,
+  KiroAdapter,
+  KimchiAdapter,
   OllamaAdapter,
   VllmAdapter,
   LmStudioAdapter,
@@ -72,6 +74,8 @@ import {
   HyperbolicAdapter,
   NovitaAdapter,
   SiliconFlowAdapter,
+  KiroAdapter,
+  KimchiAdapter,
   OllamaAdapter,
   VllmAdapter,
   LmStudioAdapter,
@@ -117,6 +121,8 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
     new HyperbolicAdapter(),
     new NovitaAdapter(),
     new SiliconFlowAdapter(),
+    new KiroAdapter(),
+    new KimchiAdapter(),
     new OllamaAdapter(),
     new VllmAdapter(),
     new LmStudioAdapter(),
@@ -147,6 +153,10 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
   if (samba) map.set('samba', samba);
   const silicon = map.get('siliconflow');
   if (silicon) map.set('silicon', silicon);
+  const kiro = map.get('kiro');
+  if (kiro) map.set('kr', kiro);
+  const kimchi = map.get('kimchi');
+  if (kimchi) map.set('kc', kimchi);
   return map;
 }
 
@@ -185,6 +195,10 @@ export const SUPPORTED_PROVIDERS = [
   'novita',
   'siliconflow',
   'silicon',
+  'kiro',
+  'kr',
+  'kimchi',
+  'kc',
   'ollama',
   'vllm',
   'lmstudio',

@@ -1099,5 +1099,53 @@ export class SiliconFlowAdapter extends OpenAIAdapter {
   }
 }
 
+/**
+ * Kiro AI — Free credits provider offering Claude 4.5 Sonnet, GLM-5, and MiniMax.
+ * Base: https://api.kiro.ai/v1.
+ */
+export class KiroAdapter extends OpenAIAdapter {
+  readonly providerId = 'kiro';
+  readonly displayName = 'Kiro AI';
+  protected apiBase = 'https://api.kiro.ai/v1';
+  protected apiKeyEnv = 'KIRO_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['KIRO_API_KEY'] ?? process.env['KIRO_AI_KEY'];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    const m = alias.replace(/^(?:anthropic\/)?(?:kiro|kr)\//i, '').trim();
+    return m || undefined;
+  }
+}
+
+/**
+ * Kimchi AI — AI aggregator supporting diverse free & cheap models.
+ * Base: https://api.kimchi.ai/v1.
+ */
+export class KimchiAdapter extends OpenAIAdapter {
+  readonly providerId = 'kimchi';
+  readonly displayName = 'Kimchi AI';
+  protected apiBase = 'https://api.kimchi.ai/v1';
+  protected apiKeyEnv = 'KIMCHI_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['KIMCHI_API_KEY'] ?? process.env['KIMCHI_AI_KEY'];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    const m = alias.replace(/^(?:anthropic\/)?(?:kimchi|kc)\//i, '').trim();
+    return m || undefined;
+  }
+}
+
 // Re-export the type so subclasses can import it together.
 // (Type imports are hoisted to the top of the file for ESLint import/order compliance.)

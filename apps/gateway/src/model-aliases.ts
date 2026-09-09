@@ -74,7 +74,8 @@ export type AliasRankingStrategy =
   | 'most_capabilities' // highest count of true capability flags
   | 'balanced'     // WS5: quality + cost blend — smart default (like OmniRoute "auto")
   | 'least_loaded' // WS5: spread across providers to avoid piling on one (real load-spreading proxy)
-  | 'most_reliable'; // WS5: prefer non-stale, error-free, healthy models
+  | 'most_reliable' // WS5: prefer non-stale, error-free, healthy models
+  | 'tiered';      // 3-Tier Waterfall: Tier 1 (Subscriptions) -> Tier 2 (Cheap) -> Tier 3 (Free)
 
 export interface AliasFilter {
   /** Only include models with this capability set to true. */
@@ -377,6 +378,20 @@ export class ModelAliasRegistry {
         description: 'Model with lowest latency (falls back to cheapest)',
         filter: {},
         ranking: 'fastest',
+        builtin: true,
+      },
+      {
+        alias: 'nexus/tiered',
+        description: '3-Tier Waterfall: Tier 1 (Subscriptions) -> Tier 2 (Cheap <$1/1M) -> Tier 3 (100% Free rescue)',
+        filter: {},
+        ranking: 'tiered',
+        builtin: true,
+      },
+      {
+        alias: 'local/tiered',
+        description: '3-Tier Waterfall: Tier 1 (Subscriptions) -> Tier 2 (Cheap <$1/1M) -> Tier 3 (100% Free rescue)',
+        filter: {},
+        ranking: 'tiered',
         builtin: true,
       },
       {
@@ -1112,6 +1127,69 @@ export class ModelAliasRegistry {
           const hb = healthScore(b);
           if (ha !== hb) return hb - ha; // healthier first
           if (a.stale !== b.stale) return a.stale ? 1 : -1;
+          return this.capabilityCount(b) - this.capabilityCount(a);
+        });
+      }
+      case 'tiered': {
+        // 3-Tier Waterfall:
+        // Tier 1: Subscriptions & Local OAuth / Configured active keys on premium providers
+        // Tier 2: Cheap sub-cent APIs (combined cost <= $1.00 per 1M tokens)
+        // Tier 3: 100% Free rescue models (cost == 0 or isFree)
+        const getTier = (m: ModelDescriptor): number => {
+          const cost = (m.pricing?.inputPer1M ?? 0) + (m.pricing?.outputPer1M ?? 0);
+          const isExplicitFree = m.pricing?.isFree === true || m.pricing?.freeTier === 'FREE' || m.id.endsWith('-free');
+
+          // Check if provider has active keys or subscription/local-oauth endpoint
+          const hasActiveKey = this.keyRegistry
+            ? this.keyRegistry.listByProvider(m.providerId).some((k) => k.status === 'active')
+            : false;
+          const isLocalOAuthOrSub = this.routing?.listEndpoints().some(
+            (e) => e.providerId === m.providerId && (e.tags.includes('local-oauth') || e.tags.includes('subscription')),
+          ) ?? false;
+
+          // If provider has active OAuth/subscription, or active key on a premium model: Tier 1
+          if (isLocalOAuthOrSub || (hasActiveKey && !isExplicitFree && cost > 1.0)) {
+            return 1;
+          }
+
+          // If it is paid but cheap (sub-cent: combined <= $1.00 per 1M tokens and > 0): Tier 2
+          if (!isExplicitFree && cost > 0 && cost <= 1.0) {
+            return 2;
+          }
+
+          // Any other paid model with active key: Tier 1 or 2 depending on cost
+          if (hasActiveKey && !isExplicitFree) {
+            return cost <= 1.0 ? 2 : 1;
+          }
+
+          // 100% Free rescue: Tier 3
+          return 3;
+        };
+
+        return sorted.sort((a, b) => {
+          const tierA = getTier(a);
+          const tierB = getTier(b);
+          if (tierA !== tierB) return tierA - tierB; // Tier 1 < Tier 2 < Tier 3
+
+          // Within Tier 1: Rank by quality (capabilities + context window)
+          if (tierA === 1) {
+            const qa = this.capabilityCount(a) + Math.log10((a.contextWindow ?? 1000) / 1000);
+            const qb = this.capabilityCount(b) + Math.log10((b.contextWindow ?? 1000) / 1000);
+            return qb - qa;
+          }
+
+          // Within Tier 2: Rank by cost first (cheapest first), then quality
+          if (tierA === 2) {
+            const ca = (a.pricing?.inputPer1M ?? 0) + (a.pricing?.outputPer1M ?? 0);
+            const cb = (b.pricing?.inputPer1M ?? 0) + (b.pricing?.outputPer1M ?? 0);
+            if (ca !== cb) return ca - cb;
+            return this.capabilityCount(b) - this.capabilityCount(a);
+          }
+
+          // Within Tier 3: Healthy/non-stale first, then quality
+          const ha = (!a.stale ? 2 : 0) + (!a.lastError ? 1 : 0);
+          const hb = (!b.stale ? 2 : 0) + (!b.lastError ? 1 : 0);
+          if (ha !== hb) return hb - ha;
           return this.capabilityCount(b) - this.capabilityCount(a);
         });
       }

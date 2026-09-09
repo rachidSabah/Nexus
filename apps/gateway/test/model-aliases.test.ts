@@ -141,5 +141,20 @@ describe('WS5 routing strategies', () => {
     expect(registry.resolve('nexus/balanced')?.modelId).toBeDefined();
     expect(registry.resolve('nexus/least-loaded')?.modelId).toBeDefined();
     expect(registry.resolve('nexus/reliable')?.modelId).toBeDefined();
+    expect(registry.resolve('nexus/tiered')?.modelId).toBeDefined();
+    expect(registry.resolve('local/tiered')?.modelId).toBeDefined();
+  });
+
+  it('tiered strategy ranks cheap sub-cent Tier 2 before Tier 3 free rescue', () => {
+    const freeRescue = {
+      ...capModel('tier3.free', { toolCalling: true }, { isFree: true, freeTier: 'FREE' }),
+      providerId: 'free-provider',
+    };
+    const cheapSubCent = {
+      ...capModel('tier2.cheap', { toolCalling: true }, { isFree: false, freeTier: 'PAID', inputPer1M: 0.2, outputPer1M: 0.2 }),
+      providerId: 'cheap-provider',
+    };
+    expect(rankWith('tiered', [freeRescue, cheapSubCent])).toBe('tier2.cheap');
   });
 });
+

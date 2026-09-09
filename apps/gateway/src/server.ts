@@ -146,6 +146,7 @@ import {
   rankRepository,
   selectRepositoryContext,
   parseGitPorcelain,
+  compressMessagesTokenSaver,
   type OptMessage,
 } from '@anx/token-efficiency';
 import type { McpServer } from '@anx/mcp-server';
@@ -4296,11 +4297,33 @@ export class HttpServer {
       if (this.deps.promptCompressor.getConfig().activeProfile !== 'none') {
         return { messages, changed: false };
       }
-      if (mode === 'off' || !mode) return { messages, changed: false };
+      // Universal Token Saver (RTK parity): compress redundant tool outputs (git diff, test logs, etc.)
+      let currentMessages = messages;
+      let anyChanged = false;
+      const saverEnabled = process.env['ANX_TOKEN_SAVER'] !== 'false' && request.headers['x-nexus-token-saver'] !== 'false';
+      if (saverEnabled && Array.isArray(currentMessages)) {
+        try {
+          const saverRes = compressMessagesTokenSaver(currentMessages as any[]);
+          if (saverRes.summary.changed) {
+            currentMessages = saverRes.messages;
+            anyChanged = true;
+            reply.header('x-nexus-token-saver', 'active');
+            reply.header('x-nexus-tokens-saved', String(saverRes.summary.estimatedSavedTokens));
+            reply.header('x-nexus-savings-percent', `${saverRes.summary.savingsPct}%`);
+            this.fastify.log.info(
+              `[token-saver] compressed tool outputs: saved ~${saverRes.summary.estimatedSavedTokens} tokens (${saverRes.summary.savingsPct}%)`,
+            );
+          }
+        } catch (err) {
+          this.fastify.log.warn(`[token-saver] skipped: ${(err as Error).message}`);
+        }
+      }
+
+      if (mode === 'off' || !mode) return { messages: currentMessages, changed: anyChanged };
 
       try {
         const optimizer = new TokenOptimizer(mode as OptimizationMode);
-        const opt = optimizer.optimize(messages as unknown as OptMessage[], {
+        const opt = optimizer.optimize(currentMessages as unknown as OptMessage[], {
           maxContextTokens: Number(process.env['ANX_TOKEN_BUDGET'] ?? 190_000),
         });
         if (opt.changed) {
@@ -4323,8 +4346,8 @@ export class HttpServer {
       } catch (err) {
         this.fastify.log.warn(`[token-efficiency] live optimize skipped: ${(err as Error).message}`);
       }
-      return { messages, changed: false };
-    }
+      return { messages: currentMessages, changed: anyChanged };
+    };
 
     /**
      * Wire boundary moved to ./openai-wire.js (extracted verbatim from the

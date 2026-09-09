@@ -10,8 +10,8 @@ export { TokenOptimizer, contentHash } from './optimizer.js';
 export { estimateTokens, canonicalizeContent, stableKey } from './estimate.js';
 export { applyBudget, groupUnits, type BudgetOptions } from './budget.js';
 export { compactText, compactConversation, type CompactionOptions, type CompactionResult, type ConversationCompactionResult } from './compaction.js';
-export { compressToolOutput, compressMessageContent } from './tool-output.js';
-export type { ToolCompressionResult, ToolCompressionOptions } from './tool-output.js';
+export { compressToolOutput, compressMessageContent, compressMessagesTokenSaver } from './tool-output.js';
+export type { ToolCompressionResult, ToolCompressionOptions, TokenSaverSummary } from './tool-output.js';
 export {
   compressPipeline,
   type CompressionEngineName,

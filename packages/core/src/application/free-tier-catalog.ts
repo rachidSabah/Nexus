@@ -180,6 +180,26 @@ export const FREE_TIER_CATALOG: readonly FreeTierProvider[] = [
     source: 'https://siliconflow.cn',
     verified: '2026-09',
   },
+  {
+    provider: 'kiro',
+    note: 'Kiro AI: Free credits tier (~50 credits/month) with Claude 4.5 Sonnet, GLM-5, and MiniMax models. No card required.',
+    requestsPerDay: null,
+    tokensPerMinute: null,
+    tokensPerMonthEstimate: 2000000,
+    cardRequired: false,
+    source: 'https://kiro.ai',
+    verified: '2026-09',
+  },
+  {
+    provider: 'kimchi',
+    note: 'Kimchi AI: Community AI router with free model allocations. No card required.',
+    requestsPerDay: 500,
+    tokensPerMinute: null,
+    tokensPerMonthEstimate: null,
+    cardRequired: false,
+    source: 'https://kimchi.ai',
+    verified: '2026-09',
+  },
 ];
 
 /**

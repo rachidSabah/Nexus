@@ -17,6 +17,8 @@ import {
   HyperbolicAdapter,
   NovitaAdapter,
   SiliconFlowAdapter,
+  KiroAdapter,
+  KimchiAdapter,
   createDefaultAdapters,
   SUPPORTED_PROVIDERS,
 } from '../src/index.js';
@@ -451,6 +453,28 @@ describe('specialized presets (Radeon, AnyAPI, GitHub Models)', () => {
       makeEndpoint({ providerId: 'siliconflow', baseUrl: '' }),
     )).toBe('https://api.siliconflow.cn/v1');
     expect(silicon.resolveModel('siliconflow/deepseek-ai/DeepSeek-V3')).toBe('deepseek-ai/DeepSeek-V3');
+  });
+
+  it('registers and resolves Kiro AI and Kimchi adapters with aliases', () => {
+    const map = createDefaultAdapters();
+    expect(map.get('kiro')).toBeDefined();
+    expect(map.get('kr')).toBeDefined();
+    expect(map.get('kimchi')).toBeDefined();
+    expect(map.get('kc')).toBeDefined();
+
+    const kiro = new KiroAdapter();
+    expect((kiro as unknown as { resolveBase: (e: ProviderEndpoint) => string }).resolveBase(
+      makeEndpoint({ providerId: 'kiro', baseUrl: '' }),
+    )).toBe('https://api.kiro.ai/v1');
+    expect(kiro.resolveModel('kiro/claude-3-5-sonnet')).toBe('claude-3-5-sonnet');
+    expect(kiro.resolveModel('kr/deepseek-r1')).toBe('deepseek-r1');
+
+    const kimchi = new KimchiAdapter();
+    expect((kimchi as unknown as { resolveBase: (e: ProviderEndpoint) => string }).resolveBase(
+      makeEndpoint({ providerId: 'kimchi', baseUrl: '' }),
+    )).toBe('https://api.kimchi.ai/v1');
+    expect(kimchi.resolveModel('kimchi/gpt-4o')).toBe('gpt-4o');
+    expect(kimchi.resolveModel('kc/claude-3-5-haiku')).toBe('claude-3-5-haiku');
   });
 });
 

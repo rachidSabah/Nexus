@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compressToolOutput, compressMessageContent } from '../src/index.js';
+import { compressToolOutput, compressMessageContent, compressMessagesTokenSaver } from '../src/index.js';
 
 const errorLine = 'ERROR TS2322: Type X is not assignable to type Y';
 
@@ -94,3 +94,38 @@ describe('tool-output compression honors CRLF and trailing newlines', () => {
     expect(res.text).toContain('[same line repeated 5 times] line');
   });
 });
+
+describe('compressMessagesTokenSaver (RTK parity)', () => {
+  it('compresses tool role messages and provides summary', () => {
+    const messages = [
+      { role: 'user', content: 'run tests' },
+      { role: 'tool', content: `${errorLine}\n`.repeat(20) },
+    ];
+    const { messages: compressed, summary } = compressMessagesTokenSaver(messages);
+    expect(summary.changed).toBe(true);
+    expect(summary.savedChars).toBeGreaterThan(0);
+    expect(summary.estimatedSavedTokens).toBeGreaterThan(0);
+    expect(compressed[1].content).toContain('[same line repeated 20 times]');
+  });
+
+  it('compresses Anthropic tool_result block array format', () => {
+    const messages = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'tool_123',
+            content: `${errorLine}\n`.repeat(15),
+          },
+        ],
+      },
+    ];
+    const { messages: compressed, summary } = compressMessagesTokenSaver(messages);
+    expect(summary.changed).toBe(true);
+    expect(summary.savedChars).toBeGreaterThan(0);
+    const content = compressed[0].content as Array<{ content: string }>;
+    expect(content[0].content).toContain('[same line repeated 15 times]');
+  });
+});
+
