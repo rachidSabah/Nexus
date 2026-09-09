@@ -427,6 +427,11 @@ The complete, in-depth documentation is available in [`docs/wiki/`](docs/wiki/) 
 - Provider API keys are **encrypted at rest** in `~/.agent-nexus/vault.json` using AES-256-GCM.
 - Keys are **never logged**, never forwarded across providers, and never returned in API responses.
 - Continuous CI secret scanning via **Gitleaks** on every push.
+- Dependencies are pinned with **pnpm overrides** as security floors (see `SECURITY.md`):
+  `next >= 15.5.24` (CVE-2026-75604, GHSA-2xp9-vwfh-vxw4) · `sharp >= 0.35.4`
+  (libheif GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545) · `vitest >= 4.1.11`
+  (GHSA-82fw-gwwq-j7x9) · `js-yaml@3 >= 3.15.2`, `js-yaml@4 >= 4.3.2` (CVE-2026-84375).
+  Triage dev-only alerts with `is:open scope:development` on the Dependabot page.
 
 ---
 

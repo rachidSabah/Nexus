@@ -45,6 +45,27 @@ timeline within **7 days**.
 Security fixes are applied to the latest `main` release line. Please keep your
 deployment updated.
 
+## Dependency vulnerability management
+
+Dependabot alerts (`is:open`) are triaged against `pnpm-lock.yaml`. Dev-only
+alerts can be isolated with the `scope:development` filter — they cover the
+test runner and build tooling, never the shipped gateway or dashboard — but
+they are still patched, not waived. Enforced security floors (root
+`package.json` → `pnpm.overrides`, plus direct spec bumps):
+
+| Dependency | Minimum | Resolves | Notes |
+|---|---|---|---|
+| `next` (`apps/dashboard`) | `^15.5.24` (locks to `15.5.25`) | CVE-2026-75604 — unauthenticated RCE on Windows-hosted servers; GHSA-2xp9-vwfh-vxw4 — unauthenticated RCE via AVIF Image Optimization | No workaround for Windows hosts; upgrade is the only fix. AVIF optimization stays disabled until the upstream `sharp`/libheif fix propagates (it has — see below). |
+| `sharp` (override) | `0.35.4` | libheif GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545 (heap buffer overflow → RCE via crafted AVIF) | Ships libheif `1.23.2`. |
+| `vitest` + `@vitest/coverage-v8` | `^4.1.11` | GHSA-82fw-gwwq-j7x9 / CVE-2026-84373 — path traversal / arbitrary file read via `@vitest/mocker` redirect mock over the HMR WebSocket | No fix exists on the `3.2.x` line (latest `3.2.7` is still vulnerable), hence the major bump. Earlier UI-server traversal CVE-2026-47429 was already fixed in `3.2.5`. Dev-scope only: the test runner is never shipped or exposed. |
+| `js-yaml@3` / `js-yaml@4` (overrides, transitive) | `3.15.2` / `4.3.2` | CVE-2026-84375 — `maxTotalMergeKeys` ignores empty merge sources, allowing CPU exhaustion with a small YAML document | Transitive via build tooling; pinned by override since no direct spec exists. |
+
+After any dependency bump: `pnpm install --no-frozen-lockfile`, confirm the
+vulnerable version is gone from `pnpm-lock.yaml`
+(`grep -n "pkg@<old>" pnpm-lock.yaml` → no hits), re-run the affected test
+suites (`packages/providers`, `packages/core`, gateway unit suites) and
+`apps/dashboard` (`tsc --noEmit` + `next build`).
+
 ## Hardening checklist for operators
 
 - [ ] Generate a unique `AGENT_NEXUS_VAULT_KEY` per machine
