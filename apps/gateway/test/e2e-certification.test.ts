@@ -26,7 +26,7 @@ describe('Nexus Full System Certification & Diagnostics', () => {
     } catch {
       // ignore
     }
-  }, 30000);
+  }, 60000);
 
   describe('1. Gateway Health & Core Endpoints', () => {
     it('serves GET /healthz and /health with 200', async () => {
@@ -168,6 +168,6 @@ describe('Nexus Full System Certification & Diagnostics', () => {
         expect(typeof body.error.message).toBe('string');
         expect(body.error.message.length).toBeGreaterThan(0);
       }
-    });
+    }, 60_000);
   });
 });

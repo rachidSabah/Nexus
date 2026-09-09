@@ -179,7 +179,7 @@ export class KeyRegistry {
     }));
 
     let dailyTokenLimit = params.dailyLimits?.maxTokens;
-    let dailyRequestLimit = params.dailyLimits?.maxRequests;
+    const dailyRequestLimit = params.dailyLimits?.maxRequests;
     // AnyAPI default preset: 100K daily tokens free-tier quota
     if (dailyTokenLimit === undefined && (params.providerId === 'anyapi' || params.id.includes('anyapi'))) {
       dailyTokenLimit = 100_000;

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ModelDescriptor, ProviderEndpoint } from '@anx/core';
 
+import type { ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ModelDescriptor, ProviderEndpoint } from '@anx/core';
 import { ProviderResponseError } from '@anx/core';
-import { buildHeaders } from '../shared/http.js';
-import { fetchJson, parseSseStream } from '../shared/http.js';
+
+import { buildHeaders, fetchJson, parseSseStream } from '../shared/http.js';
 
 import { OpenAIAdapter } from './openai.js';
 import type { OpenAIChatResponse } from './openai.js';
@@ -767,7 +767,7 @@ export class KiloGatewayAdapter extends OpenAIAdapter {
   }
 
   override resolveModel(alias: string): string | undefined {
-    let m = alias.replace(/^(?:anthropic\/)?kilo\//i, '').trim();
+    const m = alias.replace(/^(?:anthropic\/)?kilo\//i, '').trim();
     return m || undefined;
   }
 }
@@ -796,7 +796,7 @@ export class PollinationsAdapter extends OpenAIAdapter {
   }
 
   override resolveModel(alias: string): string | undefined {
-    let m = alias.replace(/^(?:anthropic\/)?pollinations\//i, '').trim();
+    const m = alias.replace(/^(?:anthropic\/)?pollinations\//i, '').trim();
     return m || undefined;
   }
 
@@ -917,7 +917,7 @@ export class AiHordeAdapter extends OpenAIAdapter {
   }
 
   override resolveModel(alias: string): string | undefined {
-    let m = alias.replace(/^(?:anthropic\/)?(?:aihorde|horde)\//i, '').trim();
+    const m = alias.replace(/^(?:anthropic\/)?(?:aihorde|horde)\//i, '').trim();
     return m || undefined;
   }
 }
@@ -941,7 +941,7 @@ export class RadeonAdapter extends OpenAIAdapter {
   }
 
   override resolveModel(alias: string): string | undefined {
-    let m = alias.replace(/^(?:anthropic\/)?(?:radeon|amd)\//i, '').trim();
+    const m = alias.replace(/^(?:anthropic\/)?(?:radeon|amd)\//i, '').trim();
     return m || undefined;
   }
 
@@ -968,7 +968,7 @@ export class AnyApiAdapter extends OpenAIAdapter {
   protected apiKeyEnv = 'ANYAPI_API_KEY';
 
   override resolveModel(alias: string): string | undefined {
-    let m = alias.replace(/^(?:anthropic\/)?anyapi\//i, '').trim();
+    const m = alias.replace(/^(?:anthropic\/)?anyapi\//i, '').trim();
     return m || undefined;
   }
 }
@@ -998,7 +998,7 @@ export class GitHubModelsAdapter extends OpenAIAdapter {
   }
 
   override resolveModel(alias: string): string | undefined {
-    let m = alias.replace(/^(?:anthropic\/)?(?:github|gh)\//i, '').trim();
+    const m = alias.replace(/^(?:anthropic\/)?(?:github|gh)\//i, '').trim();
     return m || undefined;
   }
 }
