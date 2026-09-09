@@ -13,6 +13,10 @@ import {
   RadeonAdapter,
   AnyApiAdapter,
   GitHubModelsAdapter,
+  SambaNovaAdapter,
+  HyperbolicAdapter,
+  NovitaAdapter,
+  SiliconFlowAdapter,
   createDefaultAdapters,
   SUPPORTED_PROVIDERS,
 } from '../src/index.js';
@@ -415,6 +419,38 @@ describe('specialized presets (Radeon, AnyAPI, GitHub Models)', () => {
     const adapter = new AnyApiAdapter();
     expect(adapter.resolveModel('anyapi/llama-3-8b')).toBe('llama-3-8b');
     expect(adapter.resolveModel('deepseek-v3')).toBe('deepseek-v3');
+  });
+
+  it('registers and resolves SambaNova, Hyperbolic, Novita, and SiliconFlow adapters', () => {
+    const map = createDefaultAdapters();
+    expect(map.get('sambanova')).toBeDefined();
+    expect(map.get('hyperbolic')).toBeDefined();
+    expect(map.get('novita')).toBeDefined();
+    expect(map.get('siliconflow')).toBeDefined();
+
+    const samba = new SambaNovaAdapter();
+    expect((samba as unknown as { resolveBase: (e: ProviderEndpoint) => string }).resolveBase(
+      makeEndpoint({ providerId: 'sambanova', baseUrl: '' }),
+    )).toBe('https://api.sambanova.ai/v1');
+    expect(samba.resolveModel('sambanova/Meta-Llama-3.1-405B-Instruct')).toBe('Meta-Llama-3.1-405B-Instruct');
+
+    const hyp = new HyperbolicAdapter();
+    expect((hyp as unknown as { resolveBase: (e: ProviderEndpoint) => string }).resolveBase(
+      makeEndpoint({ providerId: 'hyperbolic', baseUrl: '' }),
+    )).toBe('https://api.hyperbolic.xyz/v1');
+    expect(hyp.resolveModel('hyperbolic/meta-llama/Llama-3.3-70B-Instruct')).toBe('meta-llama/Llama-3.3-70B-Instruct');
+
+    const novita = new NovitaAdapter();
+    expect((novita as unknown as { resolveBase: (e: ProviderEndpoint) => string }).resolveBase(
+      makeEndpoint({ providerId: 'novita', baseUrl: '' }),
+    )).toBe('https://api.novita.ai/v3/openai');
+    expect(novita.resolveModel('novita/deepseek/deepseek-r1')).toBe('deepseek/deepseek-r1');
+
+    const silicon = new SiliconFlowAdapter();
+    expect((silicon as unknown as { resolveBase: (e: ProviderEndpoint) => string }).resolveBase(
+      makeEndpoint({ providerId: 'siliconflow', baseUrl: '' }),
+    )).toBe('https://api.siliconflow.cn/v1');
+    expect(silicon.resolveModel('siliconflow/deepseek-ai/DeepSeek-V3')).toBe('deepseek-ai/DeepSeek-V3');
   });
 });
 

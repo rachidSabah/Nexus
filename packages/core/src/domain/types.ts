@@ -27,7 +27,7 @@ export interface ProviderPricing {
 }
 
 // ── Model Fabric: canonical pricing (single representation) ────────────────
-export type PricingSource = 'live' | 'provider_metadata' | 'adapter_fallback' | 'explicit' | 'unknown';
+export type PricingSource = 'live' | 'provider_metadata' | 'adapter_fallback' | 'explicit' | 'remote' | 'unknown';
 
 export type FreeTier =
   | 'FREE'
@@ -361,6 +361,8 @@ export interface ModelDescriptor {
   readonly quarantinedUntil?: number;
   /** Whether the model is verified executable or currently blocked by upstream quota. */
   readonly executable?: boolean;
+  /** Provenance of the model descriptor: 'discovered' (dynamic probing), 'explicit' (static seed), or 'remote' (synced catalog). */
+  readonly source?: 'discovered' | 'explicit' | 'remote' | string;
 }
 
 // ── Network Egress Fabric Domain Model ────────────────────────────────────

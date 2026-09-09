@@ -60,6 +60,13 @@ export class NexusCli {
       case 'start':
       case 'launch':
         return this.launch(rest);
+      case 'setup':
+      case 'setup-claude':
+      case 'setup-codex':
+      case 'setup-aider':
+      case 'setup-continue':
+      case 'setup-dsh':
+        return this.setupShortcut(cmd, rest);
       case 'version':
       case '--version':
       case '-v':
@@ -241,6 +248,30 @@ export class NexusCli {
     proc.on('exit', (code) => {
       process.exit(code ?? 0);
     });
+  }
+
+  private async setupShortcut(cmd: string, args: string[]): Promise<void> {
+    const map: Record<string, string> = {
+      'setup-claude': 'claude-code',
+      'setup-codex': 'codex-cli',
+      'setup-aider': 'aider',
+      'setup-continue': 'continue',
+      'setup-dsh': 'deepseek-harness',
+    };
+
+    if (cmd === 'setup') {
+      const target = args[0];
+      if (!target || target.startsWith('--')) {
+        return this.integrationsInstall(['--all', ...args]);
+      }
+      return this.integrationsInstall(args);
+    }
+
+    const integrationId = map[cmd];
+    if (integrationId) {
+      return this.integrationsInstall([integrationId, ...args]);
+    }
+    return this.integrationsInstall(args);
   }
 
   private client(): NexusClient {
@@ -1016,14 +1047,21 @@ COMMANDS
                              (OS, gateway, providers, keys, agents, network)
   config                     Manage configuration
     init                    Create .anxrc.json with default values
+  setup                      Configure all detected tools/editors to route through Nexus
+  setup-claude               One-command setup for Claude Code
+  setup-codex                One-command setup for OpenAI Codex CLI
+  setup-aider                One-command setup for Aider
+  setup-continue             One-command setup for Continue.dev
+  setup-dsh                  One-command setup for DeepSeek Harness
   update [check]             Pull updates from the official repo, rebuild & restart
                              (use 'anx update check' to preview without applying)
   version                    Print CLI version
   help                       Show this help
 
-SUPPORTED INTEGRATIONS (17 total)
-  CLI:     claude-code, codex-cli, hermes-cli,
-           opencode, opencode-go, opencode-zen, aider
+SUPPORTED INTEGRATIONS (21 total)
+  CLI:     claude-code, codex-cli, hermes-cli, opencode, opencode-go,
+           opencode-zen, aider, openhands, qwen-code, deepseek-harness,
+           goose, crush
   Editors: cursor, continue, cline, roo-code, zed, neovim, emacs
   IDEs:    vscode, jetbrains
 

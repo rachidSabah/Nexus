@@ -225,6 +225,36 @@ const PROVIDER_DEFAULT_CAPS: Record<string, ProviderCapabilities> = {
     embeddings: true, reasoning: true, jsonMode: true,
     maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
   },
+  sambanova: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text'],
+  },
+  samba: {
+    streaming: true, toolCalling: true, vision: false, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text'],
+  },
+  hyperbolic: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  novita: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: false, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  siliconflow: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: true, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
+  silicon: {
+    streaming: true, toolCalling: true, vision: true, audio: false, speech: false,
+    embeddings: true, reasoning: true, jsonMode: true,
+    maxOutputTokens: 8192, maxInputTokens: 128000, supportedModalities: ['text', 'image'],
+  },
 };
 
 const FALLBACK_CAPS: ProviderCapabilities = {
@@ -289,6 +319,12 @@ const PROVIDER_DEFAULT_BASE_URLS: Record<string, string> = {
   anyapi: 'https://api.anyapi.ai/v1',
   github: 'https://models.github.ai/inference',
   gh: 'https://models.github.ai/inference',
+  sambanova: 'https://api.sambanova.ai/v1',
+  samba: 'https://api.sambanova.ai/v1',
+  hyperbolic: 'https://api.hyperbolic.xyz/v1',
+  novita: 'https://api.novita.ai/v3/openai',
+  siliconflow: 'https://api.siliconflow.cn/v1',
+  silicon: 'https://api.siliconflow.cn/v1',
 };
 
 /** Default pricing (per 1K tokens, USD) per provider for auto-registered endpoints. */
@@ -329,6 +365,12 @@ const PROVIDER_DEFAULT_PRICING: Record<string, { inputPer1K: number; outputPer1K
   anyapi: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   github: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
   gh: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  sambanova: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  samba: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  hyperbolic: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  novita: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  siliconflow: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
+  silicon: { inputPer1K: 0, outputPer1K: 0, currency: 'USD' },
 };
 
 /** Returns the default base URL for a given provider id. */

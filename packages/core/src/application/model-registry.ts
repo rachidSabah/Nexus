@@ -739,6 +739,45 @@ export class ModelRegistry {
   }
 
   /**
+   * Ingests signed or remote catalog updates without requiring application redeployment or git pull.
+   * Enhances model descriptions with latest verified quotas, context windows, and pricing classifications.
+   */
+  ingestRemoteCatalog(models: readonly Partial<ModelDescriptor>[]): number {
+    let updated = 0;
+    const now = Date.now();
+    for (const m of models) {
+      if (!m.id || !m.providerId) continue;
+      const key = `${m.providerId}:${m.id}`;
+      const existing = this.models.get(key);
+      const mergedPricing = mergePricing(existing?.pricing, m.pricing);
+      const classification = classifyPricing(mergedPricing);
+      const updatedDescriptor: ModelDescriptor = {
+        id: m.id,
+        providerId: m.providerId,
+        displayName: m.displayName ?? existing?.displayName ?? m.id,
+        contextWindow: m.contextWindow ?? existing?.contextWindow ?? 32768,
+        capabilities: { ...existing?.capabilities, ...m.capabilities },
+        pricing: mergedPricing
+          ? { ...mergedPricing, isFree: classification.isFree, freeTier: classification.freeTier, source: 'remote' }
+          : existing?.pricing,
+        source: 'remote',
+        discoveredAt: existing?.discoveredAt ?? now,
+        stale: false,
+        executable: true,
+        state: 'EXECUTABLE',
+      };
+      this.models.set(key, updatedDescriptor);
+      this.recordChange(key, existing ? 'updated' : 'added');
+      updated++;
+    }
+    if (updated > 0) {
+      this.catalogVersion++;
+      this.publish('model.catalog.synced' as any, { count: updated, at: now } as any);
+    }
+    return updated;
+  }
+
+  /**
    * Returns registry stats for the dashboard, including pricing classification
    * breakdown by source.
    */

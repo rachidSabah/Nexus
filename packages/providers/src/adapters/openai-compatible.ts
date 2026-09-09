@@ -1003,5 +1003,101 @@ export class GitHubModelsAdapter extends OpenAIAdapter {
   }
 }
 
+/**
+ * SambaNova Systems — Ultra-high-speed inference on SN40L Reconfigurable Dataflow Units.
+ * Base: https://api.sambanova.ai/v1.
+ */
+export class SambaNovaAdapter extends OpenAIAdapter {
+  readonly providerId = 'sambanova';
+  readonly displayName = 'SambaNova Systems';
+  protected apiBase = 'https://api.sambanova.ai/v1';
+  protected apiKeyEnv = 'SAMBANOVA_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['SAMBANOVA_API_KEY'] ?? process.env['SAMBA_API_KEY'];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    const m = alias.replace(/^(?:anthropic\/)?(?:sambanova|samba)\//i, '').trim();
+    return m || undefined;
+  }
+}
+
+/**
+ * Hyperbolic — Open-access decentralized GPU inference.
+ * Base: https://api.hyperbolic.xyz/v1.
+ */
+export class HyperbolicAdapter extends OpenAIAdapter {
+  readonly providerId = 'hyperbolic';
+  readonly displayName = 'Hyperbolic';
+  protected apiBase = 'https://api.hyperbolic.xyz/v1';
+  protected apiKeyEnv = 'HYPERBOLIC_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['HYPERBOLIC_API_KEY'];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    const m = alias.replace(/^(?:anthropic\/)?hyperbolic\//i, '').trim();
+    return m || undefined;
+  }
+}
+
+/**
+ * Novita AI — Generative LLM and image inference API with free token allocation.
+ * Base: https://api.novita.ai/v3/openai.
+ */
+export class NovitaAdapter extends OpenAIAdapter {
+  readonly providerId = 'novita';
+  readonly displayName = 'Novita AI';
+  protected apiBase = 'https://api.novita.ai/v3/openai';
+  protected apiKeyEnv = 'NOVITA_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['NOVITA_API_KEY'] ?? process.env['NOVITA_AI_KEY'];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    const m = alias.replace(/^(?:anthropic\/)?novita\//i, '').trim();
+    return m || undefined;
+  }
+}
+
+/**
+ * SiliconFlow — High-performance inference platform offering free Qwen, DeepSeek, and FLUX models.
+ * Base: https://api.siliconflow.cn/v1.
+ */
+export class SiliconFlowAdapter extends OpenAIAdapter {
+  readonly providerId = 'siliconflow';
+  readonly displayName = 'SiliconFlow';
+  protected apiBase = 'https://api.siliconflow.cn/v1';
+  protected apiKeyEnv = 'SILICONFLOW_API_KEY';
+
+  protected override getApiKey(endpoint: ProviderEndpoint): string {
+    const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
+    if (explicit) return explicit;
+    const fromEnv = process.env['SILICONFLOW_API_KEY'] ?? process.env['SILICON_FLOW_API_KEY'];
+    if (fromEnv) return fromEnv;
+    return super.getApiKey(endpoint);
+  }
+
+  override resolveModel(alias: string): string | undefined {
+    const m = alias.replace(/^(?:anthropic\/)?(?:siliconflow|silicon)\//i, '').trim();
+    return m || undefined;
+  }
+}
+
 // Re-export the type so subclasses can import it together.
 // (Type imports are hoisted to the top of the file for ESLint import/order compliance.)

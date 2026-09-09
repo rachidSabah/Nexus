@@ -115,6 +115,7 @@ export function mergePricing(
     live: 0,
     provider_metadata: 1,
     explicit: 1,
+    remote: 1,
     adapter_fallback: 2,
     unknown: 3,
   };

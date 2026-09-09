@@ -291,5 +291,29 @@ describe('ModelRegistry explicit (non-discovered) models', () => {
     const stats = registry.stats();
     expect(stats.pricingBySource['explicit']).toBe(1);
   });
+
+  it('ingestRemoteCatalog populates models and sets source to remote', () => {
+    const registry = new ModelRegistry(routing, adapters);
+    const count = registry.ingestRemoteCatalog([
+      {
+        id: 'sambanova/Meta-Llama-3.1-405B-Instruct',
+        providerId: 'sambanova',
+        displayName: 'SambaNova Llama 3.1 405B',
+        pricing: { inputPer1K: 0, outputPer1K: 0, isFree: true },
+      },
+      {
+        id: '', // invalid
+        providerId: 'novita',
+      },
+    ]);
+
+    expect(count).toBe(1);
+    const m = registry.get('sambanova', 'sambanova/Meta-Llama-3.1-405B-Instruct');
+    expect(m).toBeDefined();
+    expect(m!.source).toBe('remote');
+    expect(m!.pricing.isFree).toBe(true);
+    expect(registry.isAvailable('sambanova', 'sambanova/Meta-Llama-3.1-405B-Instruct')).toBe(true);
+    expect(registry.listByProvider('sambanova').length).toBe(1);
+  });
 });
 

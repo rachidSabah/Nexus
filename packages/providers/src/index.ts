@@ -24,6 +24,10 @@ export {
   RadeonAdapter,
   AnyApiAdapter,
   GitHubModelsAdapter,
+  SambaNovaAdapter,
+  HyperbolicAdapter,
+  NovitaAdapter,
+  SiliconFlowAdapter,
   OllamaAdapter,
   VllmAdapter,
   LmStudioAdapter,
@@ -64,6 +68,10 @@ import {
   RadeonAdapter,
   AnyApiAdapter,
   GitHubModelsAdapter,
+  SambaNovaAdapter,
+  HyperbolicAdapter,
+  NovitaAdapter,
+  SiliconFlowAdapter,
   OllamaAdapter,
   VllmAdapter,
   LmStudioAdapter,
@@ -105,6 +113,10 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
     new RadeonAdapter(),
     new AnyApiAdapter(),
     new GitHubModelsAdapter(),
+    new SambaNovaAdapter(),
+    new HyperbolicAdapter(),
+    new NovitaAdapter(),
+    new SiliconFlowAdapter(),
     new OllamaAdapter(),
     new VllmAdapter(),
     new LmStudioAdapter(),
@@ -131,6 +143,10 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
   if (radeon) map.set('amd', radeon);
   const github = map.get('github');
   if (github) map.set('gh', github);
+  const samba = map.get('sambanova');
+  if (samba) map.set('samba', samba);
+  const silicon = map.get('siliconflow');
+  if (silicon) map.set('silicon', silicon);
   return map;
 }
 
@@ -163,6 +179,12 @@ export const SUPPORTED_PROVIDERS = [
   'anyapi',
   'github',
   'gh',
+  'sambanova',
+  'samba',
+  'hyperbolic',
+  'novita',
+  'siliconflow',
+  'silicon',
   'ollama',
   'vllm',
   'lmstudio',
