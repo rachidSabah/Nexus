@@ -47,15 +47,20 @@ export class OpenAIAdapter implements ProviderAdapter {
     const url = `${this.resolveBase(endpoint)}/chat/completions`;
     const body = this.translateRequest(request, false);
 
-    let responseHeaders: Record<string, string> | undefined;
-    const raw = await fetchJson<OpenAIChatResponse>(url, {
-      method: 'POST',
-      headers: this.headers(endpoint, apiKey),
-      body: JSON.stringify(body),
-    }, endpoint, signal, (h) => { responseHeaders = h; });
+    try {
+      let responseHeaders: Record<string, string> | undefined;
+      const raw = await fetchJson<OpenAIChatResponse>(url, {
+        method: 'POST',
+        headers: this.headers(endpoint, apiKey),
+        body: JSON.stringify(body),
+      }, endpoint, signal, (h) => { responseHeaders = h; });
 
-    const response = this.translateResponse(raw, endpoint, responseHeaders);
-    return response;
+      const response = this.translateResponse(raw, endpoint, responseHeaders);
+
+      return response;
+    } catch (err) {
+      throw this.rewriteErrorMessage(err, endpoint);
+    }
   }
 
   async *streamChatCompletion(
@@ -67,24 +72,28 @@ export class OpenAIAdapter implements ProviderAdapter {
     const url = `${this.resolveBase(endpoint)}/chat/completions`;
     const body = this.translateRequest(request, true);
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: this.headers(endpoint, apiKey),
-      body: JSON.stringify(body),
-      signal,
-    });
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: this.headers(endpoint, apiKey),
+        body: JSON.stringify(body),
+        signal,
+      });
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new ProviderResponseError(endpoint.id, response.status, text, { url });
-    }
-    if (!response.body) {
-      throw new ProviderResponseError(endpoint.id, 0, 'No response body for stream', { url });
-    }
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new ProviderResponseError(endpoint.id, response.status, text, { url });
+      }
+      if (!response.body) {
+        throw new ProviderResponseError(endpoint.id, 0, 'No response body for stream', { url });
+      }
 
-    for await (const evt of parseSseStream(response.body)) {
-      const chunk = this.translateChunk(evt);
-      if (chunk) yield chunk;
+      for await (const evt of parseSseStream(response.body)) {
+        const chunk = this.translateChunk(evt);
+        if (chunk) yield chunk;
+      }
+    } catch (err) {
+      throw this.rewriteErrorMessage(err, endpoint);
     }
   }
 
@@ -345,6 +354,33 @@ export class OpenAIAdapter implements ProviderAdapter {
       });
     }
     return fromEnv;
+  }
+
+  /**
+   * Extract a meaningful error message from a provider's raw error response
+   * body. Subclasses override this for provider-specific error envelopes
+   * (e.g. Pollinations' nested `details.error` object). The default is the
+   * identity — the raw body text passes through untouched.
+   */
+  protected extractErrorMessage(rawBody: string): string {
+    return rawBody;
+  }
+
+  /**
+   * Rewrite a caught ProviderResponseError's message via extractErrorMessage,
+   * preserving endpoint id and status. Non-provider errors pass through.
+   */
+  protected rewriteErrorMessage(err: unknown, _endpoint: ProviderEndpoint): unknown {
+    if (err instanceof ProviderResponseError) {
+      const extracted = this.extractErrorMessage(err.message);
+      if (extracted !== err.message) {
+        // Preserve the original context (url, headers incl. Retry-After, raw
+        // body) so failure classification and diagnostics keep working.
+        const { endpointId: _eid, status: _st, ...rest } = err.context ?? {};
+        return new ProviderResponseError(err.endpointId, err.status, extracted, rest);
+      }
+    }
+    return err;
   }
 
   protected headers(endpoint: ProviderEndpoint, apiKey: string): Record<string, string> {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { OpenAIAdapter } from '../src/adapters/openai.js';
 import {
   CohereAdapter,
   HuggingFaceAdapter,
@@ -23,6 +24,7 @@ import {
   SUPPORTED_PROVIDERS,
 } from '../src/index.js';
 import type { ChatCompletionRequest, ProviderEndpoint } from '@anx/core';
+import { ProviderResponseError } from '@anx/core';
 
 function makeEndpoint(overrides: Partial<ProviderEndpoint & { apiKey?: string }> = {}): ProviderEndpoint & { apiKey?: string } {
   return {
@@ -475,6 +477,80 @@ describe('specialized presets (Radeon, AnyAPI, GitHub Models)', () => {
     )).toBe('https://api.kimchi.ai/v1');
     expect(kimchi.resolveModel('kimchi/gpt-4o')).toBe('gpt-4o');
     expect(kimchi.resolveModel('kc/claude-3-5-haiku')).toBe('claude-3-5-haiku');
+  });
+});
+
+describe('provider error-message extraction', () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  const req: ChatCompletionRequest = { model: 'm', messages: [{ role: 'user', content: 'hi' }] };
+  const sig = () => new AbortController().signal;
+
+  function errWithBody(status: number, body: string, headers?: Headers): unknown {
+    return {
+      ok: false,
+      status,
+      headers: headers ?? new Headers(),
+      text: async () => body,
+    };
+  }
+
+  it('base adapter passes raw error bodies through untouched', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => errWithBody(429, JSON.stringify({ error: { message: 'slow down' } }))));
+    const adapter = new OpenAIAdapter();
+    const err = await adapter
+      .chatCompletion(makeEndpoint({ providerId: 'openai' }), req, sig())
+      .then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderResponseError);
+    const pre = err as ProviderResponseError;
+    expect(pre.status).toBe(429);
+    expect(pre.message).toContain('slow down');
+  });
+
+  it('Pollinations surfaces nested details.error code in chat errors', async () => {
+    const nested = JSON.stringify({ details: { error: { code: 'KEY_BUDGET_EXHAUSTED', message: '0.0000 pollen left' } } });
+    vi.stubGlobal('fetch', vi.fn(async () => errWithBody(402, nested)));
+    const adapter = new PollinationsAdapter();
+    const err = await adapter
+      .chatCompletion(makeEndpoint({ providerId: 'pollinations' }), req, sig())
+      .then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderResponseError);
+    const pre = err as ProviderResponseError;
+    expect(pre.status).toBe(402);
+    expect(pre.message).toBe('KEY_BUDGET_EXHAUSTED: 0.0000 pollen left');
+  });
+
+  it('Pollinations rewrite preserves response context (url, headers)', async () => {
+    const nested = JSON.stringify({ details: { error: { code: 'KEY_BUDGET_EXHAUSTED', message: 'empty' } } });
+    const headers = new Headers({ 'retry-after': '7' });
+    vi.stubGlobal('fetch', vi.fn(async () => errWithBody(402, nested, headers)));
+    const adapter = new PollinationsAdapter();
+    const err = await adapter
+      .chatCompletion(makeEndpoint({ providerId: 'pollinations' }), req, sig())
+      .then(() => null, (e: unknown) => e);
+    const pre = err as ProviderResponseError;
+    expect(pre.context?.['url']).toContain('/chat/completions');
+    expect((pre.context?.['headers'] as Record<string, string>)['retry-after']).toBe('7');
+  });
+
+  it('Pollinations surfaces nested code on stream errors too', async () => {
+    const nested = JSON.stringify({ details: { error: { code: 'KEY_BUDGET_EXHAUSTED', message: 'empty' } } });
+    vi.stubGlobal('fetch', vi.fn(async () => errWithBody(402, nested)));
+    const adapter = new PollinationsAdapter();
+    const iter = adapter.streamChatCompletion(makeEndpoint({ providerId: 'pollinations' }), req, sig());
+    await expect(iter[Symbol.asyncIterator]().next()).rejects.toThrow(/KEY_BUDGET_EXHAUSTED/);
+  });
+
+  it('non-JSON error bodies pass through unchanged', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => errWithBody(500, 'upstream exploded')));
+    const adapter = new PollinationsAdapter();
+    const err = await adapter
+      .chatCompletion(makeEndpoint({ providerId: 'pollinations' }), req, sig())
+      .then(() => null, (e: unknown) => e);
+    expect((err as ProviderResponseError).message).toBe('upstream exploded');
   });
 });
 

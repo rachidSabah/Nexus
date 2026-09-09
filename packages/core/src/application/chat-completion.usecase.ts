@@ -1318,7 +1318,7 @@ export function classifyFailure(error: Error): FailureClassification {
     const msg = error.message ?? '';
     const isRateLimit =
       status === 429 ||
-      /free ?usage ?limit|rate[ -]?limit|too many requests|429/i.test(msg);
+      /free ?usage ?limit|rate[ -]?limit|too many requests|429|queue\s+full/i.test(msg);
     if (isRateLimit) {
       return {
         status: 429,
@@ -1335,6 +1335,25 @@ export function classifyFailure(error: Error): FailureClassification {
     // are NOT an auth failure — the key is valid, the account simply has no
     // remaining credit. These MUST fail over to the next endpoint (and the
     // broke endpoint should be circuit-broken so we don't keep retrying it).
+    //
+    // Special case: KEY_BUDGET_EXHAUSTED (Pollinations "pollen" budget gone).
+    // The key itself must be invalidated — not just the endpoint — so the
+    // gateway never retries with that exhausted key on any provider/model.
+    const keyBudgetExhausted =
+      status === 402 &&
+      /KEY_BUDGET_EXHAUSTED|budget\s+(?:too\s+low|exhausted)|0\.0000\s*pollen|pollen.{0,60}key/i.test(
+        error.message ?? '',
+      );
+    if (keyBudgetExhausted) {
+      return {
+        status: 402,
+        code: 'KEY_BUDGET_EXHAUSTED',
+        retryable: true,
+        keyAction: 'invalidate',
+        endpointAction: 'record_failure',
+        reason: 'HTTP 402: API key budget exhausted — key invalidated, failing over to keyless/alternative endpoint',
+      };
+    }
     const billing =
       status === 402 ||
       ((status === 401 || status === 403) &&

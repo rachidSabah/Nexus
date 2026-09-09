@@ -228,4 +228,25 @@ describe('classifyFailure', () => {
     expect(c.code).toBe('MODEL_UNAVAILABLE');
     expect(c.endpointAction).toBe('record_failure');
   });
+
+  it('classifies KEY_BUDGET_EXHAUSTED 402 as key invalidation + failover', () => {
+    const err = new ProviderResponseError(
+      'ep1',
+      402,
+      'KEY_BUDGET_EXHAUSTED: 0.0000 pollen left',
+    );
+    const c = classifyFailure(err);
+    expect(c.status).toBe(402);
+    expect(c.code).toBe('KEY_BUDGET_EXHAUSTED');
+    expect(c.retryable).toBe(true);
+    expect(c.keyAction).toBe('invalidate');
+    expect(c.endpointAction).toBe('record_failure');
+  });
+
+  it('classifies Queue full as 429 rate-limit failover', () => {
+    const err = new ProviderResponseError('ep1', 500, 'Queue full, try again later');
+    const c = classifyFailure(err);
+    expect(c.status).toBe(429);
+    expect(c.retryable).toBe(true);
+  });
 });

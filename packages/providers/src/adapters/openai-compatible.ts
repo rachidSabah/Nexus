@@ -800,6 +800,33 @@ export class PollinationsAdapter extends OpenAIAdapter {
     return m || undefined;
   }
 
+  /**
+   * Pollinations wraps error details in a nested `details.error` object
+   * (e.g. `{ "details": { "error": { "message": "...", "code": "KEY_BUDGET_EXHAUSTED" } } }`).
+   * This override re-serialises that nested code into the error message so
+   * `classifyFailure` can detect KEY_BUDGET_EXHAUSTED and Queue full without
+   * provider-specific branches in core.
+   */
+  protected extractErrorMessage(rawBody: string): string {
+    try {
+      const json = JSON.parse(rawBody) as Record<string, unknown>;
+      // Nested: { details: { error: { message, code } } }
+      const details = json['details'] as Record<string, unknown> | undefined;
+      const nested = details?.['error'] as Record<string, unknown> | undefined;
+      if (nested?.['code']) {
+        return `${nested['code']}: ${nested['message'] ?? rawBody}`;
+      }
+      // Top-level: { error: "..." }
+      if (typeof json['error'] === 'string') return json['error'];
+      if (json['error'] && typeof (json['error'] as Record<string, unknown>)['message'] === 'string') {
+        return (json['error'] as Record<string, unknown>)['message'] as string;
+      }
+    } catch {
+      // not JSON — return raw
+    }
+    return rawBody;
+  }
+
   override async discoverModels(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<readonly ModelDescriptor[]> {
     try {
       const apiKey = this.getApiKey(endpoint);
