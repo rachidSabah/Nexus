@@ -1,5 +1,6 @@
-import vm from 'node:vm';
 import { createSign, createVerify } from 'node:crypto';
+import vm from 'node:vm';
+
 import type { PluginContext, PluginHook } from './index.js';
 
 /**
