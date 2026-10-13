@@ -1083,3 +1083,5 @@ export class MultiTierCacheHierarchy {
   }
 }
 
+export * from './vector-adapters.js';
+

@@ -187,6 +187,13 @@ export type {
   DailyQuotaCheckResult,
 } from './application/ports.js';
 
+// ── Prompt Template Registry ────────────────────────────────────────────────
+export {
+  PromptTemplateRegistry,
+  type PromptTemplateDefinition,
+  type PromptTemplateRecord,
+} from './domain/template-registry.js';
+
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';
 

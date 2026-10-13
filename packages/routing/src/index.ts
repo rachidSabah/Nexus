@@ -130,3 +130,6 @@ export class AffinityRouter implements RoutingEnginePort {
     this.affinity.clear();
   }
 }
+
+export * from './performance.js';
+export * from './foundations.js';

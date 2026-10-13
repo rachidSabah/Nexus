@@ -1,0 +1,42 @@
+groups:
+  - name: agent-nexus-gateway-alerts
+    rules:
+      - alert: NexusHighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: agent-nexus-gateway
+        annotations:
+          summary: "Nexus Gateway HTTP 5xx error rate exceeds 5%"
+          description: "Gateway is failing more than 5% of requests over the last 5 minutes."
+
+      - alert: NexusHighP99Latency
+        expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 5.0
+        for: 3m
+        labels:
+          severity: warning
+          service: agent-nexus-gateway
+        annotations:
+          summary: "Nexus Gateway P99 latency above 5 seconds"
+          description: "P99 latency has exceeded 5s for the last 3 minutes."
+
+      - alert: NexusCircuitBreakerOpen
+        expr: nexus_circuit_breaker_state == 1
+        for: 1m
+        labels:
+          severity: warning
+          service: agent-nexus-gateway
+        annotations:
+          summary: "Circuit breaker open for provider {{ $labels.provider }}"
+          description: "Provider {{ $labels.provider }} has tripped its circuit breaker and traffic is failing over."
+
+      - alert: NexusDailyQuotaExhausted
+        expr: nexus_daily_quota_remaining <= 0
+        for: 1m
+        labels:
+          severity: info
+          service: agent-nexus-gateway
+        annotations:
+          summary: "Daily quota exhausted for provider {{ $labels.provider }}"
+          description: "Provider {{ $labels.provider }} has used up its daily allocation; routing to alternative tier."

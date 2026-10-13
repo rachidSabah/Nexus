@@ -9,6 +9,8 @@ import {
   type PluginRuntimePort,
 } from '@anx/core';
 
+export type { PluginDescriptor };
+
 /**
  * Lifecycle hooks a plugin can implement. The runtime invokes these at
  * well-defined points in the request / system lifecycle.
@@ -212,3 +214,5 @@ declare module './index.js' {
     factory?: () => Plugin;
   }
 }
+
+export * from './sandbox.js';

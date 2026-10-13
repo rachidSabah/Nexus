@@ -448,6 +448,84 @@ export class AzureOpenAIAdapter extends OpenAIAdapter {
       endpoint,
     );
   }
+
+  override async *streamChatCompletion(
+    endpoint: ProviderEndpoint,
+    request: ChatCompletionRequest,
+    signal: AbortSignal,
+  ): AsyncIterable<ChatCompletionChunk> {
+    const apiKey = this.getApiKey(endpoint);
+    const deployment = endpoint.tags[0] ?? request.model;
+    const apiVersion = '2024-10-21';
+    const url = `${this.resolveBase(endpoint)}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
+    const body = this.translateRequest(request, true);
+    delete body['model'];
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: this.headers(endpoint, apiKey),
+        body: JSON.stringify(body),
+        signal,
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new ProviderResponseError(endpoint.id, response.status, text, { url });
+      }
+      if (!response.body) {
+        throw new ProviderResponseError(endpoint.id, 0, 'No response body for stream', { url });
+      }
+
+      for await (const evt of parseSseStream(response.body)) {
+        const chunk = this.translateChunk(evt);
+        if (chunk) yield chunk;
+      }
+    } catch (err) {
+      throw this.rewriteErrorMessage(err, endpoint);
+    }
+  }
+}
+
+/**
+ * Cloudflare Workers AI — native binding adapter.
+ * Supports @cf/ models directly with account ID and API token.
+ */
+export class CloudflareAIAdapter extends OpenAIAdapter {
+  readonly providerId = 'cloudflare-ai';
+  readonly displayName = 'Cloudflare Workers AI';
+  protected apiBase = 'https://api.cloudflare.com/client/v4/accounts';
+  protected apiKeyEnv = 'CLOUDFLARE_API_TOKEN';
+
+  protected override resolveBase(endpoint: ProviderEndpoint): string {
+    const accountId = process.env['CLOUDFLARE_ACCOUNT_ID'] ?? endpoint.tags[0];
+    if (accountId && !endpoint.baseUrl.includes(accountId)) {
+      return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`;
+    }
+    return super.resolveBase(endpoint);
+  }
+}
+
+/**
+ * Perplexity AI — search-augmented conversational model API with citations.
+ */
+export class PerplexityAdapter extends OpenAIAdapter {
+  readonly providerId = 'perplexity';
+  readonly displayName = 'Perplexity';
+  protected apiBase = 'https://api.perplexity.ai';
+  protected apiKeyEnv = 'PERPLEXITY_API_KEY';
+}
+
+/**
+ * Replicate — LLM predictions API adapter.
+ */
+export class ReplicateAdapter extends OpenAIAdapter {
+  readonly providerId = 'replicate';
+  readonly displayName = 'Replicate';
+  protected apiBase = 'https://api.replicate.com/v1';
+  protected apiKeyEnv = 'REPLICATE_API_TOKEN';
+
+  protected override authHeaderPrefix = 'Bearer ';
 }
 
 export class GenericOpenAIAdapter extends OpenAIAdapter {

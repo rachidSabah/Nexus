@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
 
 /**
  * Agent-to-Agent (A2A) Protocol.
@@ -126,6 +126,42 @@ export class A2ACoordinator {
   }
 
   /**
+   * Broadcast a message to all registered agents.
+   */
+  async broadcast(from: string, payload: unknown): Promise<void> {
+    await this.emit(from, 'broadcast', payload);
+  }
+
+  private readonly topicSubscriptions = new Map<string, Set<(payload: unknown, from: string) => Promise<void> | void>>();
+
+  /**
+   * Subscribe to a pub/sub topic.
+   */
+  subscribe(topic: string, handler: (payload: unknown, from: string) => Promise<void> | void): void {
+    const set = this.topicSubscriptions.get(topic) ?? new Set();
+    set.add(handler);
+    this.topicSubscriptions.set(topic, set);
+  }
+
+  /**
+   * Unsubscribe from a pub/sub topic.
+   */
+  unsubscribe(topic: string, handler: (payload: unknown, from: string) => Promise<void> | void): void {
+    const set = this.topicSubscriptions.get(topic);
+    if (set) set.delete(handler);
+  }
+
+  /**
+   * Publish a message to a pub/sub topic.
+   */
+  async publish(from: string, topic: string, payload: unknown): Promise<void> {
+    const handlers = this.topicSubscriptions.get(topic);
+    if (handlers) {
+      await Promise.all(Array.from(handlers).map((h) => Promise.resolve(h(payload, from))));
+    }
+  }
+
+  /**
    * Route a message to its destination(s) and handle the response.
    */
   private async route(msg: A2AMessage): Promise<void> {
@@ -149,6 +185,56 @@ export class A2ACoordinator {
         }
       }
     }
+  }
+}
+
+/**
+ * Sign an A2A message with HMAC-SHA256 signature for tamper-proof transport.
+ */
+export function signA2AMessage(msg: A2AMessage, secretKey: string): A2AMessage {
+  const payloadStr = JSON.stringify(msg.payload);
+  const dataToSign = `${msg.id}:${msg.from}:${msg.to}:${msg.createdAt}:${payloadStr}`;
+  const sig = createHmac('sha256', secretKey).update(dataToSign).digest('hex');
+  return { ...msg, signature: sig };
+}
+
+/**
+ * Verify HMAC-SHA256 signature of an A2A message.
+ */
+export function verifyA2AMessage(msg: A2AMessage, secretKey: string): boolean {
+  if (!msg.signature) return false;
+  const payloadStr = JSON.stringify(msg.payload);
+  const dataToSign = `${msg.id}:${msg.from}:${msg.to}:${msg.createdAt}:${payloadStr}`;
+  const expected = createHmac('sha256', secretKey).update(dataToSign).digest('hex');
+  return msg.signature === expected;
+}
+
+/**
+ * HTTP Transport for A2A protocol v1.
+ * Supports remote agent messaging and verification of signed messages over HTTP.
+ */
+export class HttpA2ATransport {
+  constructor(private readonly coordinator: A2ACoordinator) {}
+
+  async sendRemote(targetUrl: string, message: A2AMessage, secretKey?: string): Promise<unknown> {
+    const signedMsg = secretKey ? signA2AMessage(message, secretKey) : message;
+    const res = await fetch(targetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(signedMsg),
+    });
+    if (!res.ok) {
+      throw new Error(`Remote A2A transport error: ${res.status} ${res.statusText}`);
+    }
+    return res.json();
+  }
+
+  async handleIncoming(rawBody: string | Record<string, unknown>, secretKey?: string): Promise<unknown> {
+    const msg = typeof rawBody === 'string' ? (JSON.parse(rawBody) as A2AMessage) : (rawBody as unknown as A2AMessage);
+    if (secretKey && !verifyA2AMessage(msg, secretKey)) {
+      throw new Error('Invalid A2A message signature');
+    }
+    return this.coordinator.request(msg.from, msg.to, msg.payload);
   }
 }
 

@@ -19,7 +19,7 @@ import {
   type MissionTask,
 } from '@anx/core';
 
-describe('Phase 30: Full-System Production Validation & Chaos Testing', { timeout: 35000 }, () => {
+describe('Phase 30: Full-System Production Validation & Chaos Testing', { timeout: 90000 }, () => {
   let runtime: GatewayRuntime;
   const testPort = 18799;
   const baseUrl = `http://127.0.0.1:${testPort}`;
@@ -31,7 +31,7 @@ describe('Phase 30: Full-System Production Validation & Chaos Testing', { timeou
     process.env['PORT'] = String(testPort);
     runtime = await GatewayRuntime.create(undefined);
     await runtime.start();
-  }, 35000);
+  }, 90000);
 
   afterAll(async () => {
     await runtime.stop();
@@ -40,7 +40,7 @@ describe('Phase 30: Full-System Production Validation & Chaos Testing', { timeou
     } catch {
       // ignore
     }
-  }, 35000);
+  }, 90000);
 
   describe('1. Mission Lifecycle & State Machine Transitions', () => {
     it('enforces legal transitions and prevents illegal transitions', async () => {

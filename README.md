@@ -24,6 +24,13 @@
 
 > ⚡ **What's New in Nexus `v0.5.0`**:
 > - 🪐 **First-Class Google Antigravity CLI (`agy`) Native Provider**: Direct subprocess integration with zero token scraping, inheriting local authentication, multi-turn tool support, and live dynamic discovery of 14+ models (`gemini-3.8/3.7/3.6-flash`, `gemini-3.1-pro`, `claude-sonnet-4-6`, `gpt-oss-120b`).
+> - 🌿 **Workflow DAG & Concurrent Parallel Execution**: Branching Directed Acyclic Graph workflows with dependency resolution, parallel branch dispatch, condition evaluation, and execution history.
+> - ☁️ **Expanded Cloud Provider Adapters**: Native adapters with streaming for Azure OpenAI deployments, Cloudflare Workers AI, Perplexity AI, and Replicate.
+> - 🧠 **Semantic Vector Cache & PgVector Storage**: Embeddings-based similarity caching with in-memory cosine fallback and PostgreSQL `pgvector` generation for high hit-rate prompt reuse.
+> - 🗄️ **Local File & Multi-Backend Vector Stores**: Built-in JSON/directory local vector store adapter and pluggable vector store contract.
+> - 📝 **Immutable Semantic Versioned Prompt Templates**: Centralized `PromptTemplateRegistry` supporting template variables `{{var}}`, default fallbacks, and semver tag tracking.
+> - 📊 **Accurate Tiktoken Token Accounting**: cl100k/o200k/p50k BPE estimation, message framing overhead calculations, and pre-flight budget verification.
+> - 🔔 **Production Alerting & Prometheus Monitoring**: Ready-to-use Prometheus alerting rules and Alertmanager routing manifests for error rates, P99 latency, circuit breaker state, and quota exhaustion.
 > - 🩹 **Tool Schema Auto-Healer & Default Infill**: Self-heals malformed JSON arguments from upstream models and infills missing schema fields so agent harnesses never fail.
 > - 🔒 **Stream Clamping & Tokenizer Leak Shield**: Real-time filtering of tokenizer artifact tokens (`<unk>`, `<s>`, `<|im_end|>`) with runaway loop termination.
 > - 🗜️ **Six-Engine Token Compression**: Real-time prompt minification with measured savings up to 95%.

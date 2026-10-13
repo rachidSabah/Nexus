@@ -27,10 +27,47 @@ import {
 
 export type AgentStatus = 'online' | 'offline' | 'busy';
 
+export type AgentRoleType = 'planner' | 'executor' | 'critic' | 'observer';
+
+export interface AgentRoleProfile {
+  readonly role: AgentRoleType;
+  readonly defaultCapabilities: readonly string[];
+  readonly defaultPermissions: readonly string[];
+  readonly description: string;
+}
+
+export const AGENT_ROLE_PROFILES: Record<AgentRoleType, AgentRoleProfile> = {
+  planner: {
+    role: 'planner',
+    defaultCapabilities: ['planning', 'decomposition', 'dag-synthesis'],
+    defaultPermissions: ['workflow.read', 'catalog.read'],
+    description: 'Decomposes complex objectives into structured DAG tasks and sub-plans',
+  },
+  executor: {
+    role: 'executor',
+    defaultCapabilities: ['coding', 'tool-execution', 'file-write', 'command-exec'],
+    defaultPermissions: ['filesystem.read', 'filesystem.write', 'command.execute'],
+    description: 'Executes individual steps, writes code, and invokes system tools',
+  },
+  critic: {
+    role: 'critic',
+    defaultCapabilities: ['code-review', 'verification', 'security-audit', 'eval'],
+    defaultPermissions: ['filesystem.read', 'test.run', 'audit.read'],
+    description: 'Reviews outputs, identifies bugs/security issues, and evaluates verdicts',
+  },
+  observer: {
+    role: 'observer',
+    defaultCapabilities: ['telemetry-audit', 'tracing', 'incident-reporting', 'metrics'],
+    defaultPermissions: ['telemetry.read', 'metrics.read', 'audit.write'],
+    description: 'Passively monitors execution telemetry, logs, and compliance',
+  },
+};
+
 export interface AgentDefinition {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  readonly role?: AgentRoleType;
   readonly capabilities: readonly string[];
   readonly tools: readonly string[];
   readonly models: readonly string[];
@@ -274,6 +311,10 @@ export class AgentRegistry {
 
   findByTag(tag: string): readonly AgentRecord[] {
     return this.list().filter((a) => a.tags?.includes(tag));
+  }
+
+  findByRole(role: AgentRoleType): readonly AgentRecord[] {
+    return this.list().filter((a) => a.role === role && a.status !== 'offline');
   }
 
   /**

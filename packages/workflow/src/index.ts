@@ -47,6 +47,7 @@ export interface WorkflowStep {
   readonly maxRetries?: number;
   readonly temperature?: number;
   readonly maxTokens?: number;
+  readonly dependsOn?: readonly string[]; // DAG predecessor steps that must complete before this step runs
 }
 
 export interface WorkflowDefinition {
@@ -367,6 +368,12 @@ export class WorkflowEngine {
     let stepsCompleted = 0;
     let stepsFailed = 0;
 
+    const hasDag = def.steps.some((s) => s.dependsOn && s.dependsOn.length > 0);
+    if (hasDag && fromStep === 0) {
+      await this.runDagExecution(executionId, def, sessionId, context);
+      return;
+    }
+
     for (let i = fromStep; i < def.steps.length; i++) {
       // Re-read execution to check pause/cancel.
       const current = await this.repo.getExecution(executionId);
@@ -569,6 +576,181 @@ export class WorkflowEngine {
         },
         executionId,
       ),
+    );
+  }
+
+  private async runDagExecution(
+    executionId: string,
+    def: WorkflowDefinition,
+    sessionId: string | undefined,
+    context: Record<string, unknown>,
+  ): Promise<void> {
+    const completedSteps = new Set<string>();
+    const failedSteps = new Set<string>();
+    const skippedSteps = new Set<string>();
+    let totalCost = 0;
+    let totalTokens = 0;
+
+    const initialExec = await this.repo.getExecution(executionId);
+    if (!initialExec) return;
+    const activeSteps = [...initialExec.steps];
+
+    while (completedSteps.size + failedSteps.size + skippedSteps.size < def.steps.length) {
+      const current = await this.repo.getExecution(executionId);
+      if (!current || current.status === 'paused' || current.status === 'cancelled') {
+        return;
+      }
+
+      // Find ready steps whose dependencies have completed or skipped
+      const readySteps: Array<{ index: number; step: WorkflowStep }> = [];
+      for (let i = 0; i < def.steps.length; i++) {
+        const step = def.steps[i]!;
+        if (completedSteps.has(step.name) || failedSteps.has(step.name) || skippedSteps.has(step.name)) {
+          continue;
+        }
+
+        const deps = step.dependsOn ?? [];
+        const allDepsSatisfied = deps.every((d) => completedSteps.has(d) || skippedSteps.has(d));
+        if (allDepsSatisfied) {
+          readySteps.push({ index: i, step });
+        }
+      }
+
+      if (readySteps.length === 0) {
+        // Deadlock / unmet dependencies
+        break;
+      }
+
+      // Execute ready steps concurrently in parallel branches
+      await Promise.all(
+        readySteps.map(async ({ index, step }) => {
+          // Condition check
+          if (step.condition) {
+            try {
+              const fn = new Function('context', `with (context) { return ${step.condition}; }`);
+              if (!fn(context)) {
+                skippedSteps.add(step.name);
+                activeSteps[index] = { ...activeSteps[index]!, status: 'skipped' };
+                const cur = await this.repo.getExecution(executionId);
+                if (cur) {
+                  await this.repo.saveExecution({ ...cur, steps: [...activeSteps] });
+                }
+                return;
+              }
+            } catch {
+              skippedSteps.add(step.name);
+              return;
+            }
+          }
+
+          const agentId = step.agent ?? (await this.resolveAgentByCapability(step.capability ?? 'coding'));
+          if (!agentId) {
+            failedSteps.add(step.name);
+            activeSteps[index] = { ...activeSteps[index]!, status: 'failed', error: 'No eligible agent', endedAt: new Date() };
+            const cur = await this.repo.getExecution(executionId);
+            if (cur) {
+              await this.repo.saveExecution({ ...cur, steps: [...activeSteps] });
+            }
+            return;
+          }
+
+          const taskPrompt = this.interpolate(step.task, context, step.inputs);
+          const task: TaskRequest = {
+            id: `${executionId}-step-${index}`,
+            agentId,
+            model: step.model ?? 'gpt-4',
+            messages: [{ role: 'user', content: taskPrompt }],
+            systemPrompt: step.systemPrompt,
+            temperature: step.temperature,
+            maxTokens: step.maxTokens,
+            timeoutMs: step.timeoutMs,
+            maxRetries: step.maxRetries,
+            streaming: false,
+            metadata: { sessionId, workflowId: def.id, executionId, stepIndex: index, stepName: step.name },
+          };
+
+          activeSteps[index] = { ...activeSteps[index]!, agentId, status: 'running', startedAt: new Date() };
+          const cur = await this.repo.getExecution(executionId);
+          if (cur) {
+            await this.repo.saveExecution({ ...cur, steps: [...activeSteps] });
+          }
+
+          const startedAt = Date.now();
+          const result = await this.runtime.executeTask(task);
+          const durationMs = Date.now() - startedAt;
+
+          activeSteps[index] = {
+            ...activeSteps[index]!,
+            status: result.success ? 'completed' : 'failed',
+            endedAt: new Date(),
+            result,
+            error: result.error?.message,
+          };
+          if (result.success && result.response) {
+            context[step.name] = result.response.choices[0]?.message.content;
+            completedSteps.add(step.name);
+          } else {
+            failedSteps.add(step.name);
+          }
+          totalCost += result.costUsd;
+          totalTokens += result.tokensUsed;
+
+          const after = await this.repo.getExecution(executionId);
+          if (after) {
+            await this.repo.saveExecution({
+              ...after,
+              steps: [...activeSteps],
+              context,
+              totalCostUsd: totalCost,
+              totalTokensUsed: totalTokens,
+            });
+          }
+
+          await this.events.publish(
+            buildEvent<WorkflowStepCompletedEvent>(
+              'workflow.step.completed',
+              {
+                workflowId: def.id,
+                executionId,
+                stepIndex: index,
+                stepName: step.name,
+                agentId,
+                durationMs,
+                success: result.success,
+              },
+              executionId,
+            ),
+          );
+        }),
+      );
+    }
+
+    const final = await this.repo.getExecution(executionId);
+    if (!final) return;
+    const outputs: Record<string, unknown> = {};
+    if (def.outputs) {
+      for (const out of def.outputs) {
+        outputs[out.name] = context[out.fromStep];
+      }
+    }
+    const isSuccess = failedSteps.size === 0;
+    await this.repo.saveExecution({
+      ...final,
+      status: isSuccess ? 'completed' : 'failed',
+      endedAt: new Date(),
+      outputs,
+      context,
+      totalCostUsd: totalCost,
+      totalTokensUsed: totalTokens,
+    });
+    await this.emitCompleted(
+      def.id,
+      executionId,
+      Date.now() - final.startedAt.getTime(),
+      completedSteps.size,
+      failedSteps.size,
+      totalCost,
+      isSuccess,
     );
   }
 

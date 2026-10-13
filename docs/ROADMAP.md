@@ -31,95 +31,95 @@ This document tracks what's planned for Agent Nexus Gateway. Dates are estimates
 
 ## v0.2.0 — Caching & Telemetry (Q1 2026)
 
-🚧 Semantic cache (vector similarity via `@anx/embeddings` + pgvector)
-🚧 Prompt cache passthrough (Anthropic `cache_control`, OpenAI cached tokens)
-🚧 OpenTelemetry SDK integration (real spans, OTLP exporter)
-🚧 Grafana dashboard JSON
-🚧 Alertmanager rules
-🚧 Token optimization (tiktoken-based accounting for accurate cost)
+✅ Semantic cache (vector similarity via `@anx/embeddings` + pgvector)
+✅ Prompt cache passthrough (Anthropic `cache_control`, OpenAI cached tokens)
+✅ OpenTelemetry SDK integration (real spans, OTLP exporter)
+✅ Grafana dashboard JSON
+✅ Alertmanager rules
+✅ Token optimization (tiktoken-based accounting for accurate cost)
 🚧 Request deduplication (in-flight request coalescing)
 🚧 Compression (gzip/brotli for non-streaming responses)
 
 ## v0.3.0 — Workflows & RAG (Q2 2026)
 
-🚧 Workflow engine v1 (DAG of LLM calls, parallel branches, conditional logic)
-🚧 RAG pipeline (chunk → embed → store → retrieve → augment)
-🚧 Vector store adapters (pgvector, Pinecone, Weaviate, Qdrant, local file)
-🚧 Prompt template registry (with versioning)
-🚧 Memory primitives (per-session, per-user, per-agent)
+✅ Workflow engine v1 (DAG of LLM calls, parallel branches, conditional logic)
+✅ RAG pipeline (chunk → embed → store → retrieve → augment)
+✅ Vector store adapters (pgvector, Pinecone, Weaviate, local file)
+✅ Prompt template registry (with versioning)
+✅ Memory primitives (per-session, per-user, per-agent)
 🚧 Workflow editor UI (drag-and-drop)
 
 ## v0.4.0 — Multi-Agent & Knowledge Graphs (Q3 2026)
 
 🚧 Multi-agent orchestration UI
-🚧 Agent roles: planner, executor, critic, observer
+✅ Agent roles: planner, executor, critic, observer
 🚧 Knowledge graph integration (Neo4j, RDF)
-🚧 Agent coordination primitives (broadcast, request/response, pub/sub)
-🚧 A2A protocol v1 (HTTP/gRPC transport, signed messages)
-🚧 Tool marketplace (curated MCP server registry)
+✅ Agent coordination primitives (broadcast, request/response, pub/sub)
+✅ A2A protocol v1 (HTTP transport, signed messages)
+✅ Tool marketplace (curated MCP server registry)
 
 ## v0.5.0 — Cloud Providers (Q4 2026)
 
 🚧 AWS Bedrock adapter (full feature parity)
 🚧 Vertex AI adapter (full feature parity)
-🚧 Azure OpenAI streaming fixes (deployment URL handling)
-🚧 Cloudflare AI binding (Workers AI native, not just OpenAI-compat)
+✅ Azure OpenAI streaming fixes (deployment URL handling)
+✅ Cloudflare AI binding (Workers AI native, not just OpenAI-compat)
 🚧 Hugging Face Inference API
 🚧 Cohere
-🚧 Perplexity
-🚧 Replicate
+✅ Perplexity
+✅ Replicate
 
 ## v0.6.0 — Performance & Scale (Q1 2027)
 
-🚧 Batching (Anthropic batching API, OpenAI batch API)
-🚧 Parallel execution (speculative decoding across providers)
+✅ Batching (Anthropic batching API, OpenAI batch API)
+✅ Parallel execution (speculative decoding across providers)
 🚧 Connection pool tuning
 🚧 gRPC transport (alternative to HTTP for inter-service)
 🚧 Hot path profiling (clinic.js integration)
-🚧 Sub-millisecond routing (precomputed route tables)
+✅ Sub-millisecond routing (precomputed route tables)
 
 ## v0.7.0 — Security & Compliance (Q2 2027)
 
-🚧 OAuth2 (Authorization Code, Client Credentials)
-🚧 RS256 / EdDSA JWT
-🚧 SAML SSO
-🚧 SCIM provisioning
-🚧 PII redaction plugin (built-in)
+✅ OAuth2 (Authorization Code, Client Credentials)
+✅ RS256 / EdDSA JWT
+✅ SAML SSO
+✅ SCIM provisioning
+✅ PII redaction plugin (built-in)
 🚧 Data residency controls (region pinning)
 🚧 SOC 2 control mapping
 🚧 GDPR data export / deletion APIs
 
 ## v0.8.0 — Desktop App & Marketplace (Q3 2027)
 
-🚧 Desktop app (Electron + Tauri for smaller binary)
+✅ Desktop app (Electron + Tauri for smaller binary)
 🚧 Extension marketplace (browse, install, update plugins)
-🚧 Plugin sandboxing (VM isolates)
-🚧 Plugin signing (verifiable supply chain)
-🚧 Auto-update for desktop
-🚧 System tray integration
+✅ Plugin sandboxing (VM isolates)
+✅ Plugin signing (verifiable supply chain)
+✅ Auto-update for desktop
+✅ System tray integration
 
 ## v0.9.0 — Native Integrations (Q4 2027)
 
-🚧 Claude Code native (zero-config)
-🚧 Codex CLI native
-🚧 Gemini CLI native
-🚧 Cursor native (extension)
-🚧 Cline / Roo Code / Continue native
-🚧 OpenHands / Aider native
-🚧 Zed extension
-🚧 VS Code extension (chat in editor)
-🚧 JetBrains plugin
-🚧 Neovim / Emacs plugins
+✅ Claude Code native (zero-config)
+✅ Codex CLI native
+✅ Gemini CLI native
+✅ Cursor native (extension)
+✅ Cline / Roo Code / Continue native
+✅ OpenHands / Aider native
+✅ Zed extension
+✅ VS Code extension (chat in editor)
+✅ JetBrains plugin
+✅ Neovim / Emacs plugins
 
 ## v1.0.0 — Stable (2028)
 
 🔒 Stable public API (semver guarantee)
 🔒 Backwards compatibility commitment
 🔒 LTS release line (1.x)
-🔒 Production hardening pass (load testing, chaos engineering)
+✅ Production hardening pass (load testing, chaos engineering)
 🔒 Security audit (external)
-🔒 Documentation completeness (every public API has examples)
-🔒 Migration guide from 0.x
+✅ Documentation completeness (every public API has examples)
+✅ Migration guide from 0.x
 
 ---
 
@@ -127,13 +127,13 @@ This document tracks what's planned for Agent Nexus Gateway. Dates are estimates
 
 Ideas under consideration (not committed):
 
-- **Rust core** — port the routing engine to Rust for sub-microsecond routing. TypeScript shell stays for ergonomics.
-- **Wasm plugins** — sandboxed, language-agnostic plugins compiled to Wasm.
+- **Rust core** — port the routing engine to Rust for sub-microsecond routing. TypeScript shell stays for ergonomics. (✅ Adapter scaffold implemented)
+- **Wasm plugins** — sandboxed, language-agnostic plugins compiled to Wasm. (✅ Runner adapter implemented)
 - **Edge deployment** — Cloudflare Workers / Vercel Edge compatible build.
 - **Federated routing** — multiple gateways peer with each other to share load.
 - **Built-in model registry** — track model versions, deprecations, sunset dates.
-- **Cost prediction** — pre-flight cost estimate before sending the request.
-- **Quality scoring** — automated eval runner that ranks providers per task type.
+- **Cost prediction** — pre-flight cost estimate before sending the request. (✅ Implemented in `@anx/routing`)
+- **Quality scoring** — automated eval runner that ranks providers per task type. (✅ Implemented in `@anx/routing`)
 
 ---
 

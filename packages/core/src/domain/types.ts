@@ -109,7 +109,9 @@ export type RoutingStrategy =
   | 'capability_match'
   | 'priority'
   | 'budget_aware'
-  | 'free_only';
+  | 'free_only'
+  | 'precomputed_table'
+  | 'quality_score';
 
 /**
  * The full route-resolution request payload.

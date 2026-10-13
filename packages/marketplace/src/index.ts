@@ -453,3 +453,4 @@ export class ExtensionMarketplace extends EventEmitter {
 }
 
 export * from './types.js';
+export * from './curated-mcp-registry.js';

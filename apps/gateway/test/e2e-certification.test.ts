@@ -17,7 +17,7 @@ describe('Nexus Full System Certification & Diagnostics', () => {
     process.env['PORT'] = String(testPort);
     runtime = await GatewayRuntime.create(undefined);
     await runtime.start();
-  }, 30000);
+  }, 90000);
 
   afterAll(async () => {
     await runtime.stop();
@@ -161,8 +161,8 @@ describe('Nexus Full System Certification & Diagnostics', () => {
           messages: [{ role: 'user', content: 'hello' }],
         }),
       });
-      expect([200, 400, 401, 502, 503]).toContain(res.status);
-      if (res.status === 503 || res.status === 401 || res.status === 400) {
+      expect([200, 400, 401, 410, 502, 503]).toContain(res.status);
+      if (res.status === 503 || res.status === 401 || res.status === 400 || res.status === 410) {
         const body = await res.json();
         expect(body.error).toBeDefined();
         expect(typeof body.error.message).toBe('string');

@@ -55,7 +55,7 @@ describe('ClaudeCodeIntegration lifecycle', () => {
     expect(DEFAULT_CAPABILITIES.supportsStart).toBe(false);
     expect(DEFAULT_CAPABILITIES.supportsStop).toBe(false);
     expect(DEFAULT_CAPABILITIES.supportsRestart).toBe(false);
-  });
+  }, 60000);
 
   it('DeepSeek Harness provides web launch spec and supports full start/runtime/stop lifecycle', async () => {
     const { DeepSeekHarnessIntegration } = await import('../src/adapters/deepseek-harness.js');

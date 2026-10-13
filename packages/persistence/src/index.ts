@@ -1528,3 +1528,5 @@ export function createPersistence(config: PersistenceConfig): PersistenceLayer {
       throw new Error(`Unknown backend: ${config.backend as string}`);
   }
 }
+
+export * from './semantic-cache.js';

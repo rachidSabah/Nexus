@@ -13,6 +13,13 @@ export { compactText, compactConversation, type CompactionOptions, type Compacti
 export { compressToolOutput, compressMessageContent, compressMessagesTokenSaver } from './tool-output.js';
 export type { ToolCompressionResult, ToolCompressionOptions, TokenSaverSummary } from './tool-output.js';
 export {
+  countTiktokenTokens,
+  accountChatRequestTokens,
+  type TokenizerEncoding,
+  type ChatMessage,
+  type TokenAccountingResult,
+} from './tiktoken-accounting.js';
+export {
   compressPipeline,
   type CompressionEngineName,
   type EngineBreakdown,
