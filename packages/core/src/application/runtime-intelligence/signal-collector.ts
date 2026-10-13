@@ -137,7 +137,7 @@ export class SignalCollector {
     unsubscribers.push(
       bus.subscribe('provider.request.failed', (event: DomainEvent) => {
         const p = event.payload as { endpointId?: string; providerId?: string; code?: string; error?: string };
-        const code = p.code ?? 'ERROR';
+        const code = String(p.code ?? 'ERROR');
         this.recordSignal('providers', 'request_failure', 1, { providerId: p.providerId, endpointId: p.endpointId, code });
 
         if (code === '429' || code === 'RATE_LIMIT') {

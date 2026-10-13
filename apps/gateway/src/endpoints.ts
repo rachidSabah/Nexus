@@ -518,7 +518,7 @@ export async function registerDefaultEndpoints(
         updatedAt: new Date(),
       });
       if (!reachable) {
-        console.log(`[endpoints] auto-${e.providerId} unreachable at ${e.baseUrl} — registered unhealthy (excluded from routing)`);
+        console.info(`[endpoints] auto-${e.providerId} unreachable at ${e.baseUrl} — registered unhealthy (excluded from routing)`);
       }
     }
 
@@ -549,12 +549,12 @@ export async function registerDefaultEndpoints(
         updatedAt: new Date(),
       });
       if (!agyHealthy) {
-        console.log('[endpoints] auto-antigravity-cli executable not found or unauthenticated — registered unhealthy');
+        console.warn('[endpoints] auto-antigravity-cli executable not found or unauthenticated — registered unhealthy');
       } else {
-        console.log(`[endpoints] auto-antigravity-cli registered healthy at ${agyExe}`);
+        console.info(`[endpoints] auto-antigravity-cli registered healthy at ${agyExe}`);
       }
     } catch (err) {
-      console.log(`[endpoints] failed to register auto-antigravity-cli: ${(err as Error).message}`);
+      console.warn(`[endpoints] failed to register auto-antigravity-cli: ${(err as Error).message}`);
     }
     } // end if(!ANX_DISABLE_ANTIGRAVITY_CLI)
 
@@ -564,7 +564,7 @@ export async function registerDefaultEndpoints(
       try {
         const importedCount = await autoImportLocalCredentials(vault, routing);
         if (importedCount > 0) {
-          console.log(`[local-credentials] auto-imported ${importedCount} active credential(s) from local coding tools`);
+          console.info(`[local-credentials] auto-imported ${importedCount} active credential(s) from local coding tools`);
         }
       } catch {
         // non-fatal
@@ -575,7 +575,7 @@ export async function registerDefaultEndpoints(
     try {
       const customCount = await loadCustomProviders(vault, routing);
       if (customCount > 0) {
-        console.log(`[custom-providers] loaded ${customCount} custom provider endpoint(s)`);
+        console.info(`[custom-providers] loaded ${customCount} custom provider endpoint(s)`);
       }
     } catch {
       // non-fatal

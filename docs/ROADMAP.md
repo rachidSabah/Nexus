@@ -37,7 +37,7 @@ This document tracks what's planned for Agent Nexus Gateway. Dates are estimates
 ✅ Grafana dashboard JSON
 ✅ Alertmanager rules
 ✅ Token optimization (tiktoken-based accounting for accurate cost)
-🚧 Request deduplication (in-flight request coalescing)
+✅ Request deduplication (in-flight request coalescing)
 🚧 Compression (gzip/brotli for non-streaming responses)
 
 ## v0.3.0 — Workflows & RAG (Q2 2026)
@@ -60,8 +60,9 @@ This document tracks what's planned for Agent Nexus Gateway. Dates are estimates
 
 ## v0.5.0 — Cloud Providers (Q4 2026)
 
-🚧 AWS Bedrock adapter (full feature parity)
-🚧 Vertex AI adapter (full feature parity)
+✅ AWS Bedrock adapter (full feature parity)
+✅ Vertex AI adapter (full feature parity)
+
 ✅ Azure OpenAI streaming fixes (deployment URL handling)
 ✅ Cloudflare AI binding (Workers AI native, not just OpenAI-compat)
 🚧 Hugging Face Inference API

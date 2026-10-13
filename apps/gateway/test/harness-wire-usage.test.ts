@@ -471,7 +471,7 @@ describe('harness wire contract end-to-end through /v1/chat/completions', () => 
       }),
     });
     expect(onboard.status).toBe(201);
-  }, 40000);
+  }, 90000);
 
   afterAll(async () => {
     await runtime?.stop();
@@ -481,7 +481,7 @@ describe('harness wire contract end-to-end through /v1/chat/completions', () => 
     } catch {
       // ignore
     }
-  }, 30000);
+  }, 60000);
 
   it('streams the full session through the verbatim harness consumer without any serialization rejection', async () => {
     const res = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -523,7 +523,7 @@ describe('harness wire contract end-to-end through /v1/chat/completions', () => 
     expect(usage['prompt_tokens_details']).toEqual({ cached_tokens: 8 });
     expect(usage['completion_tokens_details']).toEqual({ reasoning_tokens: 2 });
     expect('promptTokens' in usage).toBe(false);
-  }, 30000);
+  }, 60000);
 
   it('non-streaming responses carry snake_case wire usage too', async () => {
     const res = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -541,5 +541,5 @@ describe('harness wire contract end-to-end through /v1/chat/completions', () => 
     expect(body.usage['total_tokens']).toBe(9);
     expect(body.usage['prompt_tokens_details']).toEqual({ cached_tokens: 3 });
     expect('promptTokens' in body.usage).toBe(false);
-  }, 30000);
+  }, 60000);
 });

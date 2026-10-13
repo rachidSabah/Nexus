@@ -798,6 +798,20 @@ export interface CompressionFallbackEvent extends DomainEvent {
   };
 }
 
+/** Emitted when concurrent identical requests coalesce onto a single in-flight provider call. */
+export interface RequestCoalescedEvent extends DomainEvent {
+  readonly type: 'request.coalesced';
+  readonly payload: {
+    readonly requestId: string;
+    readonly coalescedWithRequestId: string;
+    readonly model: string;
+    readonly key: string;
+    readonly waitersCount: number;
+    readonly savedLatencyMs?: number;
+  };
+}
+
+
 /**
  * Internal helper: build a typed event.
  */

@@ -5468,10 +5468,30 @@ export class HttpServer {
       return { ok: true };
     });
 
-    // ── Cache stats ────────────────────────────────────────────────────
+    // ── Cache stats & Request Deduplication ────────────────────────────
     this.fastify.get('/v1/cache/stats', async () => {
-      return this.deps.cache.stats();
+      const cacheStats = this.deps.cache.stats();
+      const dedupStats = this.deps.chatUseCase.getCoalescer()?.getStats() ?? {
+        inFlightCount: 0,
+        totalCoalesced: 0,
+        totalExecutions: 0,
+        savedLatencyMs: 0,
+      };
+      return {
+        ...cacheStats,
+        dedup: dedupStats,
+      };
     });
+
+    this.fastify.get('/v1/dedup/stats', async () => {
+      return this.deps.chatUseCase.getCoalescer()?.getStats() ?? {
+        inFlightCount: 0,
+        totalCoalesced: 0,
+        totalExecutions: 0,
+        savedLatencyMs: 0,
+      };
+    });
+
 
     // ── Request tracing (master prompt #30) ────────────────────────────
     // Every request gets a trace ID. Traces record the full routing decision:
@@ -8593,7 +8613,7 @@ export class HttpServer {
    * upstream 5xx maps to 502 with a sanitized message.
    */
   private httpErrorFor(error: Error): { status: number; message: string } {
-    const code = (error as { code?: string }).code;
+    const code = (error as { code?: string | number }).code;
     if (code === 'NO_ELIGIBLE_PROVIDER' || code === 'ALL_PROVIDERS_EXHAUSTED') {
       return { status: 503, message: error.message };
     }
@@ -8609,7 +8629,20 @@ export class HttpServer {
       const detail = bareBody ? '' : `: ${raw}`;
       return { status: status >= 500 ? 502 : status, message: `Upstream provider error (HTTP ${status})${detail}` };
     }
-    return { status: 500, message: error.message };
+    if (
+      code === 'TIMEOUT' ||
+      code === 'ETIMEDOUT' ||
+      code === 'ESOCKETTIMEDOUT' ||
+      code === 'ECONNRESET' ||
+      code === 'ECONNREFUSED' ||
+      code === 20 ||
+      (code as unknown) === '20' ||
+      error.name === 'AbortError' ||
+      /aborted|timeout|fetch failed/i.test(error.message ?? '')
+    ) {
+      return { status: 502, message: `Upstream gateway error: ${error.message}` };
+    }
+    return { status: 502, message: error.message || 'Upstream provider error' };
   }
 
   /**

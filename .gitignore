@@ -84,5 +84,7 @@ tmp/
 .aider.chat.history.md
 .aider.input.history
 .aider.tags.cache.v4/
+.agents/
 ci.json
 cijobs.json
+

@@ -6,8 +6,10 @@ import { usePathname } from 'next/navigation';
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Gauge },
+  { href: '/missions', label: 'Mission Control', icon: Sparkles },
   { href: '/playground', label: 'Playground', icon: Sparkles },
   { href: '/providers', label: 'Providers', icon: Boxes },
+
   { href: '/models', label: 'Models', icon: Cpu },
   { href: '/keys', label: 'API Keys', icon: KeyRound },
   { href: '/observability', label: 'Observability', icon: Activity },

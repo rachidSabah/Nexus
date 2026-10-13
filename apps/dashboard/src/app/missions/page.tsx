@@ -13,6 +13,9 @@ import {
 import { useState } from 'react';
 import useSWR from 'swr';
 
+import { MissionDagVisualizer } from '@/components/MissionDagVisualizer';
+
+
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 interface MissionTask {
@@ -170,24 +173,8 @@ export default function MissionsPage() {
     }
   };
 
-  const getTaskStatusBadge = (status: MissionTask['status']) => {
-    switch (status) {
-      case 'COMPLETED':
-        return <span className="px-2 py-0.5 text-xs font-medium rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60">COMPLETED</span>;
-      case 'RUNNING':
-        return <span className="px-2 py-0.5 text-xs font-medium rounded bg-sky-950/60 text-sky-300 border border-sky-800/60 animate-pulse">RUNNING</span>;
-      case 'FAILED':
-        return <span className="px-2 py-0.5 text-xs font-medium rounded bg-rose-950/60 text-rose-300 border border-rose-800/60">FAILED</span>;
-      case 'READY':
-        return <span className="px-2 py-0.5 text-xs font-medium rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/60">READY</span>;
-      case 'BLOCKED':
-        return <span className="px-2 py-0.5 text-xs font-medium rounded bg-slate-900/60 text-slate-400 border border-slate-800">BLOCKED</span>;
-      default:
-        return <span className="px-2 py-0.5 text-xs font-medium rounded bg-slate-900/60 text-slate-400 border border-slate-800">{status}</span>;
-    }
-  };
-
   const tasks = selectedMission?.plan?.tasks ?? [];
+
   const completedCount = selectedMission?.completedTaskIds?.length ?? 0;
   const totalCount = tasks.length || 1;
   const progressPct = Math.round((completedCount / totalCount) * 100);
@@ -464,51 +451,17 @@ export default function MissionsPage() {
                 </div>
               )}
 
-              {/* Interactive DAG Task Nodes */}
-              <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-5 flex flex-col gap-4">
-                <div className="flex items-center justify-between border-b border-slate-800/60 pb-3">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    Mission Execution DAG ({tasks.length} Nodes)
-                  </span>
-                  <span className="text-xs text-slate-500 font-mono">Max parallel: {selectedMission.plan?.maxParallelTasks ?? 4}</span>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  {tasks.map((task, idx) => (
-                    <div
-                      key={task.taskId}
-                      className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 flex flex-col gap-2.5 hover:border-slate-700 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono text-slate-500">#{idx + 1}</span>
-                          <span className="text-sm font-semibold text-slate-100">{task.title}</span>
-                        </div>
-                        {getTaskStatusBadge(task.status)}
-                      </div>
-
-                      <p className="text-xs text-slate-400">{task.objective}</p>
-
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-900 text-xs font-mono text-slate-500">
-                        <div className="flex items-center gap-3">
-                          <span>Type: <span className="text-slate-300">{task.type}</span></span>
-                          {task.selectedAgent && (
-                            <span>Agent: <span className="text-indigo-400">{task.selectedAgent}</span></span>
-                          )}
-                          {task.repairAttempts && task.repairAttempts > 0 ? (
-                            <span>Repairs: <span className="text-amber-400">{task.repairAttempts}</span></span>
-                          ) : null}
-                        </div>
-                        {task.durationMs && (
-                          <span>Duration: {(task.durationMs / 1000).toFixed(2)}s</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* Interactive Mission DAG Visualizer */}
+              <MissionDagVisualizer
+                tasks={tasks}
+                activeTaskIds={selectedMission.activeTaskIds}
+                completedTaskIds={selectedMission.completedTaskIds}
+                failedTaskIds={selectedMission.failedTaskIds}
+                currentTaskId={selectedMission.currentTaskId}
+              />
             </>
           ) : (
+
             <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-12 text-center text-slate-500">
               Select or create a mission to view DAG execution and telemetry.
             </div>

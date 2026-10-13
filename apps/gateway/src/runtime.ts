@@ -444,10 +444,10 @@ export class GatewayRuntime {
         );
         if (valid.length > 0) {
           modelRegistry.addExplicit(valid as never);
-          console.log(`[model-registry] registered ${valid.length} explicit model(s) from GATEWAY_EXPLICIT_MODELS`);
+          logger.info(`[model-registry] registered ${valid.length} explicit model(s) from GATEWAY_EXPLICIT_MODELS`);
         }
       } catch (err) {
-        console.error('[model-registry] failed to parse GATEWAY_EXPLICIT_MODELS:', (err as Error).message);
+        logger.error(`[model-registry] failed to parse GATEWAY_EXPLICIT_MODELS: ${(err as Error).message}`);
       }
     }
 

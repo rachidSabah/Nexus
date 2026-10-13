@@ -4,7 +4,10 @@ import { Workflow, Play, Pause, Square, RotateCcw, Sparkles, Activity, Cpu } fro
 import { useState } from 'react';
 import useSWR from 'swr';
 
+import { MissionDagVisualizer, type DagTask } from '@/components/MissionDagVisualizer';
+
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
+
 
 interface WorkflowDef {
   id: string;
@@ -147,20 +150,37 @@ export default function WorkflowsPage() {
                 </h2>
               </div>
 
-              {/* Visual step flow */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-3">
-                {workflows?.find((w) => w.id === selectedId)?.steps.map((step, i) => (
-                  <div key={i} className="flex items-center">
-                    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-center min-w-[130px]">
-                      <div className="text-xs font-bold text-nexus-300">{step.name}</div>
-                      <div className="mt-1 text-[10px] text-white/40 font-mono">Agent: {step.agent ?? 'auto'}</div>
-                    </div>
-                    {i < (workflows?.find((w) => w.id === selectedId)?.steps.length ?? 0) - 1 && (
-                      <div className="px-2 text-white/30 text-xs font-mono">→</div>
-                    )}
+              {/* Visual step flow & DAG visualizer */}
+              {(() => {
+                const selectedWorkflow = workflows?.find((w) => w.id === selectedId);
+                const latestExecution = (executions ?? [])[0];
+                const workflowDagTasks: DagTask[] = (selectedWorkflow?.steps ?? []).map((step, idx) => {
+                  const execStep = latestExecution?.steps.find((s) => s.index === idx);
+                  let status: DagTask['status'] = 'READY';
+                  if (execStep) {
+                    const s = execStep.status.toUpperCase();
+                    if (s === 'COMPLETED') status = 'COMPLETED';
+                    else if (s === 'RUNNING') status = 'RUNNING';
+                    else if (s === 'FAILED') status = 'FAILED';
+                    else if (s === 'SKIPPED') status = 'SKIPPED';
+                  }
+                  return {
+                    taskId: `step-${idx + 1}`,
+                    title: step.name,
+                    objective: step.task,
+                    selectedAgent: step.agent || execStep?.agentId || 'auto',
+                    dependencies: idx > 0 ? [`step-${idx}`] : [],
+                    status,
+                  };
+                });
+
+                return (
+                  <div className="mb-6">
+                    <MissionDagVisualizer tasks={workflowDagTasks} />
                   </div>
-                ))}
-              </div>
+                );
+              })()}
+
 
               {/* Executions */}
               <h3 className="mt-6 mb-3 text-xs font-bold uppercase tracking-wider text-white/70 flex items-center gap-2">

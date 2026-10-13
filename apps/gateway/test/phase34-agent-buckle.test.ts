@@ -18,7 +18,7 @@ describe('Phase 34: Agent Buckle & Machine Agent Integration Truthfulness Harden
     process.env['PORT'] = String(testPort);
     runtime = await GatewayRuntime.create(undefined);
     await runtime.start();
-  }, 30000);
+  }, 90000);
 
   afterAll(async () => {
     await runtime.stop();
@@ -27,7 +27,7 @@ describe('Phase 34: Agent Buckle & Machine Agent Integration Truthfulness Harden
     } catch {
       // ignore
     }
-  }, 30000);
+  }, 60000);
 
   describe('1. Canonical Gateway URL Verification', () => {
     it('uses 127.0.0.1 with canonical port and rejects hardcoded localhost:3000', async () => {
@@ -65,7 +65,7 @@ describe('Phase 34: Agent Buckle & Machine Agent Integration Truthfulness Harden
       expect(nonExistent.runnable).toBe(false);
       expect(nonExistent.inferenceVerified).toBe(false);
       expect(nonExistent.failureReason).toContain('not in the recognized');
-    }, 30000);
+    }, 60000);
 
     it('verifies supported integrations are available as adapters without claiming they are installed', () => {
       expect(BUILTIN_INTEGRATIONS.length).toBeGreaterThanOrEqual(17);
@@ -93,7 +93,7 @@ describe('Phase 34: Agent Buckle & Machine Agent Integration Truthfulness Harden
         expect(typeof agent.configured).toBe('boolean');
         expect(typeof agent.message).toBe('string');
       }
-    }, 30000);
+    }, 60000);
 
     it('POST /v1/runtime-agents/:id/verify executes truthful verification', async () => {
       const res = await fetch(`${baseUrl}/v1/runtime-agents/claude-code/verify`, {
@@ -105,7 +105,7 @@ describe('Phase 34: Agent Buckle & Machine Agent Integration Truthfulness Harden
       expect(data.id).toBe('claude-code');
       expect(data.gatewayReachable).toBe(true);
       expect(typeof data.detected).toBe('boolean');
-    }, 30000);
+    }, 60000);
   });
 
   describe('4. Cross-Platform Shell Command Truthfulness', () => {

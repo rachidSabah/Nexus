@@ -2,6 +2,8 @@ export { OpenAIAdapter, syntheticChunk } from './adapters/openai.js';
 export { AnthropicAdapter } from './adapters/anthropic.js';
 export { GoogleAdapter } from './adapters/google.js';
 export { BedrockAdapter } from './adapters/bedrock.js';
+export { VertexAIAdapter } from './adapters/vertex.js';
+
 export {
   OpenRouterAdapter,
   DeepSeekAdapter,
@@ -92,6 +94,8 @@ import {
   NvidiaNimAdapter,
 } from './adapters/openai-compatible.js';
 import { OpenAIAdapter } from './adapters/openai.js';
+import { VertexAIAdapter } from './adapters/vertex.js';
+
 
 /**
  * Registry of all built-in provider adapters, keyed by `providerId`.
@@ -141,6 +145,7 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
     new OpenCodeGoAdapter(),
     new NvidiaNimAdapter(),
     new BedrockAdapter(),
+    new VertexAIAdapter(),
     new AntigravityCliAdapter(),
   ];
   const map = new Map<string, ProviderAdapter>();
@@ -150,6 +155,14 @@ export function createDefaultAdapters(): Map<string, ProviderAdapter> {
   if (nvidia) map.set('nvidia', nvidia);
   const agy = map.get('antigravity-cli');
   if (agy) map.set('antigravity', agy);
+  const bedrock = map.get('aws-bedrock');
+  if (bedrock) map.set('bedrock', bedrock);
+  const vertex = map.get('vertex-ai');
+  if (vertex) {
+    map.set('vertex', vertex);
+    map.set('gcp-vertex', vertex);
+  }
+
   const hf = map.get('huggingface');
   if (hf) map.set('hf', hf);
   const horde = map.get('aihorde');
@@ -219,9 +232,12 @@ export const SUPPORTED_PROVIDERS = [
   'nvidia',
   'antigravity-cli',
   'antigravity',
-  // Stubs for adapters to be implemented in a future release:
   'aws-bedrock',
+  'bedrock',
   'vertex-ai',
+  'vertex',
+  'gcp-vertex',
 ] as const;
+
 
 export type SupportedProviderId = (typeof SUPPORTED_PROVIDERS)[number];

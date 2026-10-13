@@ -16,6 +16,7 @@ import {
   type ProviderRequestFailedEvent,
   type ProviderRequestStartedEvent,
   type ProviderRequestSucceededEvent,
+  type RequestCoalescedEvent,
   type RequestReceivedEvent,
   type SpeculativeRaceWonEvent,
 } from '../domain/events.js';
@@ -49,6 +50,7 @@ import type {
 import type { PrivacyConfig } from './privacy.js';
 import { DEFAULT_PRIVACY } from './privacy.js';
 import type { PromptCompressor } from './prompt-compressor.js';
+import { RequestCoalescer } from './request-coalescer.js';
 import type { RequestTracer } from './request-tracer.js';
 import { filterSpecialTokens, filterStreamChunk, newStreamClampingState } from './special-tokens.js';
 import { healToolCallArguments } from './tool-auto-healer.js';
@@ -91,6 +93,10 @@ export interface ChatCompletionUseCaseOptions {
   errorRegistry?: ErrorDiagnosticRegistry;
   /** Optional live model registry for provider-model compatibility verification. */
   modelRegistry?: ModelRegistry;
+  /** Optional in-flight request coalescer. When provided, duplicate in-flight requests coalesce. */
+  coalescer?: RequestCoalescer;
+  /** Enable in-flight request deduplication/coalescing. Default: true. */
+  enableDeduplication?: boolean;
 }
 
 /**
@@ -129,6 +135,7 @@ export class ChatCompletionUseCase {
   private readonly promptCompressor?: PromptCompressor;
   private readonly errorRegistry?: ErrorDiagnosticRegistry;
   private readonly modelRegistry?: ModelRegistry;
+  private readonly coalescer?: RequestCoalescer;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -154,7 +161,13 @@ export class ChatCompletionUseCase {
     this.promptCompressor = options.promptCompressor;
     this.errorRegistry = options.errorRegistry;
     this.modelRegistry = options.modelRegistry;
+    this.coalescer = options.coalescer ?? (options.enableDeduplication === false ? undefined : new RequestCoalescer());
   }
+
+  getCoalescer(): RequestCoalescer | undefined {
+    return this.coalescer;
+  }
+
 
   async execute(
     request: ChatCompletionRequest,
@@ -318,11 +331,90 @@ export class ChatCompletionUseCase {
       );
     }
 
+    const cacheKey = this.cacheKey(effectiveRequest);
+
+    if (this.coalescer && !request.stream && !sink) {
+      const coalesceRes = await this.coalescer.coalesce(
+        cacheKey,
+        (coalesceSignal) =>
+          this.executePipeline(
+            request,
+            effectiveRequest,
+            requestId,
+            correlationId,
+            sink,
+            coalesceSignal ?? signal,
+            startedAt,
+          ),
+        { signal, requestId, model: effectiveRequest.model },
+      );
+
+      if (coalesceRes.coalesced) {
+        const cloned: ChatCompletionResponse = {
+          ...coalesceRes.result,
+          id: randomUUID(),
+          created: Math.floor(Date.now() / 1000),
+        };
+        await this.events.publish(
+          buildEvent<RequestCoalescedEvent>(
+            'request.coalesced',
+            {
+              requestId,
+              coalescedWithRequestId: coalesceRes.originalRequestId ?? '',
+              model: effectiveRequest.model,
+              key: cacheKey,
+              waitersCount: coalesceRes.waitersCount,
+              savedLatencyMs: coalesceRes.durationMs,
+            },
+            correlationId,
+          ),
+        );
+        if (this.plugins) {
+          await this.plugins.invokeHook('onResponse', cloned);
+        }
+        if (this.tracer) {
+          this.tracer.recordSuccess(
+            requestId,
+            {
+              input: cloned.usage.promptTokens,
+              output: cloned.usage.completionTokens,
+              total: cloned.usage.totalTokens,
+            },
+            cloned.costUsd ?? 0,
+          );
+        }
+        return cloned;
+      }
+
+      return coalesceRes.result;
+    }
+
+    return this.executePipeline(
+      request,
+      effectiveRequest,
+      requestId,
+      correlationId,
+      sink,
+      signal,
+      startedAt,
+    );
+  }
+
+  private async executePipeline(
+    request: ChatCompletionRequest,
+    effectiveRequest: ChatCompletionRequest,
+    requestId: string,
+    correlationId: string,
+    sink?: ChunkSink,
+    signal?: AbortSignal,
+    startedAt = Date.now(),
+  ): Promise<ChatCompletionResponse> {
     const routingReq = {
       model: effectiveRequest.model,
       ...effectiveRequest.routing,
       capabilities: effectiveRequest.routing?.capabilities,
     };
+
 
     // ─── Budget-aware routing preference ──────────────────────────────────
     // When a BudgetManager is configured AND enabled, its current mode shapes
@@ -729,8 +821,12 @@ export class ChatCompletionUseCase {
         }
 
         // ─── Cache store (on success) ────────────────────────────────────
+        const cacheable = this.cache
+          && !(request.stream && this.skipCacheForStreaming)
+          && !this.privacy.skipCachePersistence;
         if (cacheable) {
           const cacheKey = this.cacheKey(effectiveRequest);
+
           await this.cache!.set(cacheKey, finalResult, this.cacheTtlMs);
           // Semantic cache store (if embed fn is configured).
           // Wrapped in try-catch: if the embeddings endpoint is unavailable,
