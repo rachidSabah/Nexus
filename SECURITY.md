@@ -3,7 +3,7 @@
 ## Overview
 
 **Agent Nexus Gateway** ("Nexus") is a local-first AI proxy and model-routing
-fabric. It is designed to run on *your* machine and never phones home with
+fabric. It is designed to run on _your_ machine and never phones home with
 credentials. This document explains how secrets are handled and how to report
 vulnerabilities.
 
@@ -32,9 +32,8 @@ vulnerabilities.
 Please report security issues **privately**. Do **not** open a public GitHub
 issue for vulnerabilities.
 
-- Email: security@agent-nexus-gateway.dev *(replace with your real address)*
-- Or use GitHub's [private vulnerability reporting](
-  https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
+- Email: security@agent-nexus-gateway.dev _(replace with your real address)_
+- Or use GitHub's [private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
   on the repository.
 
 We aim to acknowledge reports within **72 hours** and provide a remediation
@@ -53,12 +52,18 @@ test runner and build tooling, never the shipped gateway or dashboard — but
 they are still patched, not waived. Enforced security floors (root
 `package.json` → `pnpm.overrides`, plus direct spec bumps):
 
-| Dependency | Minimum | Resolves | Notes |
-|---|---|---|---|
-| `next` (`apps/dashboard`) | `^15.5.24` (locks to `15.5.25`) | CVE-2026-75604 — unauthenticated RCE on Windows-hosted servers; GHSA-2xp9-vwfh-vxw4 — unauthenticated RCE via AVIF Image Optimization | No workaround for Windows hosts; upgrade is the only fix. AVIF optimization stays disabled until the upstream `sharp`/libheif fix propagates (it has — see below). |
-| `sharp` (override) | `0.35.4` | libheif GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545 (heap buffer overflow → RCE via crafted AVIF) | Ships libheif `1.23.2`. |
-| `vitest` + `@vitest/coverage-v8` | `^4.1.11` | GHSA-82fw-gwwq-j7x9 / CVE-2026-84373 — path traversal / arbitrary file read via `@vitest/mocker` redirect mock over the HMR WebSocket | No fix exists on the `3.2.x` line (latest `3.2.7` is still vulnerable), hence the major bump. Earlier UI-server traversal CVE-2026-47429 was already fixed in `3.2.5`. Dev-scope only: the test runner is never shipped or exposed. |
-| `js-yaml@3` / `js-yaml@4` (overrides, transitive) | `3.15.2` / `4.3.2` | CVE-2026-84375 — `maxTotalMergeKeys` ignores empty merge sources, allowing CPU exhaustion with a small YAML document | Transitive via build tooling; pinned by override since no direct spec exists. |
+| Dependency                                           | Minimum            | Resolves                                                                                                                                                                 | Notes                                                                                                                                                                                                                               |
+| ---------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fastify` (`apps/builder`, `apps/gateway`, override) | `^5.12.7`          | Alert #110 (GHSA-667r-xxjv-c9mm), Alert #109 (GHSA-p68q-wchp-6fh7), Alert #112 (GHSA-9q9j-q6p8-xq58), Alert #111 (GHSA-hwr6-493r-vm6h), Alert #113 (GHSA-4mh8-r7rc-xpvc) | Fixes request body replacement, URL auth bypass, schema/header validation bypasses, and HTTP/2 DoS.                                                                                                                                 |
+| `undici` (`packages/networking`, override)           | `^6.29.0`          | Alert #106 (GHSA-rfgv-xxqx-mfg5), Alert #103 (GHSA-3wwx-pv8p-q78v), GHSA-r53p-7pc4-xj5r                                                                                  | Fixes WebSocket unrequested subprotocol DoS, permessage-deflate unhandled error DoS, and retry response splitting.                                                                                                                  |
+| `ip-address` (override)                              | `10.7.4`           | Alert #107 (GHSA-j6r3-76f7-8jcv), GHSA-h3mg-xc3c-68pw                                                                                                                    | Fixes cross-family subnet comparison bypass in `isInSubnet()` and Address6 diagnostic unbounded memory/CPU DoS.                                                                                                                     |
+| `fast-uri@3` / `fast-uri@4` (overrides)              | `3.1.8` / `4.2.2`  | Alert #105 (GHSA-hrr3-gc8f-f4qj), Alert #104 (GHSA-jvvf-x445-j334)                                                                                                       | Fixes percent-encoded octet host case normalization inconsistency and mailto header injection desynchronization.                                                                                                                    |
+| `hono` (override)                                    | `4.13.13`          | Alert #114 (GHSA-hxh3-vqpv-xpqv)                                                                                                                                         | Fixes unescaped plain string rendering in boundary components leading to XSS.                                                                                                                                                       |
+| `next` (`apps/dashboard`, override)                  | `^15.5.27`         | CVE-2026-94543 (GHSA-4jqv-mc3x-m676), CVE-2026-94484 (GHSA-mcj8-r9mp-w47p)                                                                                               | Fixes SSG/ISR cache poisoning and cross-user content substitution in self-hosted deployments.                                                                                                                                       |
+| `@modelcontextprotocol/sdk` (override)               | `1.32.1`           | CVE-2026-104850 (GHSA-6qxp-vccf-f47h)                                                                                                                                    | Prevents OAuth client from sending credentials to unauthorized authorization servers chosen by malicious MCP servers.                                                                                                               |
+| `sharp` (override)                                   | `0.35.4`           | libheif GHSA-g89c-p67h-r497 / GHSA-2jg2-4ch7-h545 (heap buffer overflow → RCE via crafted AVIF)                                                                          | Ships libheif `1.23.2`.                                                                                                                                                                                                             |
+| `vitest` + `@vitest/coverage-v8`                     | `^4.1.11`          | GHSA-82fw-gwwq-j7x9 / CVE-2026-84373 — path traversal / arbitrary file read via `@vitest/mocker` redirect mock over the HMR WebSocket                                    | No fix exists on the `3.2.x` line (latest `3.2.7` is still vulnerable), hence the major bump. Earlier UI-server traversal CVE-2026-47429 was already fixed in `3.2.5`. Dev-scope only: the test runner is never shipped or exposed. |
+| `js-yaml@3` / `js-yaml@4` (overrides, transitive)    | `3.15.2` / `4.3.2` | CVE-2026-84375 — `maxTotalMergeKeys` ignores empty merge sources, allowing CPU exhaustion with a small YAML document                                                     | Transitive via build tooling; pinned by override since no direct spec exists.                                                                                                                                                       |
 
 After any dependency bump: `pnpm install --no-frozen-lockfile`, confirm the
 vulnerable version is gone from `pnpm-lock.yaml`

@@ -16,6 +16,6 @@
     "@anx/core": "workspace:*"
   },
   "optionalDependencies": {
-    "undici": "^6.0.0"
+    "undici": "^6.29.0"
   }
 }
