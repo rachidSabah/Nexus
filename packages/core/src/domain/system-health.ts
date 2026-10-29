@@ -24,7 +24,8 @@ export type SubsystemName =
   | 'memory'
   | 'networking'
   | 'security'
-  | 'persistence';
+  | 'persistence'
+  | 'discovery';
 
 export interface SubsystemHealthReport {
   subsystem: SubsystemName;

@@ -13,6 +13,7 @@ export interface BuildJobProps {
   environment?: Record<string, string>;
   workspacePath?: string;
   artifacts?: Artifact[];
+  logs?: string[];
   error?: string;
   queuedAt?: Date;
   startedAt?: Date;
@@ -53,6 +54,7 @@ export class BuildJob {
     this._startedAt = props.startedAt;
     this._completedAt = props.completedAt;
     this._metrics = props.metrics;
+    this._logs = props.logs ? [...props.logs] : [];
 
     this._steps = props.steps.map((s) => new PipelineStep(s));
     if (props.artifacts) {

@@ -39,6 +39,10 @@ export {
 export { ExternalCompressorRegistry, externalCompressors, type ExternalCompressorHandle } from './external-compressor.js';
 export { StreamingTokenOptimizerWorker, type AsyncCompressionTask } from './worker-optimizer.js';
 export { createCavemanCompressor, type CavemanCompressorOptions, type CavemanMode } from './caveman-adapter.js';
+export {
+  PrefixPinnedCompactor,
+  type PinnedCompactionResult,
+} from './prefix-pinned-compactor.js';
 export { OptimizationMode } from './types.js';
 export type {
   OptMessage,

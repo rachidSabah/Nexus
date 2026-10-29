@@ -38,6 +38,8 @@ import { repairJson } from './json-repair.js';
 import type { KeyRegistry, KeyRotationStrategy } from './key-registry.js';
 import type { ModelRegistry } from './model-registry.js';
 import type {
+  AdmissionControlPort,
+  AdmissionResult,
   CachePort,
   ChunkSink,
   CostCalculatorPort,
@@ -51,6 +53,8 @@ import type { PrivacyConfig } from './privacy.js';
 import { DEFAULT_PRIVACY } from './privacy.js';
 import type { PromptCompressor } from './prompt-compressor.js';
 import { RequestCoalescer } from './request-coalescer.js';
+import { RequestRecovery, RequestCorrections } from './request-recovery.js';
+import { StreamRecovery, type StreamState } from './stream-recovery.js';
 import type { RequestTracer } from './request-tracer.js';
 import { filterSpecialTokens, filterStreamChunk, newStreamClampingState } from './special-tokens.js';
 import { healToolCallArguments } from './tool-auto-healer.js';
@@ -97,6 +101,12 @@ export interface ChatCompletionUseCaseOptions {
   coalescer?: RequestCoalescer;
   /** Enable in-flight request deduplication/coalescing. Default: true. */
   enableDeduplication?: boolean;
+  /** Optional admission controller for rate limiting, concurrency control, and shared recovery episodes. */
+  admissionControl?: AdmissionControlPort;
+  /** Optional request recovery for auth retry and request corrections. */
+  requestRecovery?: RequestRecovery;
+  /** Optional stream recovery for mid-stream failover handling. */
+  streamRecovery?: StreamRecovery;
 }
 
 /**
@@ -136,6 +146,9 @@ export class ChatCompletionUseCase {
   private readonly errorRegistry?: ErrorDiagnosticRegistry;
   private readonly modelRegistry?: ModelRegistry;
   private readonly coalescer?: RequestCoalescer;
+  private readonly admissionControl?: AdmissionControlPort;
+  private readonly requestRecovery?: RequestRecovery;
+  private readonly streamRecovery?: StreamRecovery;
 
   constructor(
     private readonly routing: RoutingEnginePort,
@@ -143,7 +156,7 @@ export class ChatCompletionUseCase {
     private readonly adapters: Map<string, ProviderAdapter>,
     private readonly events: EventBusPort,
     private readonly costs: CostCalculatorPort,
-    private readonly maxFailovers = 3,
+    private readonly maxFailovers = 10,
     options: ChatCompletionUseCaseOptions = {},
   ) {
     this.cache = options.cache;
@@ -162,6 +175,9 @@ export class ChatCompletionUseCase {
     this.errorRegistry = options.errorRegistry;
     this.modelRegistry = options.modelRegistry;
     this.coalescer = options.coalescer ?? (options.enableDeduplication === false ? undefined : new RequestCoalescer());
+    this.admissionControl = options.admissionControl;
+    this.requestRecovery = options.requestRecovery;
+    this.streamRecovery = options.streamRecovery;
   }
 
   getCoalescer(): RequestCoalescer | undefined {
@@ -514,6 +530,10 @@ export class ChatCompletionUseCase {
     // duplicated or contradictory output (and duplicate tool calls). The
     // request fails cleanly (SSE error/termination) instead.
     let streamBytesEmitted = false;
+
+    // Request recovery state for this execution
+    const corrections = new RequestCorrections();
+    let currentRequestForProvider = effectiveRequest;
     const guardedSink: ChunkSink | undefined = sink
       ? {
           write: async (chunk: ChatCompletionChunk) => {
@@ -526,6 +546,13 @@ export class ChatCompletionUseCase {
           end: sink.end,
         }
       : undefined;
+
+    // Stream recovery state for mid-stream failover tracking
+    const streamId = randomUUID();
+    let streamRecoveryState: StreamState | undefined;
+    if (effectiveRequest.stream && this.streamRecovery) {
+      streamRecoveryState = this.streamRecovery.initStream(streamId, effectiveRequest, decision.endpoint);
+    }
 
     while (attempt <= this.maxFailovers) {
       const endpoint = decision.endpoint;
@@ -562,8 +589,10 @@ export class ChatCompletionUseCase {
 
       // Hoisted out of `try` so the catch block can record key failures.
       let selectedKeyId: string | undefined;
+      // Declare these outside try so they're accessible in catch for RequestRecovery
+      let effectiveSignal: AbortSignal = signal ?? new AbortController().signal;
+      let requestForProvider: ChatCompletionRequest = currentRequestForProvider;
       try {
-        const effectiveSignal: AbortSignal = signal ?? new AbortController().signal;
 
         // ─── Multi-key selection ──────────────────────────────────────────
         // If a KeyRegistry is configured, pick the best API key for this
@@ -613,19 +642,19 @@ export class ChatCompletionUseCase {
         }
 
         // Ensure the model sent to the provider adapter is supported by this provider
-        let requestForProvider = effectiveRequest;
+        // Use requestForProvider (declared outside try) which may have been corrected by RequestRecovery
         if (this.modelRegistry) {
           const providerModels: readonly ModelDescriptor[] = this.modelRegistry
             .list()
             .filter((m: ModelDescriptor) => !m.stale && m.providerId === endpoint.providerId);
           if (providerModels.length > 0) {
             const hasExact = providerModels.some(
-              (m: ModelDescriptor) => m.id === effectiveRequest.model || m.id.toLowerCase() === effectiveRequest.model.toLowerCase(),
+              (m: ModelDescriptor) => m.id === requestForProvider.model || m.id.toLowerCase() === requestForProvider.model.toLowerCase(),
             );
             if (!hasExact) {
-              const resolved = adapter.resolveModel?.(effectiveRequest.model);
+              const resolved = adapter.resolveModel?.(requestForProvider.model);
               if (resolved && providerModels.some((m: ModelDescriptor) => m.id === resolved || m.id.toLowerCase() === resolved.toLowerCase())) {
-                requestForProvider = { ...effectiveRequest, model: resolved };
+                requestForProvider = { ...requestForProvider, model: resolved };
               } else {
                 // Pick healthy/executable candidate, avoiding quarantined/unavailable ones
                 const candidatePool = providerModels.filter((m: ModelDescriptor) => {
@@ -637,7 +666,7 @@ export class ChatCompletionUseCase {
                 const pool = candidatePool.length > 0 ? candidatePool : providerModels;
                 const preferred = pool.find((m: ModelDescriptor) => m.capabilities?.toolCalling) ?? pool[0];
                 if (preferred) {
-                  requestForProvider = { ...effectiveRequest, model: preferred.id };
+                  requestForProvider = { ...requestForProvider, model: preferred.id };
                 }
               }
             }
@@ -655,6 +684,26 @@ export class ChatCompletionUseCase {
           decision.alternatives.length > 0 &&
           (requestForProvider.routing?.speculativeFallback || requestForProvider.routing?.hedgedDelayMs);
 
+        // ─── Admission Control: acquire admission before provider call ───────
+        let admission: AdmissionResult | undefined;
+        let combinedSignal = effectiveSignal;
+        if (this.admissionControl) {
+          admission = await this.admissionControl.admit(
+            requestForProvider.model,
+            endpointWithKey.providerId
+          );
+          // Combine the admission abort signal with the request's signal
+          if (admission.abortSignal && effectiveSignal) {
+            const controller = new AbortController();
+            const abortHandler = () => controller.abort();
+            effectiveSignal.addEventListener('abort', abortHandler);
+            admission.abortSignal.addEventListener('abort', abortHandler);
+            combinedSignal = controller.signal;
+          } else if (admission.abortSignal) {
+            combinedSignal = admission.abortSignal;
+          }
+        }
+
         let response: ChatCompletionResponse;
         try {
           response = useSpeculativeHedge
@@ -664,17 +713,48 @@ export class ChatCompletionUseCase {
                 endpointWithKey,
                 requestForProvider,
                 guardedSink,
-                effectiveSignal,
+                combinedSignal,
                 requestId,
                 correlationId,
+                this.streamRecovery,
+                streamId,
               )
             : requestForProvider.stream
-              ? await this.streamAndCollect(adapter, endpointWithKey, requestForProvider, guardedSink, effectiveSignal)
-              : await adapter.chatCompletion(endpointWithKey, requestForProvider, effectiveSignal);
+              ? await this.streamAndCollect(adapter, endpointWithKey, requestForProvider, guardedSink, combinedSignal, this.streamRecovery, streamId)
+              : await adapter.chatCompletion(endpointWithKey, requestForProvider, combinedSignal);
+
+          // Record admission success
+          if (this.admissionControl && admission) {
+            this.admissionControl.recordSuccess(
+              requestForProvider.model,
+              endpointWithKey.providerId,
+              requestId
+            );
+          }
+        } catch (err) {
+          // Record admission failure
+          if (this.admissionControl && admission) {
+            const classification = classifyFailure(err as Error);
+            const retryable = classification.retryable;
+            const retryAfterMs = classification.retryAfterMs;
+            this.admissionControl.recordFailure(
+              requestForProvider.model,
+              endpointWithKey.providerId,
+              requestId,
+              err as Error,
+              retryable,
+              retryAfterMs
+            );
+          }
+          throw err;
         } finally {
           // P5: release the concurrency reservation made by keyRegistry.select().
           if (this.keyRegistry && selectedKeyId) {
             this.keyRegistry.release(selectedKeyId);
+          }
+          // Release admission
+          if (this.admissionControl && admission) {
+            this.admissionControl.release(requestForProvider.model, endpointWithKey.providerId);
           }
         }
 
@@ -933,7 +1013,50 @@ export class ChatCompletionUseCase {
           ),
         );
 
+        // ─── Request Recovery: Auth retry & Request Corrections ──────────────
+        // Try to recover from auth failures and request issues before failing over
+        if (this.requestRecovery && retryable && !streamBytesEmitted) {
+          const adapter = this.adapters.get(endpoint.providerId);
+          if (adapter) {
+            // Try authentication retry on 401/403
+            if (classification.keyAction === 'invalidate' && !this.requestRecovery.isAuthRetriesExhausted()) {
+              const authResult = await this.requestRecovery.retryAuthentication(
+                endpoint,
+                adapter,
+                requestForProvider,
+                effectiveSignal ?? new AbortController().signal
+              );
+              if (authResult.succeeded && authResult.endpoint) {
+                // Auth retry succeeded - retry the same endpoint with fresh credentials
+                // Reset stream bytes emitted since we're retrying the same request
+                streamBytesEmitted = false;
+                continue; // Retry the same attempt with the same endpoint
+              }
+            }
+
+            // Try request corrections for recoverable errors
+            if (this.requestRecovery.canApplyCorrections(corrections)) {
+              const correctedRequest = this.requestRecovery.applyCorrections(
+                requestForProvider,
+                corrections,
+                classification
+              );
+              if (correctedRequest) {
+                // Apply the correction and retry
+                currentRequestForProvider = correctedRequest;
+                streamBytesEmitted = false;
+                continue; // Retry the same attempt with corrected request
+              }
+            }
+          }
+        }
+
         if (!retryable || streamBytesEmitted) throw error;
+
+        // Stream Recovery: prevent mid-stream failover after content delivery (free-claude-code pattern)
+        if (streamRecoveryState && this.streamRecovery && !this.streamRecovery.canFailover(streamId!)) {
+          throw error;
+        }
 
         // Scope-aware failover (master prompt #19): bias the next candidate by
         // the *nature* of the failure. A credential error (401/403 invalid key)
@@ -1006,6 +1129,8 @@ export class ChatCompletionUseCase {
     request: ChatCompletionRequest,
     sink: ChunkSink | undefined,
     signal: AbortSignal,
+    streamRecovery?: StreamRecovery,
+    streamId?: string,
   ): Promise<ChatCompletionResponse> {
     const chunks: ChatCompletionChunk[] = [];
     let contentBuffer = '';
@@ -1073,6 +1198,12 @@ export class ChatCompletionUseCase {
       }
 
       if (sink) await sink.write(chunk);
+
+      // Record emission for stream recovery tracking
+      if (streamRecovery && streamId) {
+        streamRecovery.recordEmission(streamId, chunk);
+      }
+
       if (shouldTerminateStream) break;
     }
 
@@ -1116,6 +1247,8 @@ export class ChatCompletionUseCase {
     signal: AbortSignal,
     requestId: string,
     correlationId?: string,
+    streamRecovery?: StreamRecovery,
+    streamId?: string,
   ): Promise<ChatCompletionResponse> {
     const hedgedDelayMs = request.routing?.hedgedDelayMs ?? 800;
     const altEndpoint = decision.alternatives[0];
@@ -1172,7 +1305,7 @@ export class ChatCompletionUseCase {
       if (!firstRace.isTimeout) {
         if (hedgedTimer) clearTimeout(hedgedTimer);
         // Primary yielded first token within delay window! Complete stream normally with primary.
-        return await this.consumeStream(primaryIter, firstRace.res, primaryEndpoint, request, sink);
+        return await this.consumeStream(primaryIter, firstRace.res, primaryEndpoint, request, sink, streamRecovery, streamId);
       }
 
       // Timer elapsed before primary emitted a token! Launch speculative hedged stream to alternative
@@ -1188,7 +1321,7 @@ export class ChatCompletionUseCase {
 
       if (secondRace.winner === 'primary') {
         altCtrl.abort();
-        return await this.consumeStream(primaryIter, secondRace.res, primaryEndpoint, request, sink);
+        return await this.consumeStream(primaryIter, secondRace.res, primaryEndpoint, request, sink, streamRecovery, streamId);
       } else {
         primaryCtrl.abort();
         await this.events.publish(
@@ -1206,7 +1339,7 @@ export class ChatCompletionUseCase {
             correlationId,
           ),
         );
-        return await this.consumeStream(altIter, secondRace.res, altEndpoint, request, sink);
+        return await this.consumeStream(altIter, secondRace.res, altEndpoint, request, sink, streamRecovery, streamId);
       }
     } finally {
       signal.removeEventListener('abort', onParentAbort);
@@ -1219,6 +1352,8 @@ export class ChatCompletionUseCase {
     endpoint: ProviderEndpoint,
     request: ChatCompletionRequest,
     sink: ChunkSink | undefined,
+    streamRecovery?: StreamRecovery,
+    streamId?: string,
   ): Promise<ChatCompletionResponse> {
     const chunks: ChatCompletionChunk[] = [];
     let contentBuffer = '';
@@ -1244,6 +1379,11 @@ export class ChatCompletionUseCase {
       if (c.usage) lastUsage = c.usage;
       if (c.choices[0]?.finish_reason) finishReason = c.choices[0].finish_reason;
       if (sink) await sink.write(c);
+
+      // Record emission for stream recovery tracking
+      if (streamRecovery && streamId) {
+        streamRecovery.recordEmission(streamId, c);
+      }
     };
 
     if (!firstRes.done && firstRes.value) {
@@ -1398,6 +1538,24 @@ function parseRetryAfterMs(error: Error): number | undefined {
 }
 
 export function classifyFailure(error: Error): FailureClassification {
+  const msg = error.message ?? '';
+  const isEntitlement =
+    (error as any).errorCode === 'ENTITLEMENT_LOCKED' ||
+    /not available for the (?:pro|ultra|current) account|requires (?:google ai )?ultra|model_not_entitled|tier.*not.*supported|upgrade your subscription to access|entitlement_locked/i.test(
+      msg,
+    );
+  if (isEntitlement) {
+    return {
+      status: 403,
+      code: 'ENTITLEMENT_LOCKED',
+      retryable: true,
+      keyAction: 'none',
+      endpointAction: 'record_failure',
+      retryAfterMs: parseRetryAfterMs(error),
+      reason: 'Subscription tier/entitlement locked — transparently rerouting to pay-as-you-go API key or fallback alias',
+    };
+  }
+
   // ProviderResponseError carries an HTTP status.
   if (error instanceof ProviderResponseError) {
     const status = error.status;
@@ -1466,6 +1624,24 @@ export function classifyFailure(error: Error): FailureClassification {
         reason: `HTTP ${status}: billing/quota exhausted — failing over, endpoint marked unavailable`,
       };
     }
+    // Entitlement / subscription tier restrictions (e.g., CLI subscription hitting Pro vs Ultra locks)
+    const isEntitlement =
+      (error as any).errorCode === 'ENTITLEMENT_LOCKED' ||
+      /not available for the (?:pro|ultra|current) account|requires (?:google ai )?ultra|model_not_entitled|tier.*not.*supported|upgrade your subscription to access|entitlement_locked/i.test(
+        msg,
+      );
+    if (isEntitlement) {
+      return {
+        status: 403,
+        code: 'ENTITLEMENT_LOCKED',
+        retryable: true,
+        keyAction: 'none',
+        endpointAction: 'record_failure',
+        retryAfterMs,
+        reason: 'Subscription tier/entitlement locked — transparently rerouting to pay-as-you-go API key or fallback alias',
+      };
+    }
+
     // 401 Unauthorized / 403 Forbidden (without a billing signal) — key is
     // bad. Invalidate (don't retry on the same key). If alternative keys or
     // providers exist, failover can proceed.

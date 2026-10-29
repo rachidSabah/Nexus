@@ -1,0 +1,34 @@
+{
+  "name": "@anx/intelligence",
+  "version": "0.5.0",
+  "description": "AI Provider Intelligence OS for Agent Nexus — discovered AI providers and models with evidence, safe verification, free-tier intelligence, leak monitoring (redacted), constrained adapter generation and human-approved integrations.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist coverage .turbo"
+  },
+  "dependencies": {
+    "@anx/core": "workspace:*",
+    "@anx/persistence": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.11"
+  }
+}

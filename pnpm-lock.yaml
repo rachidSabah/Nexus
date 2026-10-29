@@ -221,6 +221,9 @@ importers:
       '@anx/integrations':
         specifier: workspace:*
         version: link:../../packages/integrations
+      '@anx/intelligence':
+        specifier: workspace:*
+        version: link:../../packages/intelligence
       '@anx/mcp-client':
         specifier: workspace:*
         version: link:../../packages/mcp-client
@@ -347,6 +350,19 @@ importers:
       '@anx/shared':
         specifier: workspace:*
         version: link:../shared
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.11
+        version: 4.1.11(vitest@4.1.11)
+
+  packages/intelligence:
+    dependencies:
+      '@anx/core':
+        specifier: workspace:*
+        version: link:../core
+      '@anx/persistence':
+        specifier: workspace:*
+        version: link:../persistence
     devDependencies:
       '@vitest/coverage-v8':
         specifier: ^4.1.11

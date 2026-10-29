@@ -21,8 +21,49 @@ export * from './domain/branded.js';
 export * from './application/ports.js';
 export { classifyPricing, hasFreeSuffix, isZeroPriced, mergePricing, type FreeClassification, type FreeTier, type GatewayPricing, type PricingSource } from './application/pricing.js';
 
+// ── Admission Control ────────────────────────────────────────────────────────
+export {
+  ProviderAdmissionController,
+  getAdmissionController,
+  setAdmissionController,
+  type AdmissionOptions,
+  type AdmissionResult,
+  type RecoveryEpisode,
+} from './application/admission-controller.js';
+
+// ── Request Recovery ─────────────────────────────────────────────────────────
+export {
+  RequestRecovery,
+  RequestCorrections,
+  createRequestRecovery,
+  type RequestCorrection,
+  type RequestRecoveryOptions,
+  type AuthRetryResult,
+} from './application/request-recovery.js';
+
+// ── Credential Validation ────────────────────────────────────────────────────
+export {
+  CredentialValidator,
+  createCredentialValidator,
+  getCredentialValidator,
+  setCredentialValidator,
+  type CredentialStatus,
+  type CredentialValidationResult,
+  type CredentialValidatorOptions,
+} from './application/credential-validator.js';
+
+// ── Stream Recovery ──────────────────────────────────────────────────────────
+export {
+  StreamRecovery,
+  createStreamRecovery,
+  getStreamRecovery,
+  setStreamRecovery,
+  type StreamState,
+  type StreamRecoveryOptions,
+} from './application/stream-recovery.js';
+
 // ── Use cases & default implementations ─────────────────────────────────────
-export { ChatCompletionUseCase, computeCost, classifyFailure, type FailureClassification } from './application/chat-completion.usecase.js';
+export { ChatCompletionUseCase, computeCost, classifyFailure, type FailureClassification, type ChatCompletionUseCaseOptions } from './application/chat-completion.usecase.js';
 export { RoutingEngine } from './application/routing-engine.js';
 export { DefaultFailover } from './application/failover.js';
 export { RoutingStrategy, type RoutingStrategyName, type StrategyCandidate, type StrategySelectionResult } from './application/routing-strategy.js';
@@ -195,6 +236,20 @@ export {
   type PromptTemplateDefinition,
   type PromptTemplateRecord,
 } from './domain/template-registry.js';
+
+// ── Phase 36: Entitlement Bridge & Multi-Agent Worktree Sandbox ──────────
+export {
+  EntitlementBridgeEngine,
+  DEFAULT_ENTITLEMENT_RULES,
+  ENTITLEMENT_ERROR_PATTERNS,
+  type EntitlementFailureType,
+  type EntitlementPolicyRule,
+} from './application/entitlement-bridge.js';
+export {
+  GitWorktreeArbiter,
+  type WorktreeLease,
+  type MergeResult,
+} from './application/mission/worktree-sandbox.js';
 
 // ── Version ─────────────────────────────────────────────────────────────────
 export const CORE_VERSION = '0.5.0';

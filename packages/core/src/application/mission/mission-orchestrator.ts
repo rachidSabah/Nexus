@@ -27,6 +27,7 @@ import type { EventBusPort } from '../ports.js';
 import { MissionPlanner } from './mission-planner.js';
 import { MissionStore } from './mission-store.js';
 import { MissionVerifier } from './mission-verifier.js';
+import { GitWorktreeArbiter, type WorktreeLease } from './worktree-sandbox.js';
 
 export interface MissionOrchestratorOptions {
   agentOrchestrator: AgentOrchestrator;
@@ -35,6 +36,7 @@ export interface MissionOrchestratorOptions {
   verifier?: MissionVerifier;
   events?: EventBusPort;
   defaultMaxRepairCycles?: number;
+  worktreeArbiter?: GitWorktreeArbiter;
 }
 
 export class MissionOrchestrator {
@@ -44,6 +46,7 @@ export class MissionOrchestrator {
   private verifier: MissionVerifier;
   private events?: EventBusPort;
   private defaultMaxRepairCycles: number;
+  private worktreeArbiter?: GitWorktreeArbiter;
 
   private activeControllers = new Map<string, AbortController>();
   private activeEventSubscribers = new Map<string, Set<(event: MissionEvent) => void>>();
@@ -69,6 +72,7 @@ export class MissionOrchestrator {
     this.verifier = options.verifier ?? new MissionVerifier();
     this.events = options.events;
     this.defaultMaxRepairCycles = options.defaultMaxRepairCycles ?? 3;
+    this.worktreeArbiter = options.worktreeArbiter;
   }
 
   /** Create a new mission from specification */
@@ -371,94 +375,120 @@ export class MissionOrchestrator {
     let attempt = 0;
     let success = false;
 
-    while (attempt <= maxRepairCycles && !success && !signal.aborted) {
-      attempt++;
-      task.repairAttempts = attempt - 1;
-
+    const baseWorkspace = task.workspace ?? mission.spec.workspace;
+    let lease: WorktreeLease | undefined;
+    if (this.worktreeArbiter && baseWorkspace) {
       try {
-        // Delegate agent selection & execution to AgentOrchestrator (Phase 28)
-        const result = await this.agentOrchestrator.execute({
-          prompt: task.objective,
-          workspace: task.workspace ?? mission.spec.workspace,
-          policy: task.modelPolicy as any,
-          userPreferences: {
-            preferredAgents: attempt === 1 && task.preferredAgent ? [task.preferredAgent] : undefined,
-          },
-        });
+        lease = await this.worktreeArbiter.acquireWorktree(mission.id, task.taskId);
+      } catch {
+        // Fallback to shared workspace if git worktree cannot be initialized
+      }
+    }
 
-        if (result.status === 'SUCCESS') {
-          success = true;
-          task.status = 'COMPLETED';
-          task.completedAt = Date.now();
-          task.durationMs = task.completedAt - (task.startedAt ?? task.completedAt);
-          task.output = result.output;
-          task.selectedAgent = result.selectedAgentId;
-          task.selectedModel = result.selectedModel;
-          task.selectedProvider = 'nexus';
+    try {
+      while (attempt <= maxRepairCycles && !success && !signal.aborted) {
+        attempt++;
+        task.repairAttempts = attempt - 1;
 
-          const promptTokens = Math.max(1, Math.ceil(task.objective.length / 4));
-          const outputTokens = Math.max(1, Math.ceil((result.output ?? '').length / 4));
-          const totalTokens = promptTokens + outputTokens;
-          const estimatedCost = Number(((totalTokens / 1000) * 0.003).toFixed(5));
+        try {
+          const effectiveWorkspace = lease ? lease.worktreePath : baseWorkspace;
+          // Delegate agent selection & execution to AgentOrchestrator (Phase 28)
+          const result = await this.agentOrchestrator.execute({
+            prompt: task.objective,
+            workspace: effectiveWorkspace,
+            policy: task.modelPolicy as any,
+            userPreferences: {
+              preferredAgents: attempt === 1 && task.preferredAgent ? [task.preferredAgent] : undefined,
+            },
+          });
 
-          task.inputTokens = promptTokens;
-          task.outputTokens = outputTokens;
-          task.estimatedCost = estimatedCost;
+          if (result.status === 'SUCCESS') {
+            if (lease && this.worktreeArbiter) {
+              const mergeResult = await this.worktreeArbiter.commitAndMergeWorktree(lease);
+              if (!mergeResult.merged) {
+                throw new Error(
+                  `Worktree merge conflict in files: ${mergeResult.conflictedFiles.join(', ')}`,
+                );
+              }
+            }
 
-          // Update mission aggregates
-          mission.totalTokens += totalTokens;
-          mission.estimatedCost += estimatedCost;
-          mission.tokenSavings += Math.round(totalTokens * 0.25);
-          this.metrics.totalTokensConsumed += totalTokens;
-          this.metrics.totalEstimatedCost += estimatedCost;
-          this.metrics.totalTasksExecuted++;
+            success = true;
+            task.status = 'COMPLETED';
+            task.completedAt = Date.now();
+            task.durationMs = task.completedAt - (task.startedAt ?? task.completedAt);
+            task.output = result.output;
+            task.selectedAgent = result.selectedAgentId;
+            task.selectedModel = result.selectedModel;
+            task.selectedProvider = 'nexus';
 
-          if (!mission.completedTaskIds.includes(task.taskId)) {
-            mission.completedTaskIds.push(task.taskId);
+            const promptTokens = Math.max(1, Math.ceil(task.objective.length / 4));
+            const outputTokens = Math.max(1, Math.ceil((result.output ?? '').length / 4));
+            const totalTokens = promptTokens + outputTokens;
+            const estimatedCost = Number(((totalTokens / 1000) * 0.003).toFixed(5));
+
+            task.inputTokens = promptTokens;
+            task.outputTokens = outputTokens;
+            task.estimatedCost = estimatedCost;
+
+            // Update mission aggregates
+            mission.totalTokens += totalTokens;
+            mission.estimatedCost += estimatedCost;
+            mission.tokenSavings += Math.round(totalTokens * 0.25);
+            this.metrics.totalTokensConsumed += totalTokens;
+            this.metrics.totalEstimatedCost += estimatedCost;
+            this.metrics.totalTasksExecuted++;
+
+            if (!mission.completedTaskIds.includes(task.taskId)) {
+              mission.completedTaskIds.push(task.taskId);
+            }
+            mission.activeTaskIds = mission.activeTaskIds.filter((id) => id !== task.taskId);
+
+            this.emitEvent(mission.id, 'mission.task.completed', {
+              missionId: mission.id,
+              taskId: task.taskId,
+              selectedAgent: result.selectedAgentId,
+              durationMs: task.durationMs,
+            });
+          } else {
+            throw new Error(result.error ?? `Task failed with status ${result.status}`);
           }
-          mission.activeTaskIds = mission.activeTaskIds.filter((id) => id !== task.taskId);
+        } catch (err) {
+          const errMsg = (err as Error).message;
+          task.error = errMsg;
 
-          this.emitEvent(mission.id, 'mission.task.completed', {
-            missionId: mission.id,
-            taskId: task.taskId,
-            selectedAgent: result.selectedAgentId,
-            durationMs: task.durationMs,
-          });
-        } else {
-          throw new Error(result.error ?? `Task failed with status ${result.status}`);
-        }
-      } catch (err) {
-        const errMsg = (err as Error).message;
-        task.error = errMsg;
+          if (attempt <= maxRepairCycles) {
+            mission.status = 'REPAIRING';
+            mission.repairCount++;
+            this.metrics.totalRepairs++;
+            this.emitEvent(mission.id, 'mission.repair.started', {
+              missionId: mission.id,
+              taskId: task.taskId,
+              attempt,
+              maxAttempts: maxRepairCycles,
+              error: errMsg,
+            });
 
-        if (attempt <= maxRepairCycles) {
-          mission.status = 'REPAIRING';
-          mission.repairCount++;
-          this.metrics.totalRepairs++;
-          this.emitEvent(mission.id, 'mission.repair.started', {
-            missionId: mission.id,
-            taskId: task.taskId,
-            attempt,
-            maxAttempts: maxRepairCycles,
-            error: errMsg,
-          });
+            // Small exponential backoff before repair attempt
+            await new Promise((r) => setTimeout(r, 50 * attempt));
+          } else {
+            task.status = 'FAILED';
+            task.completedAt = Date.now();
+            mission.activeTaskIds = mission.activeTaskIds.filter((id) => id !== task.taskId);
+            if (!mission.failedTaskIds.includes(task.taskId)) {
+              mission.failedTaskIds.push(task.taskId);
+            }
 
-          // Small exponential backoff before repair attempt
-          await new Promise((r) => setTimeout(r, 50 * attempt));
-        } else {
-          task.status = 'FAILED';
-          task.completedAt = Date.now();
-          mission.activeTaskIds = mission.activeTaskIds.filter((id) => id !== task.taskId);
-          if (!mission.failedTaskIds.includes(task.taskId)) {
-            mission.failedTaskIds.push(task.taskId);
+            this.emitEvent(mission.id, 'mission.task.failed', {
+              missionId: mission.id,
+              taskId: task.taskId,
+              error: errMsg,
+            });
           }
-
-          this.emitEvent(mission.id, 'mission.task.failed', {
-            missionId: mission.id,
-            taskId: task.taskId,
-            error: errMsg,
-          });
         }
+      }
+    } finally {
+      if (lease && this.worktreeArbiter) {
+        await this.worktreeArbiter.releaseWorktree(lease).catch(() => {});
       }
     }
 

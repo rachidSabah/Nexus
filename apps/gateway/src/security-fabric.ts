@@ -151,7 +151,11 @@ export type AuditEventType =
   | 'rate.limited'
   | 'failover'
   | 'recovery'
-  | 'cancellation';
+  | 'cancellation'
+  | 'intelligence.jobs.enqueued'
+  | 'intelligence.verification.requested'
+  | 'intelligence.finding.status_changed'
+  | 'intelligence.adapter.published';
 
 export interface AuditEvent {
   readonly ts: string; // ISO

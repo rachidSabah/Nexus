@@ -39,6 +39,10 @@ For the full data-flow diagram, subsystem table, and security boundaries, see
   context budgeting, token optimization.
 - `packages/providers`, `packages/routing`, `packages/memory`,
   `packages/security`, `packages/observability`, … — focused subsystems.
+- `packages/intelligence` — the AI Provider Intelligence OS: continuous
+  provider/model discovery, evidence-redaction-first ingestion, independent
+  verification dimensions, free-tier intelligence, hash-bound human approval
+  and the only path into production routing (approved Adapter publish).
 - `packages/cli` — the `nexus` command-line interface.
 
 ## Build & test

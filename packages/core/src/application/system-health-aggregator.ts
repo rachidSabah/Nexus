@@ -33,13 +33,41 @@ export interface SystemHealthAggregatorDeps {
   agentOrchestrator?: AgentOrchestrator;
   missionOrchestrator?: MissionOrchestrator;
   budgetManager?: BudgetManager;
+  /**
+   * Discovery / AI Provider Intelligence OS — duck-typed to avoid a core
+   * dependency on @anx/intelligence. Must return a `SubsystemHealthReport`-shaped
+   * object (async allowed).
+   */
+  discovery?: {
+    healthReport: () =>
+      | {
+          subsystem: 'discovery';
+          status: import('../domain/system-health.js').SystemHealthStatus;
+          healthy: boolean;
+          message: string;
+          metrics: Record<string, unknown>;
+          lastCheckedAt?: number;
+          latencyMs?: number;
+          remediation?: string;
+        }
+      | Promise<{
+          subsystem: 'discovery';
+          status: import('../domain/system-health.js').SystemHealthStatus;
+          healthy: boolean;
+          message: string;
+          metrics: Record<string, unknown>;
+          lastCheckedAt?: number;
+          latencyMs?: number;
+          remediation?: string;
+        }>;
+  };
 }
 
 export class SystemHealthAggregator {
   constructor(private readonly deps: SystemHealthAggregatorDeps) {}
 
   public async evaluateHealth(): Promise<UnifiedSystemHealthReport> {
-    const subsystems: Record<SubsystemName, SubsystemHealthReport> = {
+    const subsystems = {
       gateway: this.checkGateway(),
       providers: this.checkProviders(),
       models: this.checkModels(),
@@ -54,7 +82,8 @@ export class SystemHealthAggregator {
       networking: this.checkNetworking(),
       security: this.checkSecurity(),
       persistence: this.checkPersistence(),
-    };
+      discovery: await this.checkDiscovery(),
+    } satisfies Record<SubsystemName, SubsystemHealthReport>;
 
     const subsystemList = Object.values(subsystems);
     const healthyCount = subsystemList.filter((s) => s.status === 'HEALTHY').length;
@@ -467,6 +496,29 @@ export class SystemHealthAggregator {
         storeType: 'in-memory-with-sqlite-persistence',
       },
       lastCheckedAt: Date.now(),
+    };
+  }
+
+  private async checkDiscovery(): Promise<SubsystemHealthReport> {
+    if (!this.deps.discovery) {
+      return {
+        subsystem: 'discovery',
+        status: 'NOT_CONFIGURED',
+        healthy: true,
+        message: 'AI Provider Intelligence OS not initialized',
+        metrics: {},
+        lastCheckedAt: Date.now(),
+      };
+    }
+    const report = await this.deps.discovery.healthReport();
+    return {
+      subsystem: 'discovery',
+      status: report.status,
+      healthy: report.healthy,
+      message: report.message,
+      metrics: report.metrics,
+      lastCheckedAt: Date.now(),
+      remediation: report.remediation,
     };
   }
 }

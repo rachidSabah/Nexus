@@ -219,6 +219,13 @@ export const PERMISSIONS = {
   MANAGE_POLICIES: 'policies:write',
   // Diagnostics / system
   MANAGE_METRICS: 'metrics:read',
+  // AI Provider Intelligence OS (discovery read/write; approval & publish are
+  // deliberately NOT granted to operator/developer — admin-only by default)
+  READ_INTEL: 'intelligence:read',
+  WRITE_INTEL: 'intelligence:write',
+  RUN_DISCOVERY: 'intelligence:discover',
+  APPROVE_INTEGRATIONS: 'intelligence:approve',
+  PUBLISH_INTEGRATIONS: 'intelligence:publish',
   ADMIN_SYSTEM: '*',
 } as const;
 
@@ -245,6 +252,9 @@ export const BUILTIN_ROLES: Record<string, Role> = {
       'metrics:read',
       'audit:read',
       'keys:read',
+      'intelligence:read',
+      'intelligence:write',
+      'intelligence:discover',
     ],
   },
   developer: {
@@ -274,11 +284,12 @@ export const BUILTIN_ROLES: Record<string, Role> = {
       'applications:read',
       'metrics:read',
       'audit:read',
+      'intelligence:read',
     ],
   },
   viewer: {
     name: 'viewer',
-    permissions: ['providers:read', 'metrics:read'],
+    permissions: ['providers:read', 'metrics:read', 'intelligence:read'],
   },
   service: {
     name: 'service',

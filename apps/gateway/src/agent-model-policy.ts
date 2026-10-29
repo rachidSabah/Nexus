@@ -1,6 +1,11 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import {
+  EntitlementBridgeEngine,
+  type EntitlementPolicyRule,
+  DEFAULT_ENTITLEMENT_RULES,
+} from '@anx/core';
 
 /**
  * Per-agent model policy store.
@@ -15,6 +20,8 @@ import { dirname, join } from 'node:path';
 export interface AgentModelPolicy {
   defaultModel?: string;
   freeBias?: boolean;
+  entitlementBridgeEnabled?: boolean;
+  customEntitlementRules?: EntitlementPolicyRule[];
 }
 
 const POLICY_FILE = join(homedir(), '.agent-nexus', 'agent-model-policies.json');
@@ -49,7 +56,9 @@ export function setAgentModelPolicy(
   const next: AgentModelPolicy = { ...current };
   if (patch.defaultModel !== undefined) next.defaultModel = patch.defaultModel || undefined;
   if (patch.freeBias !== undefined) next.freeBias = patch.freeBias;
-  if (!next.defaultModel && !next.freeBias) {
+  if (patch.entitlementBridgeEnabled !== undefined) next.entitlementBridgeEnabled = patch.entitlementBridgeEnabled;
+  if (patch.customEntitlementRules !== undefined) next.customEntitlementRules = patch.customEntitlementRules;
+  if (!next.defaultModel && !next.freeBias && next.entitlementBridgeEnabled === undefined && !next.customEntitlementRules) {
     delete all[agentId];
   } else {
     all[agentId] = next;
@@ -63,4 +72,16 @@ export function setAgentModelPolicy(
     );
   }
   return next;
+}
+
+/**
+ * Returns an EntitlementBridgeEngine configured with custom rules (if any)
+ * or defaults.
+ */
+export function getEntitlementBridge(agentId?: string): EntitlementBridgeEngine {
+  const policy = agentId ? getAgentModelPolicy(agentId) : undefined;
+  const rules = policy?.customEntitlementRules?.length
+    ? [...policy.customEntitlementRules, ...DEFAULT_ENTITLEMENT_RULES]
+    : DEFAULT_ENTITLEMENT_RULES;
+  return new EntitlementBridgeEngine(rules);
 }

@@ -262,7 +262,11 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
    */
   protected getApiKey(endpoint: ProviderEndpoint): string {
     const explicit = (endpoint as ProviderEndpoint & { apiKey?: string }).apiKey;
-    if (explicit && !/^opencode-zen-key-/i.test(explicit)) return explicit;
+    // Placeholder keys (`opencode-zen-key-*`) mean "no key" — never fall back
+    // to the env key for them (discovery must go keyless even when an env key
+    // exists, since plan keys can gate the catalog to an EMPTY list).
+    if (explicit && /^opencode-zen-key-/i.test(explicit)) return '';
+    if (explicit) return explicit;
     return process.env[this.apiKeyEnv] ?? '';
   }
 
@@ -281,13 +285,30 @@ export class OpenCodeZenAdapter extends OpenAIAdapter {
     return h;
   }
 
+  /**
+   * Catalog discovery on Zen: the free tier exposes its model list KEYLESSLY
+   * (documented behavior — ~85 models incl. glm-5.3-flash-free), while a
+   * registered plan key can return an EMPTY catalog (plan gating hides the
+   * list from out-of-quota/free sessions). Discover keyless-first by tagging
+   * the placeholder key (getApiKey above treats `opencode-zen-key-*` as "no
+   * key"), and only fall back to the keyed path when that yields nothing.
+   * Inference keeps using the real key when one exists.
+   */
+  override async discoverModels(endpoint: ProviderEndpoint, signal: AbortSignal): Promise<readonly ModelDescriptor[]> {
+    const keyless = await super.discoverModels(
+      { ...endpoint, apiKey: 'opencode-zen-key-keyless-catalog' } as unknown as ProviderEndpoint,
+      signal,
+    );
+    if (keyless.length > 1) return keyless;
+    return super.discoverModels(endpoint, signal);
+  }
+
   override resolveModel(alias: string): string | undefined {
     const norm = alias.toLowerCase().trim();
     // If the input is already a concrete model (e.g. ends with -free or includes a specific model name), preserve it
     if (norm.endsWith('-free') || norm === 'big-pickle' || norm.includes('qwen-2.5-coder')) {
       return alias;
-    }
-    if (
+    }    if (
       norm === 'deepseek-v4-flash' ||
       norm === 'deepseek-v4' ||
       norm === 'deepseek-v4-pro' ||

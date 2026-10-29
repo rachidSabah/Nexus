@@ -166,7 +166,7 @@ describe('Phase 31 — Operations, Observability & Control Plane Tests', () => {
   });
 
   describe('2. Unified System Health Model', () => {
-    it('evaluates all 14 subsystem pillars in SystemHealthAggregator', async () => {
+    it('evaluates all 15 subsystem pillars in SystemHealthAggregator', async () => {
       const aggregator = new SystemHealthAggregator({
         routing,
         modelRegistry,
@@ -180,9 +180,9 @@ describe('Phase 31 — Operations, Observability & Control Plane Tests', () => {
       expect(report.status).toBeDefined();
       expect(report.healthy).toBe(true);
       expect(report.version).toBe('0.5.0');
-      expect(report.summary.totalSubsystems).toBe(14);
+      expect(report.summary.totalSubsystems).toBe(15);
 
-      // Verify all 14 pillars exist
+      // Verify all 15 pillars exist
       const expectedPillars = [
         'gateway',
         'providers',
@@ -198,6 +198,7 @@ describe('Phase 31 — Operations, Observability & Control Plane Tests', () => {
         'networking',
         'security',
         'persistence',
+        'discovery',
       ];
       for (const pillar of expectedPillars) {
         expect(report.subsystems[pillar as keyof typeof report.subsystems]).toBeDefined();
@@ -211,7 +212,7 @@ describe('Phase 31 — Operations, Observability & Control Plane Tests', () => {
 
       expect(['HEALTHY', 'DEGRADED']).toContain(data.status);
       expect(data.healthy).toBe(true);
-      expect(data.summary.totalSubsystems).toBe(14);
+      expect(data.summary.totalSubsystems).toBe(15);
       expect(data.subsystems.gateway.status).toBe('HEALTHY');
       expect(data.subsystems.providers.status).toBe('HEALTHY');
       expect(data.subsystems.models.status).toBe('HEALTHY');

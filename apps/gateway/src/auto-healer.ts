@@ -17,13 +17,16 @@
  * is picked back up without a restart.
  */
 
-import type { RoutingEnginePort, KeyRegistry, ProviderEndpoint } from '@anx/core';
+import type { RoutingEnginePort, KeyRegistry, ProviderEndpoint, ProviderAdapter } from '@anx/core';
+import { CredentialValidator } from '@anx/core';
 
 export interface AutoHealerOptions {
   /** Interval between heal passes, in ms. Default: 30_000. */
   intervalMs?: number;
   /** Base URL probe timeout, in ms. Default: 4_000. */
   probeTimeoutMs?: number;
+  /** Optional CredentialValidator for proactive key validation. */
+  credentialValidator?: CredentialValidator;
 }
 
 export class AutoHealer {
@@ -31,6 +34,7 @@ export class AutoHealer {
   private readonly keyRegistry: KeyRegistry;
   private readonly intervalMs: number;
   private readonly probeTimeoutMs: number;
+  private readonly credentialValidator?: CredentialValidator;
   private timer: ReturnType<typeof setInterval> | null = null;
   // Last observed reachability per endpoint. We only promote an unhealthy
   // endpoint back to `healthy` on a genuine network recovery
@@ -44,6 +48,7 @@ export class AutoHealer {
     this.keyRegistry = keyRegistry;
     this.intervalMs = opts.intervalMs ?? 30_000;
     this.probeTimeoutMs = opts.probeTimeoutMs ?? 4_000;
+    this.credentialValidator = opts.credentialValidator;
   }
 
   /** Probes a base URL; any non-5xx response counts as reachable. */
@@ -113,7 +118,29 @@ export class AutoHealer {
 
       // Verification-gated key recovery: NEVER reactivate an invalid key without
       // verifying that upstream authentication actually succeeds.
-      const verified = await this.probeKey(endpoint.baseUrl, plaintext);
+      let verified = false;
+      if (this.credentialValidator) {
+        // Use CredentialValidator for sophisticated provider-specific validation
+        // Create a minimal mock adapter - CredentialValidator uses direct fetch, not the adapter
+        const mockAdapter: ProviderAdapter = {
+          providerId: key.providerId,
+          displayName: key.providerId,
+          chatCompletion: async () => { throw new Error('Not implemented'); },
+          streamChatCompletion: async function* () { throw new Error('Not implemented'); },
+          healthCheck: async () => true,
+        };
+        const result = await this.credentialValidator.validate(
+          key.providerId,
+          key.id,
+          endpoint,
+          mockAdapter,
+          plaintext
+        );
+        verified = result.status === 'verified';
+      } else {
+        // Fallback to simple probe
+        verified = await this.probeKey(endpoint.baseUrl, plaintext);
+      }
       if (verified) {
         this.keyRegistry.reset(key.id);
         keysHealed++;

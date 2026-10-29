@@ -89,6 +89,7 @@ Nexus is organized following pure Clean / Hexagonal Architecture patterns:
 | **Token Efficiency Engine** | Exact-duplicate deduplication, tool schema normalization, and context compaction reporting measured savings. |
 | **Autonomous Application Engine** | Manages application build lifecycle: Discover → Specify → Architect → Plan → Approval → Scaffold → Build → Test → Verify → Repair → Finalize. |
 | **AGY Builder Port** | Controlled execution port for AGY subprocess actions in isolated workspaces. |
+| **AI Provider Intelligence** | Continuous provider/model discovery via bounded connectors, redaction-first evidence, independent verification dimensions, free-tier intelligence, leak monitoring (redacted), hash-bound human approval and approved-only adapter publishing (`packages/intelligence`, discovery subsystem #15 in the health hierarchy). |
 | **Mission Control Dashboard** | Next.js 15 / React 19 operational UI for real-time traffic, provider configuration, model catalog, and metrics. |
 
 ---
@@ -165,15 +166,15 @@ flowchart TD
     RepairLoop -->|Yes (<= 3 attempts)| AutoRepair[Autonomous Repair Loop]
     AutoRepair --> Orch
     RepairLoop -->|No| Verifier[Mission Verifier]
-## 7. Phase 32: Durable Persistence, Crash Recovery & 14-Subsystem Health Hierarchy
+## 7. Phase 32: Durable Persistence, Crash Recovery & Health Hierarchy
 
-Phase 32 transforms Nexus into an ACID-compliant, crash-recoverable AI control plane:
+Phase 32 transforms Nexus into an ACID-compliant, crash-recoverable AI control plane (the health hierarchy has since grown from 14 to 15 subsystems with the discovery subsystem, see §9):
 
 ```mermaid
 flowchart TD
     subgraph INGRESS ["Ingress & Fastify Server"]
         HTTP["HTTP / SSE Ingress (Port 8787)"]
-        HealthAgg["14-Subsystem Health Aggregator"]
+        HealthAgg["Health Aggregator (15 subsystems)"]
     end
     
     subgraph DURABLE ["Durable Persistence & Recovery Engine (@anx/persistence & @anx/core)"]
@@ -231,4 +232,60 @@ Durable Persistence (SQLite ACID & Checkpoints)
  ↓
 Recovery & Observability (Startup Reconciler & Telemetry Ring Buffer)
 ```
+
+---
+
+## 9. AI Provider Intelligence OS
+
+The Intelligence OS is an optional, self-contained subsystem (`packages/intelligence`, `@anx/intelligence`) that continuously discovers AI providers and models from public sources, verifies claims against evidence, monitors for credential leaks, and prepares integrations — while guaranteeing that **nothing reaches production routing without a human-approved, hash-bound publish**. It appears as the `discovery` subsystem (#15) in the health hierarchy, reported by `SystemHealthAggregator` when `HttpServerDeps.intelligence` is wired in the gateway runtime.
+
+### Discovery → Publish pipeline
+
+```mermaid
+flowchart TD
+    SCH["Scheduler / POST /v1/intelligence/jobs/run"] --> CONN["Bounded Connectors<br/>(OpenRouter, Hugging Face, GitHub, Local)"]
+    CONN --> EG["Egress Guard<br/>SSRF block, redirect cap, private-IP & cloud-metadata deny, DNS failsafe"]
+    EG --> RAW["Raw Observation Envelope"]
+    RAW --> RED["Redaction Engine<br/>secret patterns scrubbed BEFORE any persistence"]
+    RED --> EV["Evidence Store<br/>dedupe via dedupe_key hash (INSERT OR IGNORE)"]
+    EV --> CONF["Verification Dimensions<br/>existence · identity · pricing · capability · free"]
+    CONF --> SM["Confidence Gates & State Machine<br/>discovered → evidence_checked → verified, stale after freshness window"]
+    SM --> AF["Constrained Adapter Factory<br/>request template + sandbox lint + artifact manifest"]
+    AF --> AG["Approval Guard<br/>SHA-256 approval token hash-bound to the artifact manifest"]
+    AG -->|"human decision (approve) + publish"| PUB["Publish Hook"]
+    PUB --> ROUTE["RoutingEngine.registerEndpoint()"]
+    PUB --> REG["ModelRegistry.ingestRemoteCatalog()"]
+    SM -.->|"no approval yet"| HOLD["Adapters parked as PREPARED"]
+```
+
+### Boundary invariants
+
+1. **Discovery is isolated from production.** Connectors write only to the intelligence store; production routing is mutated exclusively by the publish hook after an approval.
+2. **Redaction-first.** Fetched content is scanned for secret patterns (API keys, tokens, bearer strings) before it is persisted or hashed. Detected leaks are stored redacted and are never tested against live endpoints.
+3. **Untrusted content is data.** Provider API responses, READMEs and any fetched text are recorded as evidence payloads only — never executed, followed, or treated as instructions.
+4. **Free is never inferred by omission.** Missing pricing stays `unknown`; `free=true` requires an explicitly documented access plan, and the claim goes `stale` once its pricing freshness window (7 days) expires.
+5. **Independent verification.** Existence, identity, pricing and capability are separate dimensions with separate evidence; a healthier dimension cannot endorse a claim dimension that has no evidence of its own.
+
+### RBAC, audit & gateway surface
+
+Routes live under `/v1/intelligence/*` (deliberately excluded from `PUBLIC_PREFIXES`), reply `503 NOT_CONFIGURED` when the engine is absent, and are gated by four permissions:
+
+| Permission | Operations |
+|---|---|
+| `intelligence:discover` | Enqueue / trigger discovery job runs |
+| `intelligence:write` | Request verification runs, change finding status, prepare adapters |
+| `intelligence:approve` | Submit approval decisions (approve / reject with note) |
+| `intelligence:publish` | Publish an approved adapter to routing |
+
+Every mutation is audited (`intelligence.jobs.enqueued`, `intelligence.verification.requested`, `intelligence.finding.status_changed`, `intelligence.adapter.published`).
+
+### Publish binding
+
+- `POST /v1/intelligence/adapters/prepare` generates a constrained adapter candidate (request template, sandbox lint) plus an artifact manifest.
+- `POST /v1/intelligence/approvals/:id/decision` and `POST /v1/intelligence/adapters/:id/publish` re-verify that the SHA-256 approval token still matches the manifest. Artifact drift yields `409 ARTIFACT_DRIFT`, wrong state `409 NOT_PENDING`, missing adapter `404 ADAPTER_MISSING`, denied principal `403`.
+- On publish the gateway registers the endpoint with `RoutingEngine` and ingests the catalog into `ModelRegistry`; the intelligence engine itself never sits in the request hot path.
+
+### Storage
+
+Intelligence state lives in its own `intelligence_*` SQLite tables inside the shared local store (`~/.agent-nexus/nexus.db`, or `NEXUS_DB_PATH`) via `node:sqlite`, with an in-memory repository fallback when SQLite is unavailable.
 

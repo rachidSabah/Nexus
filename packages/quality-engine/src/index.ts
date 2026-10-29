@@ -4,6 +4,11 @@
  */
 
 export { CompatibilityCertifier } from './compatibility/certifier.js';
+export {
+  QualityDriftGuardrail,
+  type ShadowEvalSample,
+  type DriftEvaluationVerdict,
+} from './drift-guardrail.js';
 
 export type {
   CertificationReport,
@@ -15,5 +20,6 @@ export type {
   ChaosResult,
   SecurityAuditResult,
   ReleaseConfig,
-  ChaosScenario
+  ChaosScenario,
 } from './types.js';
+

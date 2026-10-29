@@ -23,6 +23,7 @@
     "@anx/agents": "workspace:*",
     "@anx/core": "workspace:*",
     "@anx/integrations": "workspace:*",
+    "@anx/intelligence": "workspace:*",
     "@anx/mcp-client": "workspace:*",
     "@anx/mcp-server": "workspace:*",
     "@anx/memory": "workspace:*",

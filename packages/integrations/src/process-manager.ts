@@ -327,13 +327,31 @@ export class IntegrationProcessManager {
 
     if (spec.interactive) {
       if (process.platform === 'win32') {
-        // On Windows, spawn interactive CLI agents via cmd.exe /k so they maintain
-        // their interactive runtime lifecycle cleanly and report real OS PIDs.
-        const child = spawn(process.env.ComSpec || 'cmd.exe', ['/k', spec.executable, ...spec.args], {
+        // On Windows, interactive CLI agents (ink TUIs like claude / qwen /
+        // codex) need a REAL console with live stdio. Wiring `stdio: 'ignore'`
+        // hands the TUI a NUL handle — qwen probes stdout, sees a non-TTY and
+        // exits 0 within seconds, which read as "start failed" on the
+        // dashboard. Detach a fresh console via `start` so the inner cmd /k
+        // owns real console handles; the launcher cmd itself stays hidden.
+        const title = (spec.display || spec.executable).replace(/"/g, '');
+        const q = (value: string) => (value.includes(' ') ? `"${value}"` : value);
+        const inner = [
+          'start',
+          '/wait',
+          `"${title}"`,
+          ...(spec.cwd ? ['/D', `"${spec.cwd}"`] : []),
+          'cmd.exe',
+          '/k',
+          q(spec.executable),
+          ...spec.args.map(q),
+        ].join(' ');
+        const child = spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', inner], {
           env,
           cwd: spec.cwd,
           detached: true,
           stdio: 'ignore',
+          windowsHide: true,
+          windowsVerbatimArguments: true,
         });
         child.unref();
         return child;

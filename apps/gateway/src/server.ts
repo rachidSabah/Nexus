@@ -166,6 +166,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyMultipart from '@fastify/multipart';
 import Fastify from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { AgentDetector } from './agent-detector.js';
 import { computeRoutingMetrics } from './routing-metrics.js';
@@ -187,6 +188,7 @@ import { getAgentModelPolicies, setAgentModelPolicy } from './agent-model-policy
 import type { GatewayConfig } from './config.js';
 import { DetachedTaskStore } from './detached-task-store.js';
 import { FalloverConfigStore, rankSimilarModels } from './fallover-config.js';
+import { IntelligenceEngine, ApprovalGuardError, type ProviderModelRecord } from '@anx/intelligence';
 
 /** Probes a base URL for reachability (server is up; any non-5xx counts as up). */
 async function probeUrl(baseUrl: string): Promise<boolean> {
@@ -257,6 +259,8 @@ export interface HttpServerDeps {
   readonly liveErrorResolver?: LiveErrorResolver;
   /** Dynamic Model Context Intelligence layer (optional — additive). */
   readonly capabilityService?: ModelCapabilityService;
+  /** AI Provider Intelligence OS (discovery → verification → approval → publish). */
+  readonly intelligence?: IntelligenceEngine;
 }
 
 // ── Token-economics accumulator (§30) — real measurements only, capped ring. ──
@@ -405,6 +409,9 @@ export class HttpServer {
       agentOrchestrator: this.agentOrchestrator,
       missionOrchestrator: this.missionOrchestrator,
       budgetManager: deps.budgetManager,
+      discovery: deps.intelligence
+        ? { healthReport: () => deps.intelligence!.healthReport() }
+        : undefined,
     });
     this.eventBuffer = new BoundedEventBuffer(1000);
     this.metricsTracker = new OperationsMetricsTracker(2000);
@@ -8497,6 +8504,405 @@ export class HttpServer {
     // ── Root: redirect to the dashboard UI ─────────────────────────────
     this.fastify.get('/', async (_req, reply) => {
       return reply.code(302).redirect('/dashboard');
+    });
+
+    this.registerIntelligenceRoutes();
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════════
+   * AI Provider Intelligence OS (blueprint: discovery → redact → verify →
+   * hash-bound approval → approved-only publish). All read routes sit behind
+   * the global authentication preHandler; every state-changing route re-checks
+   * its specific permission and appends to the audit log.
+   * ══════════════════════════════════════════════════════════════════════════ */
+  private registerIntelligenceRoutes(): void {
+    const intel = () => this.deps.intelligence;
+    const unavailable = (reply: FastifyReply) =>
+      reply.code(503).send({ error: { message: 'Intelligence subsystem is not configured', code: 'NOT_CONFIGURED' } });
+
+    const notFound = (reply: FastifyReply, what: string) =>
+      reply.code(404).send({ error: { message: `${what} not found`, code: 'NOT_FOUND' } });
+
+    const guardErrorStatus = (code: ApprovalGuardError['code']): number => {
+      if (code === 'PERMISSION_DENIED') return 403;
+      if (code === 'ARTIFACT_DRIFT' || code === 'NOT_PENDING') return 409;
+      return 404; // ADAPTER_MISSING
+    };
+
+    /** Runs a handler against the engine, replying 503 when it's missing. */
+    const withEngine = (reply: FastifyReply): IntelligenceEngine | null => {
+      const engine = intel();
+      if (!engine) {
+        unavailable(reply);
+        return null;
+      }
+      return engine;
+    };
+
+    /** Audits + replies on RBAC denial; returns the principal id when allowed. */
+    const checkPermission = async (
+      req: FastifyRequest,
+      reply: FastifyReply,
+      permission: string,
+      resource: string,
+    ): Promise<string | null> => {
+      const principal = await this.authenticate(req.headers['authorization'] as string | undefined);
+      const decision = this.requirePermission(principal, permission, resource, reply);
+      return decision === 'allow' ? (principal ?? 'anonymous') : null;
+    };
+
+    const parseLimit = (req: FastifyRequest, fallback: number): number => {
+      const raw = (req.query as Record<string, unknown> | undefined)?.['limit'];
+      const n = typeof raw === 'string' ? Number.parseInt(raw, 10) : Number.NaN;
+      if (Number.isFinite(n) && n > 0) return Math.min(Math.trunc(n), 500);
+      return fallback;
+    };
+
+    const isStr = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0;
+
+    // ── Reads ───────────────────────────────────────────────────────────
+
+    this.fastify.get('/v1/intelligence/overview', async (_req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      return engine.overview();
+    });
+
+    this.fastify.get('/v1/intelligence/health', async (_req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      return engine.healthReport();
+    });
+
+    this.fastify.get('/v1/intelligence/providers', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      return engine.listProviders({ limit: parseLimit(req, 200) });
+    });
+
+    this.fastify.get('/v1/intelligence/providers/:id', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const provider = await engine.repo.getProvider((req.params as { id: string }).id);
+      if (!provider) return notFound(reply, 'Provider');
+      return provider;
+    });
+
+    this.fastify.get('/v1/intelligence/models', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      let rows = await engine.listModels({
+        providerId: isStr(q['providerId']) ? q['providerId'] : undefined,
+        lifecycle: isStr(q['lifecycle']) ? (q['lifecycle'] as never) : undefined,
+        limit: parseLimit(req, 200),
+      });
+      // Post-filters the SQL layer does not know about (intelligence-specific
+      // facets over verified claims). Absent/unsolicited filters are ignored.
+      if (isStr(q['pricingStatus'])) rows = rows.filter((r) => r.pricingStatus === q['pricingStatus']);
+      if (isStr(q['availability'])) rows = rows.filter((r) => r.availabilityStatus === q['availability']);
+      if (q['toolCalling'] === 'true') rows = rows.filter((r) => r.capabilities.toolCalling === true);
+      if (q['vision'] === 'true') rows = rows.filter((r) => r.capabilities.vision === true);
+      if (q['free'] === 'true') {
+        // Free access is a documented ACCESS PLAN claim — never inferred from
+        // missing pricing. Restrict to models with an explicit free plan.
+        const freePlans = await engine.repo.listAccessPlans({ freeOnly: true, limit: 500 });
+        const freeIds = new Set(freePlans.map((p) => p.providerModelId).filter((v): v is string => Boolean(v)));
+        rows = rows.filter((r: ProviderModelRecord) => freeIds.has(r.id));
+      }
+      return rows;
+    });
+
+    this.fastify.get('/v1/intelligence/models/:id', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const model = await engine.repo.getProviderModelById((req.params as { id: string }).id);
+      if (!model) return notFound(reply, 'Model');
+      return model;
+    });
+
+    this.fastify.get('/v1/intelligence/access-plans', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      return engine.repo.listAccessPlans({
+        providerId: isStr(q['providerId']) ? q['providerId'] : undefined,
+        freeOnly: q['free'] === 'true' || undefined,
+        limit: parseLimit(req, 200),
+      });
+    });
+
+    this.fastify.get('/v1/intelligence/endpoints', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      return engine.listEndpointsFor(isStr(q['providerId']) ? q['providerId'] : undefined);
+    });
+
+    this.fastify.get('/v1/intelligence/evidence', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      return engine.listEvidence({
+        subjectType: isStr(q['subjectType']) ? (q['subjectType'] as never) : undefined,
+        subjectId: isStr(q['subjectId']) ? q['subjectId'] : undefined,
+        limit: parseLimit(req, 200),
+      });
+    });
+
+    this.fastify.get('/v1/intelligence/connectors', async (_req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      return engine.listConnectors();
+    });
+
+    this.fastify.get('/v1/intelligence/jobs', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      return engine.listJobs({
+        connectorId: isStr(q['connectorId']) ? q['connectorId'] : undefined,
+        status: isStr(q['status']) ? (q['status'] as never) : undefined,
+        limit: parseLimit(req, 100),
+      });
+    });
+
+    this.fastify.get('/v1/intelligence/verification/runs', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      return engine.listVerificationRuns({
+        subjectType: isStr(q['subjectType']) ? (q['subjectType'] as never) : undefined,
+        subjectId: isStr(q['subjectId']) ? q['subjectId'] : undefined,
+        limit: parseLimit(req, 100),
+      });
+    });
+
+    this.fastify.get('/v1/intelligence/security/findings', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      return engine.listFindings({
+        severity: isStr(q['severity']) ? (q['severity'] as never) : undefined,
+        status: isStr(q['status']) ? (q['status'] as never) : undefined,
+        limit: parseLimit(req, 200),
+      });
+    });
+
+    this.fastify.get('/v1/intelligence/adapters', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      return engine.listAdapters({
+        providerId: isStr(q['providerId']) ? q['providerId'] : undefined,
+        status: isStr(q['status']) ? (q['status'] as never) : undefined,
+        limit: parseLimit(req, 200),
+      });
+    });
+
+    this.fastify.get('/v1/intelligence/approvals', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      const state = isStr(q['state']) ? (q['state'] as never) : undefined;
+      return engine.listApprovals(state ? { state } : undefined);
+    });
+
+    this.fastify.get('/v1/intelligence/audit', async (req, reply) => {
+      const engine = withEngine(reply);
+      if (!engine) return;
+      return engine.listAudit(parseLimit(req, 100));
+    });
+
+    // ── Discovery (permission: intelligence:discover) ────────────────────
+
+    this.fastify.post('/v1/intelligence/jobs/run', async (req, reply) => {
+      const principal = await checkPermission(req, reply, 'intelligence:discover', 'intelligence:jobs');
+      if (principal === null) return;
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      let ids: string[];
+      if (isStr(body['connectorId'])) ids = [body['connectorId']];
+      else ids = (await engine.listConnectors()).map((c) => c.id);
+      if (ids.length === 0) {
+        return reply.code(400).send({ error: { message: 'No connectors are registered', code: 'VALIDATION_ERROR' } });
+      }
+      const jobs = [];
+      for (const id of ids) {
+        try {
+          jobs.push(await engine.enqueueRun(id, { maxAttempts: 1 }));
+        } catch (err) {
+          return reply.code(400).send({ error: { message: (err as Error).message, code: 'VALIDATION_ERROR' } });
+        }
+      }
+      this.getAuditLogger().record({
+        event: 'intelligence.jobs.enqueued',
+        action: 'intelligence.discovery.run',
+        resource: ids.join(','),
+        principal,
+        success: true,
+        metadata: { jobs: jobs.map((j) => j.id) },
+      });
+      // Drain immediately so callers observe results without waiting a cadence.
+      const drained = await engine.runDueJobs();
+      return reply.code(202).send({ enqueued: jobs.map((j) => j.id), drained });
+    });
+
+    // ── Verification (permission: intelligence:write) ────────────────────
+
+    this.fastify.post('/v1/intelligence/verification/run', async (req, reply) => {
+      const principal = await checkPermission(req, reply, 'intelligence:write', 'intelligence:verification');
+      if (principal === null) return;
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const subjectType = body['kind'] ?? body['subjectType'];
+      const id = body['id'] ?? body['subjectId'];
+      if (subjectType !== 'provider_model' && subjectType !== 'endpoint') {
+        return reply.code(400).send({ error: { message: "kind must be 'provider_model' or 'endpoint'", code: 'VALIDATION_ERROR' } });
+      }
+      if (!isStr(id)) {
+        return reply.code(400).send({ error: { message: 'id is required', code: 'VALIDATION_ERROR' } });
+      }
+      try {
+        const runs =
+          subjectType === 'endpoint'
+            ? await engine.verifyEndpoint(id)
+            : await engine.verifyProviderModel(id);
+        this.getAuditLogger().record({
+          event: 'intelligence.verification.requested',
+          action: 'intelligence.verification.run',
+          resource: id,
+          principal,
+          success: true,
+          metadata: { subjectType, runs: runs.length },
+        });
+        return reply.code(202).send({ runs });
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message, code: 'VERIFICATION_ERROR' } });
+      }
+    });
+
+    this.fastify.post('/v1/intelligence/security/findings/:id/status', async (req, reply) => {
+      const principal = await checkPermission(req, reply, 'intelligence:write', 'intelligence:findings');
+      if (principal === null) return;
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const { id } = req.params as { id: string };
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const status = body['status'];
+      if (status !== 'open' && status !== 'acknowledged' && status !== 'notified' && status !== 'resolved' && status !== 'dismissed') {
+        return reply.code(400).send({ error: { message: "status must be 'open' | 'acknowledged' | 'notified' | 'resolved' | 'dismissed'", code: 'VALIDATION_ERROR' } });
+      }
+      try {
+        const updated = await engine.updateFindingStatus(id, status);
+        if (!updated) return notFound(reply, 'Finding');
+        this.getAuditLogger().record({
+          event: 'intelligence.finding.status_changed',
+          action: 'intelligence.finding.update',
+          resource: id,
+          principal,
+          success: true,
+          metadata: { status },
+        });
+        return { id, status, updatedAt: new Date().toISOString() };
+      } catch (err) {
+        return reply.code(400).send({ error: { message: (err as Error).message, code: 'VALIDATION_ERROR' } });
+      }
+    });
+
+    // ── Adapters (permission: intelligence:write to prepare) ─────────────
+
+    this.fastify.post('/v1/intelligence/adapters/prepare', async (req, reply) => {
+      const principal = await checkPermission(req, reply, 'intelligence:write', 'intelligence:adapters');
+      if (principal === null) return;
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      if (!isStr(body['providerId'])) {
+        return reply.code(400).send({ error: { message: 'providerId is required', code: 'VALIDATION_ERROR' } });
+      }
+      try {
+        const prepared = await engine.prepareAdapter({
+          providerId: body['providerId'],
+          adapterVersionLabel: isStr(body['label']) ? body['label'] : undefined,
+          requestedBy: principal,
+        });
+        return reply.code(201).send({
+          requestId: prepared.request.id,
+          adapterVersionId: prepared.record.id,
+          status: prepared.record.status,
+          artifactHash: prepared.record.artifactHash,
+          tests: prepared.record.tests,
+        });
+      } catch (err) {
+        if (err instanceof ApprovalGuardError) {
+          return reply.code(guardErrorStatus(err.code)).send({ error: { message: err.message, code: err.code } });
+        }
+        const reasons = (err as { reasons?: string[] }).reasons;
+        if (Array.isArray(reasons) && reasons.length > 0) {
+          return reply.code(422).send({ error: { message: 'Adapter preparation rejected by sandbox checks', code: 'PREPARATION_REJECTED', reasons } });
+        }
+        return reply.code(400).send({ error: { message: (err as Error).message, code: 'PREPARATION_ERROR' } });
+      }
+    });
+
+    // ── Approvals (permission: intelligence:approve) ─────────────────────
+
+    this.fastify.post('/v1/intelligence/approvals/:id/decision', async (req, reply) => {
+      const principal = await checkPermission(req, reply, 'intelligence:approve', 'intelligence:approvals');
+      if (principal === null) return;
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const { id } = req.params as { id: string };
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const decision = body['decision'];
+      if (decision !== 'approved' && decision !== 'rejected') {
+        return reply.code(400).send({ error: { message: "decision must be 'approved' or 'rejected'", code: 'VALIDATION_ERROR' } });
+      }
+      try {
+        const result = await engine.decideApproval(id, {
+          decision,
+          reviewer: principal,
+          note: isStr(body['note']) ? body['note'] : undefined,
+          hasReviewerPermissions: true, // route-level RBAC gate above already passed
+        });
+        return result;
+      } catch (err) {
+        if (err instanceof ApprovalGuardError) {
+          return reply.code(guardErrorStatus(err.code)).send({ error: { message: err.message, code: err.code } });
+        }
+        return reply.code(400).send({ error: { message: (err as Error).message, code: 'APPROVAL_ERROR' } });
+      }
+    });
+
+    // ── Production publish (permission: intelligence:publish) ────────────
+    // The single, hash-bound path from discovery into live routing.
+
+    this.fastify.post('/v1/intelligence/adapters/:id/publish', async (req, reply) => {
+      const principal = await checkPermission(req, reply, 'intelligence:publish', 'intelligence:adapters');
+      if (principal === null) return;
+      const engine = withEngine(reply);
+      if (!engine) return;
+      const { id } = req.params as { id: string };
+      try {
+        const payload = await engine.publishApprovedAdapter(id);
+        this.getAuditLogger().record({
+          event: 'intelligence.adapter.published',
+          action: 'intelligence.publish',
+          resource: id,
+          principal,
+          success: true,
+          metadata: { providerId: payload.providerId, artifactHash: payload.artifactHash, models: payload.models.length },
+        });
+        return reply.code(201).send(payload);
+      } catch (err) {
+        if (err instanceof ApprovalGuardError) {
+          return reply.code(guardErrorStatus(err.code)).send({ error: { message: err.message, code: err.code } });
+        }
+        return reply.code(400).send({ error: { message: (err as Error).message, code: 'PUBLISH_ERROR' } });
+      }
     });
   }
 

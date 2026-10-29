@@ -10,11 +10,14 @@ import type { ProviderEndpoint, ChatCompletionRequest, ChatCompletionResponse } 
 // headless wire protocol (argv + stdin payload + NDJSON stdout events).
 const { execMock, spawnMock } = vi.hoisted(() => ({ execMock: vi.fn(), spawnMock: vi.fn() }));
 
-vi.mock("node:child_process", async () => {
+vi.mock("node:child_process", async (importOriginal) => {
+  // Partial mock: pass through the rest of node:child_process (e.g. `execFile`,
+  // used by @anx/core's worktree-sandbox) and only replace exec/spawn —
   // node's real `exec` carries a util.promisify.custom that resolves
   // { stdout, stderr }; a bare function promisified would resolve only the
   // first callback value and break `const { stdout } = await execAsync(...)`.
   // The mock must replicate that contract exactly.
+  const actual = await importOriginal<typeof import("node:child_process")>();
   const { promisify } = await import("node:util");
   const execWithCustomPromisify = Object.assign(
     (...args: unknown[]) => execMock(...args),
@@ -25,7 +28,7 @@ vi.mock("node:child_process", async () => {
         }),
     },
   );
-  return { exec: execWithCustomPromisify, spawn: (...args: unknown[]) => spawnMock(...args) };
+  return { ...actual, exec: execWithCustomPromisify, spawn: (...args: unknown[]) => spawnMock(...args) };
 });
 
 type FakeChild = EventEmitter & {

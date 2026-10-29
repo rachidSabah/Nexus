@@ -473,3 +473,67 @@ export interface DailyQuotaLedgerPort {
   ): Promise<DailyQuotaCheckResult>;
 }
 
+/**
+ * Admission control port — coordinates request admission with sliding-window
+ * rate limiting, concurrency bulkheads, and shared recovery episodes to
+ * prevent thundering herd on provider recovery.
+ */
+export interface AdmissionControlPort {
+  /**
+   * Attempt to admit a request for a model/provider combination.
+   * Returns immediately with admission result (may be queued).
+   */
+  admit(modelId: string, providerId: string): Promise<AdmissionResult>;
+
+  /**
+   * Record a successful request completion.
+   * Resets model attempt counter and clears recovery episode if this was the owner.
+   */
+  recordSuccess(modelId: string, providerId: string, executionId: string): void;
+
+  /**
+   * Record a failed request.
+   * Increments attempt counter; if transient and under budget, starts/joins recovery episode.
+   */
+  recordFailure(
+    modelId: string,
+    providerId: string,
+    executionId: string,
+    error: Error,
+    retryable: boolean,
+    retryAfterMs?: number
+  ): { shouldRetry: boolean; delayMs: number; joinEpisode: boolean };
+
+  /**
+   * Release a request (called when request completes, whether success or failure).
+   * Decrements concurrency and processes queue.
+   */
+  release(modelId: string, providerId: string): void;
+
+  /**
+   * Get current admission stats for a model.
+   */
+  getStats(modelId: string, providerId: string): {
+    concurrency: number;
+    queueLength: number;
+    windowUsage: number;
+    inRecovery: boolean;
+    attemptsUsed: number;
+  };
+}
+
+export interface AdmissionResult {
+  /** Whether the request was admitted immediately */
+  admitted: boolean;
+  /** If not admitted, the queue position (0 = not queued) */
+  queuePosition: number;
+  /** Unique admission ID for tracking */
+  admissionId: string;
+  /** Estimated wait time in ms if queued */
+  estimatedWaitMs: number;
+  /** Release function to call when request completes (success or failure) */
+  release: () => void;
+  /** Abort signal that fires if queue timeout expires */
+  abortSignal: AbortSignal;
+}
+

@@ -40,11 +40,24 @@ import {
   MissionOrchestrator,
   ErrorDiagnosticRegistry,
   LiveErrorResolver,
+  getAdmissionController,
+  createRequestRecovery,
+  createStreamRecovery,
+  type AdmissionControlPort,
+  type ChatCompletionUseCaseOptions,
+  createCredentialValidator,
 } from '@anx/core';
 import { AutoHealer } from './auto-healer.js';
 import { McpClient } from '@anx/mcp-client';
 import { McpServer, buildNexusTools } from '@anx/mcp-server';
 import { DefaultMemory, FileVectorStore, GatewayEmbeddingsProvider, RagPipeline } from '@anx/memory';
+import {
+  IntelligenceEngine,
+  createDefaultConnectors,
+  createIntelligenceRepository,
+  defaultIntelligenceDbPath,
+  type PublishPayload,
+} from '@anx/intelligence';
 import { BUILTIN_PLUGINS } from './builtin-plugins.js';
 import { DefaultNetworkService, preferIpv4 } from '@anx/networking';
 import { InProcessTelemetry, StructuredLogger, wireEventsToTelemetry } from '@anx/observability';
@@ -187,6 +200,8 @@ export class GatewayRuntime {
   readonly autoHealer!: AutoHealer;
   readonly localAgentBridge!: LocalAgentBridge;
   readonly agentOrchestrator!: AgentOrchestrator;
+  /** AI Provider Intelligence OS (discovery → evidence → verify → approve → publish). */
+  readonly intelligence!: IntelligenceEngine;
 
   private constructor(opts: {
     config: GatewayConfig;
@@ -236,6 +251,7 @@ export class GatewayRuntime {
     agentOrchestrator: AgentOrchestrator;
     missionOrchestrator: MissionOrchestrator;
     falloverConfig: FalloverConfigStore;
+    intelligence: IntelligenceEngine;
   }) {
     Object.assign(this, opts);
   }
@@ -593,7 +609,74 @@ export class GatewayRuntime {
     // and recommends a cheaper alternative model when the estimate exceeds
     // the per-request threshold.
     const costPredictor = new CostPredictor();
-    const autoHealer = new AutoHealer(routing, keyRegistry, { intervalMs: 30_000 });
+    // Create and configure credential validator for proactive key validation
+    const credentialValidator = createCredentialValidator({
+      maxConcurrency: 8,
+      probeTimeoutMs: 5_000,
+    });
+
+    const autoHealer = new AutoHealer(routing, keyRegistry, {
+      intervalMs: 30_000,
+      credentialValidator,
+    });
+
+    // ─── AI Provider Intelligence OS ──────────────────────────────────────
+    // Discovers AI providers/models across public sources, records evidence,
+    // verifies safely and generates constrained adapters — ALL behind a human
+    // approval gate. The ONLY path into production routing is the approved
+    // publish hook below; discovery can never touch live config directly.
+    const intelligenceRepo = await createIntelligenceRepository({ path: defaultIntelligenceDbPath() });
+    const intelligence = new IntelligenceEngine({
+      repo: intelligenceRepo,
+      connectors: createDefaultConnectors(),
+      events,
+      onPublish: (payload: PublishPayload) => {
+        // Approved & hash-verified integration: register an unverified-health
+        // endpoint for the approved provider and ingest its approved models
+        // into the remote catalog (source: 'remote'). Credentials are NEVER
+        // installed automatically — operators register keys via /v1/keys.
+        // Endpoint-level capabilities stay conservative; per-model capability
+        // claims live in the intelligence catalog until separately verified.
+        const endpoint: ProviderEndpoint = {
+          id: `intel-${payload.providerId}`,
+          providerId: payload.providerId,
+          displayName: payload.providerId,
+          baseUrl: payload.baseUrl,
+          capabilities: {
+            streaming: payload.apiStyle !== 'unknown',
+            toolCalling: false,
+            vision: false,
+            audio: false,
+            speech: false,
+            embeddings: false,
+            reasoning: false,
+            jsonMode: false,
+            maxOutputTokens: 8_192,
+            maxInputTokens: 32_000,
+            supportedModalities: ['text'],
+          },
+          priority: 5,
+          weight: 1,
+          tags: ['intelligence', 'approved'],
+          timeoutMs: 30_000,
+          maxRetries: 1,
+          concurrencyLimit: 4,
+          health: 'unknown',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        routing.registerEndpoint(endpoint);
+        modelRegistry.ingestRemoteCatalog(
+          payload.models.map((modelId: string) => ({
+            id: modelId,
+            providerId: payload.providerId,
+            discoveredAt: Date.now(),
+            source: 'remote' as const,
+          })),
+        );
+      },
+    });
+    intelligence.startScheduler();
 
     const errorRegistry = new ErrorDiagnosticRegistry();
     const liveErrorResolver = new LiveErrorResolver({
@@ -628,7 +711,7 @@ export class GatewayRuntime {
     // honor the prompt compressor + rate-limit tracker. They're attached as
     // named options fields. TypeScript excess-property checks only fire on
     // fresh literals, so we build the options in a named const first.
-    const chatUseCaseOptions = {
+    const chatUseCaseOptions: ChatCompletionUseCaseOptions = {
       cache,
       plugins,
       embed: embedFn,
@@ -644,8 +727,38 @@ export class GatewayRuntime {
       rateLimitTracker,
       errorRegistry,
       modelRegistry,
-      capabilityService,
     };
+
+    // Create and configure admission controller for provider stability
+    const admissionController: AdmissionControlPort = getAdmissionController({
+      maxConcurrencyPerModel: 10,
+      maxRequestsPerWindow: 100,
+      windowMs: 60_000,
+      maxQueueSize: 50,
+      queueTimeoutMs: 30_000,
+      baseDelayMs: 2_000,
+      maxDelayMs: 60_000,
+      jitterMs: 1_000,
+      totalTransientAttempts: 10,
+    });
+
+    chatUseCaseOptions.admissionControl = admissionController;
+
+    // Create and configure request recovery for auth retry and request corrections
+    const requestRecovery = createRequestRecovery({
+      maxAuthRetries: 1,
+      maxCorrections: 2,
+    });
+    chatUseCaseOptions.requestRecovery = requestRecovery;
+
+    // Create and configure stream recovery for mid-stream failover
+    const streamRecovery = createStreamRecovery({
+      maxStreamFailovers: 3,
+      enableMidStreamFailover: true,
+      preContentBufferSize: 50,
+    });
+    chatUseCaseOptions.streamRecovery = streamRecovery;
+
     const chatUseCase = new ChatCompletionUseCase(
       routing,
       new DefaultFailover(),
@@ -1217,6 +1330,7 @@ export class GatewayRuntime {
       falloverConfig,
       errorRegistry,
       liveErrorResolver,
+      intelligence,
     });
 
     return new GatewayRuntime({
@@ -1268,6 +1382,7 @@ export class GatewayRuntime {
       contextWindowManager,
       costPredictor,
       autoHealer,
+      intelligence,
     });
   }
 

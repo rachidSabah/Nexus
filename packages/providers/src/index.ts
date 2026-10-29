@@ -45,7 +45,7 @@ export {
   NvidiaNimAdapter,
   GenericOpenAIAdapter,
 } from './adapters/openai-compatible.js';
-export { AntigravityCliAdapter } from './adapters/antigravity-cli.js';
+export { AntigravityCliAdapter, classifyAgyError } from './adapters/antigravity-cli.js';
 
 import type { ProviderAdapter } from '@anx/core';
 

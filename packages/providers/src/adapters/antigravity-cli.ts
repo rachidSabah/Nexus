@@ -171,7 +171,17 @@ export function mapAgyUsage(usage?: AgyUsage): TokenUsage {
  */
 export function classifyAgyError(endpointId: string, agyError: string): ProviderResponseError {
   const errText = String(agyError);
-  const isQuotaErr = /quota reached|quota exceeded|rate limit|upgrade your subscription/i.test(errText);
+  const isEntitlement =
+    /not available for the (?:pro|ultra|current) account|requires (?:google ai )?ultra|model_not_entitled|tier.*not.*supported|upgrade your subscription to access|entitlement_locked/i.test(
+      errText,
+    );
+  if (isEntitlement) {
+    return new ProviderResponseError(endpointId, 403, errText, {
+      errorCode: 'ENTITLEMENT_LOCKED',
+      retryable: true,
+    });
+  }
+  const isQuotaErr = /quota reached|quota exceeded|rate limit/i.test(errText);
   const isModelErr = /invalid model selection|is not recognized as a known model/i.test(errText);
   return new ProviderResponseError(
     endpointId,
@@ -560,7 +570,20 @@ export class AntigravityCliAdapter implements ProviderAdapter {
             rejectPromise(new ProviderResponseError(endpoint.id, 400, errText, { errorCode: 'INVALID_MODEL', retryable: false }));
             return;
           }
-          if (/quota reached|quota exceeded|rate limit|upgrade your subscription/i.test(errText)) {
+          if (
+            /not available for the (?:pro|ultra|current) account|requires (?:google ai )?ultra|model_not_entitled|tier.*not.*supported|upgrade your subscription to access|entitlement_locked/i.test(
+              errText,
+            )
+          ) {
+            rejectPromise(
+              new ProviderResponseError(endpoint.id, 403, errText, {
+                errorCode: 'ENTITLEMENT_LOCKED',
+                retryable: true,
+              }),
+            );
+            return;
+          }
+          if (/quota reached|quota exceeded|rate limit/i.test(errText)) {
             rejectPromise(new ProviderResponseError(endpoint.id, 429, errText, { errorCode: 'UPSTREAM_429', retryable: false }));
             return;
           }

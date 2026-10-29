@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, Boxes, Brain, Blocks, Cpu, Gauge, GitBranch, GitCompare, History, KeyRound, Layers, Network, Plug, ScrollText, Settings, Settings2, ShieldAlert, ShieldCheck, Sparkles, Store, Terminal, Users, Workflow } from 'lucide-react';
+import { Activity, Boxes, Brain, Blocks, ClipboardCheck, Cpu, Gauge, GitBranch, GitCompare, History, KeyRound, Layers, Network, Plug, Radar, ScrollText, Settings, Settings2, ShieldAlert, ShieldCheck, Sparkles, Store, Terminal, Users, Workflow } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -14,6 +14,8 @@ const NAV = [
   { href: '/keys', label: 'API Keys', icon: KeyRound },
   { href: '/observability', label: 'Observability', icon: Activity },
   { href: '/intelligence', label: 'Intelligence', icon: ShieldAlert },
+  { href: '/provider-intelligence', label: 'Provider Intel', icon: Radar },
+  { href: '/provider-intelligence/approvals', label: 'Integr Review', icon: ClipboardCheck },
   { href: '/audit', label: 'Audit', icon: ScrollText },
   { href: '/router-studio', label: 'Router Studio', icon: Settings2 },
   { href: '/policies', label: 'Policies', icon: GitBranch },

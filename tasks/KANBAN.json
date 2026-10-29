@@ -1,0 +1,69 @@
+{
+  "version": "1.0",
+  "active_agent": "Antigravity",
+  "columns": [
+    "backlog",
+    "ready",
+    "in_progress",
+    "review",
+    "done"
+  ],
+  "cards": [
+    {
+      "id": "card_reflex_1",
+      "title": "La Boucle d'Auto-Correction Visuelle (Playwright)",
+      "description": "Détection automatique des débordements, des conteneurs comprimés et injection de patchs CSS.",
+      "column": "in_progress",
+      "priority": "HIGH",
+      "assigned_agent": "Antigravity",
+      "progress": 90,
+      "tokens_used": 2840,
+      "elapsed_seconds": 380,
+      "thinking_trace": "Playwright Chromium actif. Analyse des viewports et vérification du score de conformité visuelle...",
+      "created_at": "2026-10-14 14:44",
+      "updated_at": "2026-10-14 14:44"
+    },
+    {
+      "id": "card_kanban_2",
+      "title": "Tableau Kanban Visuel & Multi-Agent Thinking Stream",
+      "description": "Orchestrer en temps réel le travail d'Antigravity, Claude Code et OpenCode avec file d'attente synchronisée.",
+      "column": "ready",
+      "priority": "URGENT",
+      "assigned_agent": "Claude Code",
+      "progress": 0,
+      "tokens_used": 0,
+      "elapsed_seconds": 0,
+      "thinking_trace": "Prêt dans la file d'attente d'autonomie.",
+      "created_at": "2026-10-14 14:44",
+      "updated_at": "2026-10-14 14:44"
+    },
+    {
+      "id": "card_rollback_3",
+      "title": "Time-Machine Rollback (Undo 1-clic par Tour d'Agent)",
+      "description": "Système de micro-snapshots préventifs avec diff unifié et annulation instantanée des régressions.",
+      "column": "ready",
+      "priority": "HIGH",
+      "assigned_agent": "OpenCode",
+      "progress": 0,
+      "tokens_used": 0,
+      "elapsed_seconds": 0,
+      "thinking_trace": "En attente de démarrage.",
+      "created_at": "2026-10-14 14:44",
+      "updated_at": "2026-10-14 14:44"
+    },
+    {
+      "id": "card_monaco_4",
+      "title": "Éditeur Monaco & Visualiseur Diff Split-View",
+      "description": "Moteur VS Code avec coloration multi-langages et acceptation par bloc.",
+      "column": "done",
+      "priority": "NORMAL",
+      "assigned_agent": "Antigravity",
+      "progress": 100,
+      "tokens_used": 4120,
+      "elapsed_seconds": 540,
+      "thinking_trace": "Tâche complétée avec succès.",
+      "created_at": "2026-10-14 14:44",
+      "updated_at": "2026-10-14 14:44"
+    }
+  ]
+}
